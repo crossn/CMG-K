@@ -17,6 +17,7 @@
 
 #include <RMG-Core/RomSettings.hpp>
 #include <RMG-Core/RomHeader.hpp>
+#include <RMG-Core/Raphnet.hpp>
 #include <RMG-Core/Core.hpp>
 
 #include <QInputDialog>
@@ -810,11 +811,10 @@ void ControllerWidget::on_inputDeviceComboBox_currentIndexChanged(int value)
         deviceData.device = { };
     }
 
-    // Check if this is a raphnet adapter and prompt user to switch plugin
+    // Check if this is a raphnet 3.0+ adapter and prompt user to switch plugin
     if (deviceData.device.type == InputDeviceType::Joystick)
     {
-        QString deviceName = QString::fromStdString(deviceData.device.name);
-        if (deviceName.contains("raphnet", Qt::CaseInsensitive))
+        if (isRaphnet3Plus(deviceData.device.name))
         {
             QMessageBox::StandardButton result = QMessageBox::question(
                 this,
