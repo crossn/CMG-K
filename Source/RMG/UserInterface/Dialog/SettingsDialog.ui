@@ -228,6 +228,76 @@
                 </widget>
                </item>
                <item>
+                <widget class="QGroupBox" name="exclusiveFullscreenGroupBox">
+                 <property name="title">
+                  <string>Exclusive Fullscreen</string>
+                 </property>
+                 <layout class="QVBoxLayout" name="exclusiveFullscreenLayout">
+                  <item>
+                   <widget class="QCheckBox" name="exclusiveFullscreenCheckBox">
+                    <property name="text">
+                     <string>Use exclusive fullscreen instead of borderless</string>
+                    </property>
+                   </widget>
+                  </item>
+                  <item>
+                   <layout class="QHBoxLayout" name="exclusiveMonitorLayout">
+                    <item>
+                     <widget class="QLabel" name="exclusiveMonitorLabel">
+                      <property name="text">
+                       <string>Monitor</string>
+                      </property>
+                     </widget>
+                    </item>
+                    <item>
+                     <widget class="QComboBox" name="exclusiveMonitorComboBox">
+                      <property name="enabled">
+                       <bool>false</bool>
+                      </property>
+                     </widget>
+                    </item>
+                   </layout>
+                  </item>
+                  <item>
+                   <layout class="QHBoxLayout" name="exclusiveResolutionLayout">
+                    <item>
+                     <widget class="QLabel" name="exclusiveResolutionLabel">
+                      <property name="text">
+                       <string>Resolution</string>
+                      </property>
+                     </widget>
+                    </item>
+                    <item>
+                     <widget class="QComboBox" name="exclusiveResolutionComboBox">
+                      <property name="enabled">
+                       <bool>false</bool>
+                      </property>
+                     </widget>
+                    </item>
+                   </layout>
+                  </item>
+                  <item>
+                   <layout class="QHBoxLayout" name="exclusiveRefreshRateLayout">
+                    <item>
+                     <widget class="QLabel" name="exclusiveRefreshRateLabel">
+                      <property name="text">
+                       <string>Refresh rate</string>
+                      </property>
+                     </widget>
+                    </item>
+                    <item>
+                     <widget class="QComboBox" name="exclusiveRefreshRateComboBox">
+                      <property name="enabled">
+                       <bool>false</bool>
+                      </property>
+                     </widget>
+                    </item>
+                   </layout>
+                  </item>
+                 </layout>
+                </widget>
+               </item>
+               <item>
                 <widget class="QCheckBox" name="confirmDragDropCheckBox">
                  <property name="text">
                   <string>Ask for confirmation during drag and drop</string>

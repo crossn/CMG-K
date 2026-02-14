@@ -29,6 +29,11 @@
 #include <RMG-Core/Error.hpp>
 #include <RMG-Core/Rom.hpp>
 
+#ifdef _WIN32
+#include <windows.h>
+#include <set>
+#endif
+
 using namespace UserInterface::Dialog;
 using namespace Utilities;
 
@@ -128,11 +133,183 @@ SettingsDialog::SettingsDialog(QWidget *parent, QString file) : QDialog(parent)
 #ifndef NETPLAY
     this->autoStartNetplayOnStartupCheckBox->setHidden(true);
 #endif // !NETPLAY
+
+#ifdef _WIN32
+    connect(this->exclusiveFullscreenCheckBox, &QCheckBox::toggled, this, [this](bool checked)
+    {
+        this->exclusiveMonitorComboBox->setEnabled(checked);
+        this->exclusiveResolutionComboBox->setEnabled(checked);
+        this->exclusiveRefreshRateComboBox->setEnabled(checked);
+    });
+    connect(this->exclusiveMonitorComboBox, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this](int)
+    {
+        this->populateExclusiveFullscreenModes();
+    });
+    connect(this->exclusiveResolutionComboBox, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this](int)
+    {
+        this->populateExclusiveFullscreenModes();
+    });
+#else
+    this->exclusiveFullscreenGroupBox->setVisible(false);
+#endif
 }
 
 SettingsDialog::~SettingsDialog(void)
 {
 }
+
+#ifdef _WIN32
+void SettingsDialog::populateExclusiveFullscreenModes(void)
+{
+    // save current selections before repopulating
+    QString savedMonitor = this->exclusiveMonitorComboBox->currentData().toString();
+    QString savedResolution = this->exclusiveResolutionComboBox->currentData().toString();
+    int savedRefreshRate = this->exclusiveRefreshRateComboBox->currentData().toInt();
+
+    // block signals during population to avoid recursive calls
+    bool monBlocked = this->exclusiveMonitorComboBox->blockSignals(true);
+    bool resBlocked = this->exclusiveResolutionComboBox->blockSignals(true);
+    bool rateBlocked = this->exclusiveRefreshRateComboBox->blockSignals(true);
+
+    // populate monitors (only do full enumeration once)
+    if (!this->exclusiveMonitorComboBox->property("populated").toBool())
+    {
+        this->exclusiveMonitorComboBox->clear();
+        this->exclusiveMonitorComboBox->addItem("Primary Monitor", "");
+        DISPLAY_DEVICEW displayDevice = {};
+        displayDevice.cb = sizeof(displayDevice);
+        for (DWORD i = 0; EnumDisplayDevicesW(NULL, i, &displayDevice, 0); i++)
+        {
+            if (!(displayDevice.StateFlags & DISPLAY_DEVICE_ACTIVE))
+            {
+                continue;
+            }
+            // get friendly name from child device
+            DISPLAY_DEVICEW monitor = {};
+            monitor.cb = sizeof(monitor);
+            // extract display number from device name (e.g. "\\\\.\\DISPLAY1" -> "Display 1")
+            QString devName = QString::fromWCharArray(displayDevice.DeviceName);
+            QString displayNum = devName;
+            int displayIdx = devName.lastIndexOf("DISPLAY");
+            if (displayIdx >= 0)
+            {
+                displayNum = "Display " + devName.mid(displayIdx + 7);
+            }
+            QString label;
+            if (EnumDisplayDevicesW(displayDevice.DeviceName, 0, &monitor, 0))
+            {
+                label = QString("%1 - %2").arg(QString::fromWCharArray(monitor.DeviceString), displayNum);
+            }
+            else
+            {
+                label = displayNum;
+            }
+            this->exclusiveMonitorComboBox->addItem(label, QString::fromWCharArray(displayDevice.DeviceName));
+        }
+
+        // restore monitor selection
+        int monIdx = this->exclusiveMonitorComboBox->findData(savedMonitor);
+        if (monIdx >= 0)
+        {
+            this->exclusiveMonitorComboBox->setCurrentIndex(monIdx);
+        }
+        this->exclusiveMonitorComboBox->setProperty("populated", true);
+    }
+
+    // get selected monitor device name for enumeration
+    QString selectedMonitor = this->exclusiveMonitorComboBox->currentData().toString();
+    LPCWSTR deviceName = nullptr;
+    std::wstring deviceNameStr;
+    if (!selectedMonitor.isEmpty())
+    {
+        deviceNameStr = selectedMonitor.toStdWString();
+        deviceName = deviceNameStr.c_str();
+    }
+
+    // enumerate display modes for selected monitor
+    struct Resolution
+    {
+        DWORD width;
+        DWORD height;
+        bool operator<(const Resolution& o) const
+        {
+            if (width != o.width) return width < o.width;
+            return height < o.height;
+        }
+    };
+
+    std::set<Resolution> resolutions;
+    std::set<int> refreshRates;
+
+    DEVMODEW devmode = {};
+    devmode.dmSize = sizeof(devmode);
+    for (DWORD i = 0; EnumDisplaySettingsW(deviceName, i, &devmode); i++)
+    {
+        if (devmode.dmBitsPerPel != 32)
+        {
+            continue;
+        }
+        resolutions.insert({devmode.dmPelsWidth, devmode.dmPelsHeight});
+    }
+
+    // populate resolutions
+    this->exclusiveResolutionComboBox->clear();
+    this->exclusiveResolutionComboBox->addItem("Desktop Default", "");
+    for (const auto& res : resolutions)
+    {
+        QString text = QString("%1x%2").arg(res.width).arg(res.height);
+        this->exclusiveResolutionComboBox->addItem(text, text);
+    }
+
+    // restore resolution selection
+    int resIdx = this->exclusiveResolutionComboBox->findData(savedResolution);
+    if (resIdx >= 0)
+    {
+        this->exclusiveResolutionComboBox->setCurrentIndex(resIdx);
+    }
+
+    // enumerate refresh rates for selected resolution
+    QString selectedRes = this->exclusiveResolutionComboBox->currentData().toString();
+    devmode = {};
+    devmode.dmSize = sizeof(devmode);
+    for (DWORD i = 0; EnumDisplaySettingsW(deviceName, i, &devmode); i++)
+    {
+        if (devmode.dmBitsPerPel != 32)
+        {
+            continue;
+        }
+        if (!selectedRes.isEmpty())
+        {
+            QString modeRes = QString("%1x%2").arg(devmode.dmPelsWidth).arg(devmode.dmPelsHeight);
+            if (modeRes != selectedRes)
+            {
+                continue;
+            }
+        }
+        refreshRates.insert(static_cast<int>(devmode.dmDisplayFrequency));
+    }
+
+    // populate refresh rates
+    this->exclusiveRefreshRateComboBox->clear();
+    this->exclusiveRefreshRateComboBox->addItem("Desktop Default", 0);
+    for (int rate : refreshRates)
+    {
+        QString text = QString("%1 Hz").arg(rate);
+        this->exclusiveRefreshRateComboBox->addItem(text, rate);
+    }
+
+    // restore refresh rate selection
+    int rateIdx = this->exclusiveRefreshRateComboBox->findData(savedRefreshRate);
+    if (rateIdx >= 0)
+    {
+        this->exclusiveRefreshRateComboBox->setCurrentIndex(rateIdx);
+    }
+
+    this->exclusiveMonitorComboBox->blockSignals(monBlocked);
+    this->exclusiveResolutionComboBox->blockSignals(resBlocked);
+    this->exclusiveRefreshRateComboBox->blockSignals(rateBlocked);
+}
+#endif // _WIN32
 
 void SettingsDialog::ShowGameTab(void)
 {
@@ -490,6 +667,48 @@ void SettingsDialog::loadInterfaceEmulationSettings(void)
     this->hideCursorCheckBox->setChecked(CoreSettingsGetBoolValue(SettingsID::GUI_HideCursorInEmulation));
     this->hideCursorFullscreenCheckBox->setChecked(CoreSettingsGetBoolValue(SettingsID::GUI_HideCursorInFullscreenEmulation));
     this->automaticFullscreenCheckbox->setChecked(CoreSettingsGetBoolValue(SettingsID::GUI_AutomaticFullscreen));
+#ifdef _WIN32
+    this->exclusiveFullscreenCheckBox->setChecked(CoreSettingsGetBoolValue(SettingsID::GUI_ExclusiveFullscreen));
+    {
+        // set saved values into combobox data before populating so they get selected
+        QString savedMonitor = QString::fromStdString(CoreSettingsGetStringValue(SettingsID::GUI_ExclusiveFullscreenMonitor));
+        QString savedRes = QString::fromStdString(CoreSettingsGetStringValue(SettingsID::GUI_ExclusiveFullscreenResolution));
+        int savedRate = CoreSettingsGetIntValue(SettingsID::GUI_ExclusiveFullscreenRefreshRate);
+        this->exclusiveMonitorComboBox->blockSignals(true);
+        this->exclusiveMonitorComboBox->clear();
+        // monitor combobox is populated in populateExclusiveFullscreenModes
+        // seed with saved value so it gets selected after population
+        this->exclusiveMonitorComboBox->addItem("Primary Monitor", "");
+        if (!savedMonitor.isEmpty())
+        {
+            this->exclusiveMonitorComboBox->addItem(savedMonitor, savedMonitor);
+            this->exclusiveMonitorComboBox->setCurrentIndex(1);
+        }
+        this->exclusiveMonitorComboBox->blockSignals(false);
+        this->exclusiveResolutionComboBox->blockSignals(true);
+        this->exclusiveResolutionComboBox->clear();
+        this->exclusiveResolutionComboBox->addItem("Desktop Default", "");
+        if (!savedRes.isEmpty())
+        {
+            this->exclusiveResolutionComboBox->addItem(savedRes, savedRes);
+            this->exclusiveResolutionComboBox->setCurrentIndex(1);
+        }
+        this->exclusiveResolutionComboBox->blockSignals(false);
+        this->exclusiveRefreshRateComboBox->blockSignals(true);
+        this->exclusiveRefreshRateComboBox->clear();
+        this->exclusiveRefreshRateComboBox->addItem("Desktop Default", 0);
+        if (savedRate > 0)
+        {
+            this->exclusiveRefreshRateComboBox->addItem(QString("%1 Hz").arg(savedRate), savedRate);
+            this->exclusiveRefreshRateComboBox->setCurrentIndex(1);
+        }
+        this->exclusiveRefreshRateComboBox->blockSignals(false);
+        this->populateExclusiveFullscreenModes();
+    }
+    this->exclusiveMonitorComboBox->setEnabled(this->exclusiveFullscreenCheckBox->isChecked());
+    this->exclusiveResolutionComboBox->setEnabled(this->exclusiveFullscreenCheckBox->isChecked());
+    this->exclusiveRefreshRateComboBox->setEnabled(this->exclusiveFullscreenCheckBox->isChecked());
+#endif
     this->confirmDragDropCheckBox->setChecked(CoreSettingsGetBoolValue(SettingsID::GUI_ConfirmDragDrop));
     this->confirmExitWhileInGameCheckBox->setChecked(CoreSettingsGetBoolValue(SettingsID::GUI_ConfirmExitWhileInGame));
     this->statusBarMessageDurationSpinBox->setValue(CoreSettingsGetIntValue(SettingsID::GUI_StatusbarMessageDuration));
@@ -657,6 +876,15 @@ void SettingsDialog::loadDefaultInterfaceEmulationSettings(void)
     this->hideCursorCheckBox->setChecked(CoreSettingsGetDefaultBoolValue(SettingsID::GUI_HideCursorInEmulation));
     this->hideCursorFullscreenCheckBox->setChecked(CoreSettingsGetDefaultBoolValue(SettingsID::GUI_HideCursorInFullscreenEmulation));
     this->automaticFullscreenCheckbox->setChecked(CoreSettingsGetDefaultBoolValue(SettingsID::GUI_AutomaticFullscreen));
+#ifdef _WIN32
+    this->exclusiveFullscreenCheckBox->setChecked(false);
+    this->exclusiveMonitorComboBox->setCurrentIndex(0);
+    this->exclusiveResolutionComboBox->setCurrentIndex(0);
+    this->exclusiveRefreshRateComboBox->setCurrentIndex(0);
+    this->exclusiveMonitorComboBox->setEnabled(false);
+    this->exclusiveResolutionComboBox->setEnabled(false);
+    this->exclusiveRefreshRateComboBox->setEnabled(false);
+#endif
     this->confirmDragDropCheckBox->setChecked(CoreSettingsGetDefaultBoolValue(SettingsID::GUI_ConfirmDragDrop));
     this->confirmExitWhileInGameCheckBox->setChecked(CoreSettingsGetDefaultBoolValue(SettingsID::GUI_ConfirmExitWhileInGame));
     this->statusBarMessageDurationSpinBox->setValue(CoreSettingsGetDefaultIntValue(SettingsID::GUI_StatusbarMessageDuration));
@@ -901,6 +1129,12 @@ void SettingsDialog::saveInterfaceEmulationSettings(void)
     CoreSettingsSetValue(SettingsID::GUI_PauseEmulationOnFocusLoss, this->pauseEmulationOnFocusCheckbox->isChecked());
     CoreSettingsSetValue(SettingsID::GUI_ResumeEmulationOnFocus, this->resumeEmulationOnFocusCheckBox->isChecked());
     CoreSettingsSetValue(SettingsID::GUI_AutomaticFullscreen, this->automaticFullscreenCheckbox->isChecked());
+#ifdef _WIN32
+    CoreSettingsSetValue(SettingsID::GUI_ExclusiveFullscreen, this->exclusiveFullscreenCheckBox->isChecked());
+    CoreSettingsSetValue(SettingsID::GUI_ExclusiveFullscreenMonitor, this->exclusiveMonitorComboBox->currentData().toString().toStdString());
+    CoreSettingsSetValue(SettingsID::GUI_ExclusiveFullscreenResolution, this->exclusiveResolutionComboBox->currentData().toString().toStdString());
+    CoreSettingsSetValue(SettingsID::GUI_ExclusiveFullscreenRefreshRate, this->exclusiveRefreshRateComboBox->currentData().toInt());
+#endif
     CoreSettingsSetValue(SettingsID::GUI_ConfirmDragDrop, this->confirmDragDropCheckBox->isChecked());
     CoreSettingsSetValue(SettingsID::GUI_ConfirmExitWhileInGame, this->confirmExitWhileInGameCheckBox->isChecked());
     CoreSettingsSetValue(SettingsID::GUI_StatusbarMessageDuration, this->statusBarMessageDurationSpinBox->value());

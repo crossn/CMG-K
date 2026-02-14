@@ -25,6 +25,9 @@
 #endif // NETPLAY
 #include "Dialog/LogDialog.hpp"
 
+#ifdef _WIN32
+#include <string>
+#endif
 #ifdef UPDATER
 #include <QNetworkReply>
 #endif // UPDATER
@@ -71,6 +74,13 @@ class MainWindow : public QMainWindow, private Ui::MainWindow
 
     bool ui_HideCursorInEmulation = false;
     bool ui_HideCursorInFullscreenEmulation = false;
+#ifdef _WIN32
+    bool ui_ExclusiveFullscreen = false;
+    bool ui_DisplayModeChanged  = false;
+    std::wstring ui_DisplayModeDevice;
+    void restoreDisplayMode(void);
+    bool applyExclusiveFullscreen(void);
+#endif
     bool ui_NoSwitchToRomBrowser = false;
     bool ui_VidExtForceSetMode   = false;
     bool ui_LaunchInFullscreen   = false;

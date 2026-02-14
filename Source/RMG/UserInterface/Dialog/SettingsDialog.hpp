@@ -127,6 +127,9 @@ class SettingsDialog : public QDialog, private Ui::SettingsDialog
 
     QString getInputPluginDisplayName(const QString& fileName, const QString& originalName);
 
+#ifdef _WIN32
+    void populateExclusiveFullscreenModes(void);
+#endif
     void setIconsForEmulationInfoText(void);
     void hideEmulationInfoText(void);
 
