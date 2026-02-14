@@ -67,15 +67,6 @@ MainDialog::MainDialog(QWidget* parent, Thread::SDLThread* sdlThread, bool romCo
     // always add keyboard device
     for (auto& controllerWidget : this->controllerWidgets)
     {
-#ifdef VRU
-        // both games which support the VRU,
-        // require the VRU to be in port #4,
-        // so we only have to expose it there
-        if (controllerWidget == this->controllerWidgets.last())
-        {
-            controllerWidget->AddInputDevice({ InputDeviceType::EmulateVRU, "Voice Recognition Unit" }, {});
-        }
-#endif // VRU
         controllerWidget->SetAllowKeyboardForAutomatic(controllerWidget == this->controllerWidgets.first());
 
         this->addInputDevice(controllerWidget, { InputDeviceType::None, "None" });

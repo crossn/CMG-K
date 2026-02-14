@@ -63,7 +63,6 @@ Configure via `-D` flags in CMake command:
 
 - `PORTABLE_INSTALL` (ON): Portable installation (all files in Bin/Release)
 - `NETPLAY` (ON): Enables netplay support
-- `VRU` (ON): Enables VRU (Voice Recognition Unit) support in RMG-Input
 - `UPDATER` (WIN32): Enables application updater
 - `APPIMAGE_UPDATER` (OFF): Enables AppImage updater on Linux
 - `USE_ANGRYLION` (OFF): Build angrylion-rdp-plus (non-GPL license)
@@ -109,7 +108,6 @@ RMG (Qt6 GUI) → RMG-Core (Shared Library) → mupen64plus-core + Plugins
 - Per-axis scaling with configurable range (default 66% for N-Rage compatibility)
 - Per-axis deadzone (not circular) for USBtoN64v2 adapter compatibility
 - Hotkey system and controller pak support
-- VRU (Voice Recognition Unit) via vosk-api (optional)
 
 **RMG-Audio** (`Source/RMG-Audio/`):
 - mupen64plus audio plugin with SDL3 backend
@@ -257,8 +255,6 @@ Bin/Release/          # Build output (portable mode)
 - System: Standard Linux paths (`/usr/lib/RMG`, `/usr/share/RMG`)
 - Controlled by `PORTABLE_INSTALL` CMake option
 
-**VRU Requires vosk-api**: Voice Recognition Unit support requires vosk-api library and model files. Optional feature controlled by `VRU` CMake option.
-
 **Assembly Optimization**: mupen64plus-core includes x86/ARM assembly. Disable with `NO_ASM` if targeting unsupported architectures.
 
 **License Considerations**: angrylion-rdp-plus uses non-GPL license. Only build if legally acceptable via `USE_ANGRYLION` option.
@@ -271,4 +267,3 @@ Bin/Release/          # Build output (portable mode)
 4. **N-Rage Input Compatibility**: Per-axis scaling and deadzone matching N-Rage plugin
 5. **USBtoN64v2 Adapter Support**: Compatible with popular USB-to-N64 hardware adapters
 6. **VidExt Override**: Custom Qt-based rendering instead of SDL windows
-7. **VRU Support**: Voice Recognition Unit emulation via vosk-api

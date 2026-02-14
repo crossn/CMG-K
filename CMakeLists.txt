@@ -8,7 +8,6 @@ option(UPDATER          "Enables updater" ${WIN32})
 option(APPIMAGE_UPDATER "Enables AppImage updater" OFF)
 option(KCA_DRAG_DROP    "Enables drag and drop using KCoreAddons" OFF) # https://bugreports.qt.io/browse/QTBUG-91357
 option(NETPLAY          "Enables netplay" ON)
-option(VRU              "Enables VRU support in RMG-Input" ON)
 option(USE_CCACHE       "Enables usage of ccache when ccache has been found" ON)
 option(NO_ASM           "Disables the usage of assembly in the mupen64plus-core" OFF)
 option(USE_ANGRYLION    "Enables building angrylion-rdp-plus which uses a non-GPL compliant license" OFF)
@@ -112,10 +111,6 @@ endif()
 
 add_subdirectory(Source/3rdParty)
 add_subdirectory(Source/3rdParty/lzma)
-if (VRU)
-    add_subdirectory(Source/3rdParty/vosk-api)
-endif(VRU)
-
 add_subdirectory(Source/RMG-Core)
 add_subdirectory(Source/RMG)
 add_subdirectory(Source/RMG-Audio)
@@ -157,15 +152,6 @@ install(FILES ${MUPEN64PLUSCORE_LIB}
 install(FILES ${MUPEN64PLUSCORE_INI} Data/font.ttf
     DESTINATION ${DATA_INSTALL_PATH}
 )
-if (VRU)
-    install(FILES ${VOSK_API_LIBRARY}
-        DESTINATION ${LIB_INSTALL_PATH}
-        PERMISSIONS ${LIB_PERMISSIONS}
-    )
-    install(FILES ${VOSK_API_MODEL}
-        DESTINATION ${DATA_INSTALL_PATH}
-    )
-endif(VRU)
 install(FILES ${SDL_GAMECONTROLLERDB} ${CMAKE_SOURCE_DIR}/Data/InputProfileDB.json
     DESTINATION ${DATA_INSTALL_PATH}
 )
