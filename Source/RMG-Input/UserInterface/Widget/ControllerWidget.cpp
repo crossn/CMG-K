@@ -664,9 +664,6 @@ void ControllerWidget::CheckInputDeviceSettings(QString sectionQString)
         int deviceNum = CoreSettingsGetIntValue(SettingsID::Input_DeviceNum, section);
         switch (deviceNum)
         {
-        case -4:
-            deviceType = InputDeviceType::EmulateVRU;
-            break;
         case -3:
             deviceType = InputDeviceType::None;
             break;
@@ -877,8 +874,7 @@ void ControllerWidget::on_inputDeviceComboBox_currentIndexChanged(int value)
     this->autoConfigureButton->setEnabled(deviceData.inputProfile.valid);
 
     // set plugged in state
-    this->setPluggedIn(deviceData.device.type != InputDeviceType::None &&
-                       deviceData.device.type != InputDeviceType::EmulateVRU);
+    this->setPluggedIn(deviceData.device.type != InputDeviceType::None);
 
     // update tooltip
     this->inputDeviceComboBox->setToolTip(this->inputDeviceComboBox->itemText(value));

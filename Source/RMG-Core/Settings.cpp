@@ -103,6 +103,18 @@ static l_Setting get_setting(SettingsID settingId)
     case SettingsID::GUI_AutomaticFullscreen:
         setting = {SETTING_SECTION_GUI, "AutomaticFullscreen", false};
         break;
+    case SettingsID::GUI_ExclusiveFullscreen:
+        setting = {SETTING_SECTION_GUI, "ExclusiveFullscreen", false};
+        break;
+    case SettingsID::GUI_ExclusiveFullscreenMonitor:
+        setting = {SETTING_SECTION_GUI, "ExclusiveFullscreenMonitor", std::string("")};
+        break;
+    case SettingsID::GUI_ExclusiveFullscreenResolution:
+        setting = {SETTING_SECTION_GUI, "ExclusiveFullscreenResolution", std::string("")};
+        break;
+    case SettingsID::GUI_ExclusiveFullscreenRefreshRate:
+        setting = {SETTING_SECTION_GUI, "ExclusiveFullscreenRefreshRate", 0};
+        break;
     case SettingsID::GUI_ConfirmDragDrop:
         setting = {SETTING_SECTION_GUI, "ConfirmDragDrop", true};
         break;

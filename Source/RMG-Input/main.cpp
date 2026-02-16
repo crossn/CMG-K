@@ -16,9 +16,6 @@
 #include "Thread/SDLThread.hpp"
 #include "common.hpp"
 #include "main.hpp"
-#ifdef VRU
-#include "VRU.hpp"
-#endif // VRU
 
 #define M64P_PLUGIN_PROTOTYPES 1
 #include <RMG-Core/m64p/api/m64p_common.h>
@@ -397,7 +394,6 @@ static void apply_controller_profiles(void)
     {
         InputProfile* profile = &l_InputProfiles[i];
         int plugin = PLUGIN_NONE;
-        bool emulateVRU = (profile->DeviceType == InputDeviceType::EmulateVRU);
 
         switch (profile->ControllerPak)
         {
@@ -415,26 +411,10 @@ static void apply_controller_profiles(void)
                 break;
         }
 
-#ifdef VRU
-        // attempt to try initializing VRU when needed,
-        // if it fails, unplug the VRU
-        if (emulateVRU && !IsVRUInit() && !InitVRU())
-        {
-            profile->PluggedIn = false;
-        }
-#else
-        // always unplug VRU when RMG-Input was built
-        // without VRU support
-        if (emulateVRU)
-        {
-            profile->PluggedIn = false;
-        }
-#endif // VRU
-
         l_ControlInfo.Controls[i].Present = profile->PluggedIn ? 1 : 0;
-        l_ControlInfo.Controls[i].Plugin  = emulateVRU ? PLUGIN_NONE : plugin;
+        l_ControlInfo.Controls[i].Plugin  = plugin;
         l_ControlInfo.Controls[i].RawData = 0;
-        l_ControlInfo.Controls[i].Type    = emulateVRU ? CONT_TYPE_VRU : CONT_TYPE_STANDARD;
+        l_ControlInfo.Controls[i].Type    = CONT_TYPE_STANDARD;
     }
 }
 
@@ -1050,13 +1030,6 @@ static void sdl_quit()
             SDL_QuitSubSystem(subsystem);
         }
     }
-
-#ifdef VRU
-    if (HasVRUInitSDL() && SDL_WasInit(SDL_INIT_AUDIO))
-    {
-        SDL_QuitSubSystem(SDL_INIT_AUDIO);
-    }
-#endif
 }
 
 //
@@ -1286,23 +1259,6 @@ EXPORT void CALL GetKeys(int Control, BUTTONS* Keys)
         return;
     }
 
-#ifdef VRU
-    // when we're emulating the VRU,
-    // we need to check the mic state
-    if (profile->DeviceType == InputDeviceType::EmulateVRU)
-    {
-        if (GetVRUMicState())
-        {
-            Keys->Value = 0x0020;
-        }
-        else
-        {
-            Keys->Value = 0x0000;
-        }
-        return;
-    }
-#endif // VRU
-
     // when we've matched a hotkey,
     // we don't need to check anything
     // else
@@ -1381,9 +1337,6 @@ EXPORT void CALL RomClosed(void)
     l_HotkeysThread->SetState(HotkeysThreadState::RomClosed);
     l_HasControlInfo = false;
     close_controllers();
-#ifdef VRU
-    QuitVRU();
-#endif // VRU
 }
 
 EXPORT void CALL SDL_KeyDown(int keymod, int keysym)

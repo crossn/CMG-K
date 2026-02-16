@@ -61,6 +61,10 @@
 #include <KUrlMimeData>
 #endif
 
+#ifdef _WIN32
+#include <windows.h>
+#endif
+
 #include <cstdlib>
 #include <cmath>
 #include <algorithm>
@@ -187,6 +191,106 @@ void MainWindow::OpenROM(QString file, QString disk, bool fullscreen, bool quitA
     this->launchEmulationThread(file, disk, true, stateSlot);
 }
 
+#ifdef _WIN32
+void MainWindow::restoreDisplayMode(void)
+{
+    if (!this->ui_DisplayModeChanged)
+    {
+        return;
+    }
+    if (!this->ui_DisplayModeDevice.empty())
+    {
+        ChangeDisplaySettingsExW(this->ui_DisplayModeDevice.c_str(), NULL, NULL, 0, NULL);
+    }
+    else
+    {
+        ChangeDisplaySettingsW(NULL, 0);
+    }
+    this->ui_DisplayModeChanged = false;
+    this->ui_DisplayModeDevice.clear();
+}
+
+bool MainWindow::applyExclusiveFullscreen(void)
+{
+    std::string monitor = CoreSettingsGetStringValue(SettingsID::GUI_ExclusiveFullscreenMonitor);
+    std::string resolution = CoreSettingsGetStringValue(SettingsID::GUI_ExclusiveFullscreenResolution);
+    int refreshRate = CoreSettingsGetIntValue(SettingsID::GUI_ExclusiveFullscreenRefreshRate);
+
+    // determine device name
+    LPCWSTR deviceName = nullptr;
+    std::wstring deviceNameStr;
+    if (!monitor.empty())
+    {
+        deviceNameStr = std::wstring(monitor.begin(), monitor.end());
+        deviceName = deviceNameStr.c_str();
+    }
+
+    if (resolution.empty() && refreshRate == 0 && monitor.empty())
+    {
+        // all desktop defaults — nothing to change
+        return true;
+    }
+
+    DEVMODEW devmode = {};
+    devmode.dmSize = sizeof(devmode);
+
+    // start from current display settings of the target monitor
+    if (!EnumDisplaySettingsW(deviceName, ENUM_CURRENT_SETTINGS, &devmode))
+    {
+        return false;
+    }
+
+    if (!resolution.empty())
+    {
+        size_t xPos = resolution.find('x');
+        if (xPos != std::string::npos)
+        {
+            devmode.dmPelsWidth  = std::stoul(resolution.substr(0, xPos));
+            devmode.dmPelsHeight = std::stoul(resolution.substr(xPos + 1));
+            devmode.dmFields |= DM_PELSWIDTH | DM_PELSHEIGHT;
+        }
+    }
+
+    if (refreshRate > 0)
+    {
+        devmode.dmDisplayFrequency = refreshRate;
+        devmode.dmFields |= DM_DISPLAYFREQUENCY;
+    }
+
+    // move window to target monitor before display mode change
+    // deviceName=NULL targets the primary monitor, so always position correctly
+    {
+        DEVMODEW currentMode = {};
+        currentMode.dmSize = sizeof(currentMode);
+        if (EnumDisplaySettingsW(deviceName, ENUM_CURRENT_SETTINGS, &currentMode))
+        {
+            this->move(currentMode.dmPosition.x, currentMode.dmPosition.y);
+        }
+    }
+
+    LONG result;
+    if (deviceName != nullptr)
+    {
+        result = ChangeDisplaySettingsExW(deviceName, &devmode, NULL, CDS_FULLSCREEN, NULL);
+    }
+    else
+    {
+        result = ChangeDisplaySettingsW(&devmode, CDS_FULLSCREEN);
+    }
+
+    if (result == DISP_CHANGE_SUCCESSFUL)
+    {
+        this->ui_DisplayModeChanged = true;
+        if (deviceName != nullptr)
+        {
+            this->ui_DisplayModeDevice = deviceNameStr;
+        }
+        return true;
+    }
+    return false;
+}
+#endif // _WIN32
+
 void MainWindow::closeEvent(QCloseEvent *event)
 {
     bool inEmulation = this->emulationThread->isRunning();
@@ -253,6 +357,9 @@ void MainWindow::closeEvent(QCloseEvent *event)
 
     this->logDialog.close();
 
+#ifdef _WIN32
+    this->restoreDisplayMode();
+#endif
     CoreSettingsSave();
     CoreShutdown();
 
@@ -788,6 +895,9 @@ void MainWindow::loadGeometry(void)
 
     if (this->isFullScreen())
     {
+#ifdef _WIN32
+        this->restoreDisplayMode();
+#endif
         this->showNormal();
     }
 
@@ -933,6 +1043,9 @@ void MainWindow::launchEmulationThread(QString cartRom, QString diskRom, bool re
 
     this->ui_HideCursorInEmulation = CoreSettingsGetBoolValue(SettingsID::GUI_HideCursorInEmulation);
     this->ui_HideCursorInFullscreenEmulation = CoreSettingsGetBoolValue(SettingsID::GUI_HideCursorInFullscreenEmulation);
+#ifdef _WIN32
+    this->ui_ExclusiveFullscreen = CoreSettingsGetBoolValue(SettingsID::GUI_ExclusiveFullscreen);
+#endif
 
     if (this->ui_ShowUI)
     {
@@ -2788,6 +2901,10 @@ void MainWindow::on_Emulation_Started(void)
 
 void MainWindow::on_Emulation_Finished(bool ret, QString error)
 {
+#ifdef _WIN32
+    this->restoreDisplayMode();
+#endif
+
     if (!ret)
     {
         // whatever we do on failure,
@@ -3079,6 +3196,9 @@ void MainWindow::on_VidExt_SetWindowedMode(int width, int height, int bps, int f
 
     if (this->isFullScreen())
     {
+#ifdef _WIN32
+        this->restoreDisplayMode();
+#endif
         returnedFromFullscreen = true;
         this->showNormal();
     }
@@ -3127,6 +3247,12 @@ void MainWindow::on_VidExt_SetFullscreenMode(int width, int height, int bps, int
 {
     if (!this->isFullScreen())
     {
+#ifdef _WIN32
+        if (this->ui_ExclusiveFullscreen)
+        {
+            this->applyExclusiveFullscreen();
+        }
+#endif
         this->showFullScreen();
     }
 
@@ -3230,6 +3356,12 @@ void MainWindow::on_VidExt_ToggleFS(bool fullscreen)
     {
         if (!this->isFullScreen())
         {
+#ifdef _WIN32
+            if (this->ui_ExclusiveFullscreen)
+            {
+                this->applyExclusiveFullscreen();
+            }
+#endif
             this->showFullScreen();
         }
 
@@ -3269,6 +3401,9 @@ void MainWindow::on_VidExt_ToggleFS(bool fullscreen)
     {
         if (this->isFullScreen())
         {
+#ifdef _WIN32
+            this->restoreDisplayMode();
+#endif
             this->showNormal();
         }
 
