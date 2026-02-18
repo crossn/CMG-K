@@ -1,9 +1,10 @@
 # RMG-K (Rosalie's Mupen GUI - Kaillera)
 
 Rosalie's Mupen GUI is a free and open-source mupen64plus front-end written in C++.
+
 This fork is focused around netplay with the Kaillera protocol.
 
-<a href='https://ko-fi.com/J3J21OOC74' target='_blank'><img height='36' style='border:0px;height:36px;' src='https://storage.ko-fi.com/cdn/kofi6.png?v=6' border='0' alt='Buy Me a Coffee at ko-fi.com' /></a>
+<p align="center"><a href='https://ko-fi.com/J3J21OOC74' target='_blank'><img height='36' style='border:0px;height:36px;' src='https://storage.ko-fi.com/cdn/kofi6.png?v=6' border='0' alt='Buy Me a Coffee at ko-fi.com' /></a></p>
 
 <p align="center">
 <img width="717" height="706" alt="image" src="https://github.com/user-attachments/assets/3cc981da-b9c1-4ed3-b9aa-ca081aa801a4" />
@@ -23,12 +24,18 @@ This fork is focused around netplay with the Kaillera protocol.
 - Notifies lobby and game room of frame delay spoofing
 
 #### Drop Actually Works!
-- Clicking Drop will stop emulation (if player 1 does it first, it will stop emulation for everyone. Everyone must still click drop
+- Clicking Drop will stop emulation (if player 1 clicks drop, it will drop for all others in the room)
 - After all players drop, the room owner is able to restart emulation for everyone
 
-#### General Features
-- Timestamps
-- Direct Messaging (with colors)
+#### In Game Chat
+- On-Screen Chat Display: No more needing to alt-tab to see what your opponent is saying in chat. This can be customized or disabled in Settings -> OSD
+- Press Enter to Chat: You can now chat while in-game without switching windows! This can be rebound in Hotkeys->System if you'd like to use a different key. Press ESC to cancel
+
+#### Replays system
+- Playback overhaul: Reworked the krec playback screen, fixing numerous bugs and making it easier to use. You can now see the players from the replay list!
+
+  <img width="604" height="198" alt="image" src="https://github.com/user-attachments/assets/c2b52fb1-6bb4-43a2-b36e-90145a166116" />
+
 #### Static Netplay Settings
 FOR NOW, the following settings are hard coded when a user starts a netplay session:
 
