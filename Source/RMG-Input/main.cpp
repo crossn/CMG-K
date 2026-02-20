@@ -787,7 +787,7 @@ static int get_button_state(InputProfile* profile, const InputMapping* inputMapp
 }
 
 // returns axis input scaled to the range [-1, 1]
-static double get_axis_state(InputProfile* profile, const InputMapping* inputMapping, const int direction, const double value, bool& useButtonMapping)
+static double get_axis_state(InputProfile* profile, const InputMapping* inputMapping, const int direction, const double value, bool& useButtonMapping, bool& buttonPressed)
 {
     double axis_state   = value;
     bool   button_state = false;
@@ -842,8 +842,10 @@ static double get_axis_state(InputProfile* profile, const InputMapping* inputMap
         }
     }
 
+    buttonPressed = button_state;
+
     // when a button has been mapped
-    // to an axis, we should prioritize 
+    // to an axis, we should prioritize
     // the button when it's been pressed
     if (button_state)
     {
@@ -1284,10 +1286,15 @@ EXPORT void CALL GetKeys(int Control, BUTTONS* Keys)
 
     double inputX = 0, inputY = 0;
     bool useButtonMapping = false;
-    inputY = get_axis_state(profile, &profile->AnalogStick_Up,    1, inputY, useButtonMapping);
-    inputY = get_axis_state(profile, &profile->AnalogStick_Down, -1, inputY, useButtonMapping);
-    inputX = get_axis_state(profile, &profile->AnalogStick_Left, -1, inputX, useButtonMapping);
-    inputX = get_axis_state(profile, &profile->AnalogStick_Right, 1, inputX, useButtonMapping);
+    bool upPressed = false, downPressed = false, leftPressed = false, rightPressed = false;
+
+    inputY = get_axis_state(profile, &profile->AnalogStick_Up,    1, inputY, useButtonMapping, upPressed);
+    inputY = get_axis_state(profile, &profile->AnalogStick_Down, -1, inputY, useButtonMapping, downPressed);
+    if (upPressed && downPressed) inputY = 0;
+
+    inputX = get_axis_state(profile, &profile->AnalogStick_Left, -1, inputX, useButtonMapping, leftPressed);
+    inputX = get_axis_state(profile, &profile->AnalogStick_Right, 1, inputX, useButtonMapping, rightPressed);
+    if (leftPressed && rightPressed) inputX = 0;
 
     // Scale each axis independently (like USBtoN64v2)
     // Range determines the maximum output: 100% = 127 (linear scale)
