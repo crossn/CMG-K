@@ -77,6 +77,7 @@ enum class SettingsID
     Kaillera_BrowserTopSplitter,
     Kaillera_BrowserBottomSplitter,
     Kaillera_NetplayGeometry,
+    Kaillera_ServerColumnWidths,
     Kaillera_UserColumnWidths,
     Kaillera_GameColumnWidths,
     Kaillera_PlayerColumnWidths,

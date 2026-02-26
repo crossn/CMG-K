@@ -30,13 +30,14 @@ bool kaillera_is_connected();
 bool kaillera_core_initialize(int port, char * appname, char * username, char connection_setting);
 void kaillera_set_spoof_ping(int spoof_ping_ms);  // Call before connect: 0=auto, >0=spoof ping in ms
 bool kaillera_core_connect(char * ip, int port = 27888);
+const char* kaillera_core_get_last_error();
 bool kaillera_disconnect(char * quitmsg);
 bool kaillera_core_cleanup();
 int kaillera_core_get_port();
 void kaillera_chat_send(char * text);
 void kaillera_game_chat_send(char * text);
 void kaillera_kick_user (unsigned short id);
-void kaillera_join_game(unsigned int id);
+void kaillera_join_game(unsigned int id, const char* gameName = nullptr);
 void kaillera_create_game(char * name);
 void kaillera_leave_game ();
 void kaillera_start_game();

@@ -265,6 +265,9 @@ static l_Setting get_setting(SettingsID settingId)
     case SettingsID::Kaillera_NetplayGeometry:
         setting = {SETTING_SECTION_KAILLERA, "NetplayGeometry", std::string("")};
         break;
+    case SettingsID::Kaillera_ServerColumnWidths:
+        setting = {SETTING_SECTION_KAILLERA, "ServerColumnWidths", std::string("")};
+        break;
     case SettingsID::Kaillera_UserColumnWidths:
         setting = {SETTING_SECTION_KAILLERA, "UserColumnWidths", std::string("")};
         break;

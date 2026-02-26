@@ -38,6 +38,7 @@
 #ifdef NETPLAY
 #include <QWebSocket>
 #endif // NETPLAY
+#include <QApplication>
 #include <QCoreApplication>
 #include <QDesktopServices>
 #include <QGuiApplication>
@@ -345,14 +346,25 @@ void MainWindow::closeEvent(QCloseEvent *event)
         this->netplaySessionDialog->close();
     }
 
-    // Close any open Kaillera dialogs (server browser, netplay)
-    // These run in QEventLoops so they must be explicitly closed
-    for (QDialog* dlg : this->findChildren<QDialog*>())
+    // Close ALL top-level Kaillera dialogs, including those with nullptr parent
+    // (e.g. KailleraServerBrowserDialog, KailleraP2PDialog).
+    // Their reject() handlers call kaillera_disconnect() / p2p_disconnect() for
+    // graceful server disconnect before we tear down the session.
+    for (QWidget* w : QApplication::topLevelWidgets())
     {
-        dlg->close();
+        if (w != this && w->isVisible())
+        {
+            QDialog* dlg = qobject_cast<QDialog*>(w);
+            if (dlg)
+                dlg->close();
+        }
     }
 
-    // Shutdown Kaillera if active
+    // Process events so the dialog chain fully unwinds
+    // (server browser close → netplay dialog close → showServerDialog returns)
+    QCoreApplication::processEvents();
+
+    // Shutdown Kaillera if still active (safety net — dialogs should have cleaned up)
     if (this->kailleraSessionManager != nullptr)
     {
         CoreEndKailleraGame();
@@ -2538,15 +2550,19 @@ void MainWindow::on_Action_Netplay_BrowseSessions(void)
 
     // Dialog closed - clean up Kaillera session
     // (emulation may still be running - user can manually stop it)
-    delete this->kailleraSessionManager;
-    this->kailleraSessionManager = nullptr;
-    CoreShutdownKaillera();
+    // Guard: closeEvent may have already cleaned up if the main window was closed
+    if (this->kailleraSessionManager != nullptr)
+    {
+        delete this->kailleraSessionManager;
+        this->kailleraSessionManager = nullptr;
+        CoreShutdownKaillera();
 
-    // Re-enable buttons and update UI
-    this->action_Netplay_BrowseSessions->setEnabled(true);
-    this->action_Netplay_Start->setEnabled(true);
-    this->action_System_StartRom->setEnabled(true);
-    this->updateUI(this->emulationThread->isRunning(), CoreIsEmulationPaused());
+        // Re-enable buttons and update UI
+        this->action_Netplay_BrowseSessions->setEnabled(true);
+        this->action_Netplay_Start->setEnabled(true);
+        this->action_System_StartRom->setEnabled(true);
+        this->updateUI(this->emulationThread->isRunning(), CoreIsEmulationPaused());
+    }
 #endif // NETPLAY
 }
 

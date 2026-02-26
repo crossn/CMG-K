@@ -100,7 +100,10 @@ private:
     QString timestamp();
     QString linkify(const QString& text);
     QString connString(char conn);
-    QString statusString(char status);
+    QString userStatusString(char status);
+    QString gameStatusString(char status);
+    int findRowByText(QTableWidget* table, int column, const QString& text);
+    void updateUserStatus(const QString& username, const QString& status, int sortKey);
 
     // Server info
     QString m_serverName;

@@ -192,6 +192,7 @@ void KailleraServerBrowserDialog::setupUI()
     connect(m_userTable, &QWidget::customContextMenuRequested,
             this, &KailleraServerBrowserDialog::onUserListContextMenu);
     m_topSplitter->addWidget(m_userTable);
+    m_userTable->sortByColumn(1, Qt::AscendingOrder);
 
     m_topSplitter->setStretchFactor(0, 3);
     m_topSplitter->setStretchFactor(1, 2);
@@ -260,6 +261,7 @@ QWidget* KailleraServerBrowserDialog::createGameListWidget()
     // Double-click a game to join it
     connect(m_gameTable, &QTableWidget::cellDoubleClicked, this, [this]() { onJoinGame(); });
     layout->addWidget(m_gameTable);
+    m_gameTable->sortByColumn(4, Qt::AscendingOrder);
 
     return widget;
 }
@@ -629,13 +631,24 @@ QString KailleraServerBrowserDialog::connString(char conn)
     }
 }
 
-QString KailleraServerBrowserDialog::statusString(char status)
+QString KailleraServerBrowserDialog::userStatusString(char status)
+{
+    switch (status)
+    {
+        case 0: return "Playing";
+        case 1: return "Idle";
+        case 2: return "Playing";
+        default: return "Unknown";
+    }
+}
+
+QString KailleraServerBrowserDialog::gameStatusString(char status)
 {
     switch (status)
     {
         case 0: return "Waiting";
         case 1: return "Playing";
-        case 2: return "Idle";
+        case 2: return "Playing";
         default: return "Unknown";
     }
 }
@@ -651,6 +664,28 @@ int KailleraServerBrowserDialog::findRowByValue(QTableWidget* table, int column,
         }
     }
     return -1;
+}
+
+int KailleraServerBrowserDialog::findRowByText(QTableWidget* table, int column, const QString& text)
+{
+    for (int row = 0; row < table->rowCount(); ++row)
+    {
+        QTableWidgetItem* item = table->item(row, column);
+        if (item && item->text() == text)
+        {
+            return row;
+        }
+    }
+    return -1;
+}
+
+void KailleraServerBrowserDialog::updateUserStatus(const QString& username, const QString& status, int sortKey)
+{
+    int row = findRowByText(m_userTable, 0, username);
+    if (row >= 0)
+    {
+        m_userTable->setItem(row, 3, new StatusTableWidgetItem(status, sortKey));
+    }
 }
 
 void KailleraServerBrowserDialog::saveColumnWidths()
@@ -703,7 +738,7 @@ void KailleraServerBrowserDialog::onUserAdded(QString name, int ping, int status
     m_userTable->setItem(row, 0, new QTableWidgetItem(name));
     m_userTable->setItem(row, 1, new NumericTableWidgetItem(ping));
     m_userTable->setItem(row, 2, new NumericTableWidgetItem(id));
-    m_userTable->setItem(row, 3, new StatusTableWidgetItem(statusString(static_cast<char>(status)), status));
+    m_userTable->setItem(row, 3, new StatusTableWidgetItem(userStatusString(static_cast<char>(status)), status));
     m_userTable->setSortingEnabled(true);
     updateTitle();
 }
@@ -751,7 +786,7 @@ void KailleraServerBrowserDialog::onGameAdded(QString gameName, unsigned int id,
     m_gameTable->setItem(row, 1, new NumericTableWidgetItem(static_cast<int>(id)));
     m_gameTable->setItem(row, 2, new QTableWidgetItem(emulator));
     m_gameTable->setItem(row, 3, new QTableWidgetItem(owner));
-    m_gameTable->setItem(row, 4, new StatusTableWidgetItem(statusString(status), status));
+    m_gameTable->setItem(row, 4, new StatusTableWidgetItem(gameStatusString(status), status));
     m_gameTable->setItem(row, 5, new QTableWidgetItem(users));
     m_gameTable->setSortingEnabled(true);
     updateTitle();
@@ -759,6 +794,10 @@ void KailleraServerBrowserDialog::onGameAdded(QString gameName, unsigned int id,
 
 void KailleraServerBrowserDialog::onGameCreated(QString gameName, unsigned int id, QString emulator, QString owner)
 {
+    // Deduplicate — Kaillera UDP retransmissions can deliver GAMEMAKE twice
+    if (findRowByValue(m_gameTable, 1, id) >= 0)
+        return;
+
     m_gameTable->setSortingEnabled(false);
     int row = m_gameTable->rowCount();
     m_gameTable->insertRow(row);
@@ -770,8 +809,8 @@ void KailleraServerBrowserDialog::onGameCreated(QString gameName, unsigned int i
     m_gameTable->setItem(row, 5, new QTableWidgetItem("1/?"));
     m_gameTable->setSortingEnabled(true);
 
-    m_lobbyChat->append("<span style='color:green;'>" + timestamp()
-        + "- " + owner.toHtmlEscaped() + " created game: " + gameName.toHtmlEscaped() + "</span>");
+    // Update owner's user status to Waiting (game hasn't started yet)
+    updateUserStatus(owner, "Waiting", 0);
     updateTitle();
 }
 
@@ -780,8 +819,22 @@ void KailleraServerBrowserDialog::onGameClosed(unsigned int id)
     int row = findRowByValue(m_gameTable, 1, id);
     if (row >= 0)
     {
+        // Set the game owner's user status back to Idle before removing the row
+        QTableWidgetItem* ownerItem = m_gameTable->item(row, 3);
+        if (ownerItem)
+            updateUserStatus(ownerItem->text(), "Idle", 1);
+
         m_gameTable->removeRow(row);
     }
+
+    // Set all game room players back to Idle
+    for (int i = 0; i < m_playerTable->rowCount(); ++i)
+    {
+        QTableWidgetItem* nameItem = m_playerTable->item(i, 0);
+        if (nameItem)
+            updateUserStatus(nameItem->text(), "Idle", 1);
+    }
+
     updateTitle();
 }
 
@@ -790,9 +843,24 @@ void KailleraServerBrowserDialog::onGameStatusChanged(unsigned int id, char stat
     int row = findRowByValue(m_gameTable, 1, id);
     if (row >= 0)
     {
-        m_gameTable->setItem(row, 4, new StatusTableWidgetItem(statusString(status), status));
+        m_gameTable->setItem(row, 4, new StatusTableWidgetItem(gameStatusString(status), status));
         m_gameTable->setItem(row, 5, new QTableWidgetItem(
             QString::number(players) + "/" + QString::number(maxPlayers)));
+
+        QString gameStatus = gameStatusString(status);
+
+        // Update the game owner's user status to match
+        QTableWidgetItem* ownerItem = m_gameTable->item(row, 3);
+        if (ownerItem)
+            updateUserStatus(ownerItem->text(), gameStatus, status);
+
+        // Update all players in the game room (if we're in this game)
+        for (int i = 0; i < m_playerTable->rowCount(); ++i)
+        {
+            QTableWidgetItem* nameItem = m_playerTable->item(i, 0);
+            if (nameItem)
+                updateUserStatus(nameItem->text(), gameStatus, status);
+        }
     }
 }
 
@@ -834,7 +902,7 @@ void KailleraServerBrowserDialog::onUserGameCreated()
 {
     m_isHost = true;
     switchToGameRoom();
-    m_gameChat->append("<span style='color:blue;'>" + timestamp() + "You created a game. Waiting for players...</span>");
+    m_gameChat->append("<span style='color:" + QString(QApplication::palette().window().color().value() < 128 ? "cornflowerblue" : "darkblue") + ";'>" + timestamp() + "You created a game. Waiting for players...</span>");
     executeOptions();
 }
 
@@ -842,7 +910,7 @@ void KailleraServerBrowserDialog::onUserGameJoined()
 {
     m_isHost = false;
     switchToGameRoom();
-    m_gameChat->append("<span style='color:blue;'>" + timestamp() + "You joined the game. Waiting for host to start...</span>");
+    m_gameChat->append("<span style='color:" + QString(QApplication::palette().window().color().value() < 128 ? "cornflowerblue" : "darkblue") + ";'>" + timestamp() + "You joined the game. Waiting for host to start...</span>");
 }
 
 void KailleraServerBrowserDialog::onUserGameClosed()
@@ -884,6 +952,9 @@ void KailleraServerBrowserDialog::onPlayerJoined(QString name, int ping, unsigne
     m_playerTable->setSortingEnabled(true);
 
     m_gameChat->append("<span style='color:" + QString(QApplication::palette().window().color().value() < 128 ? "cornflowerblue" : "darkblue") + ";'>" + timestamp() + "* " + name.toHtmlEscaped() + " joined the game</span>");
+
+    // Update this user's status in the lobby user table
+    updateUserStatus(name, "Waiting", 0);
 
     // Auto-kick players who join while game is already running (host only)
     if (m_isHost && kaillera_is_game_running())
@@ -931,6 +1002,9 @@ void KailleraServerBrowserDialog::onPlayerLeft(QString name, unsigned short id)
     }
 
     m_gameChat->append("<span style='color:" + QString(QApplication::palette().window().color().value() < 128 ? "cornflowerblue" : "darkblue") + ";'>" + timestamp() + "* " + name.toHtmlEscaped() + " left the game</span>");
+
+    // Update this user's status in the lobby user table
+    updateUserStatus(name, "Idle", 1);
 }
 
 void KailleraServerBrowserDialog::onGameChatReceived(QString name, QString message)
@@ -946,38 +1020,27 @@ void KailleraServerBrowserDialog::onUserKicked()
 
 void KailleraServerBrowserDialog::onPlayerDropped(QString name, int player)
 {
-    // Guard against re-entry: kaillera_game_drop() below triggers callbacks
-    // that call back into onPlayerDropped() for the local player.
-    static bool handling = false;
-    if (handling) return;
-    handling = true;
-
     m_gameChat->append("<span style='color:orange;'>" + timestamp()
         + "* " + name.toHtmlEscaped() + " (player " + QString::number(player) + ") has dropped</span>");
 
-    // Host (player 0) dropping forces everyone else to drop too.
-    // Send our own GAMRDROP so the server clears all players.
-    // The callback chain from kaillera_game_drop() will trigger
-    // onGameEnded() which calls CoreStopEmulation().
-    if (player == 0 && player != playerno)
+    // Host (player 1) dropping forces everyone else to drop too.
+    if (player == 1 && player != playerno)
     {
         kaillera_game_drop();
     }
-
-    handling = false;
 }
 
 void KailleraServerBrowserDialog::onGameStarted(QString game, int player, int numPlayers)
 {
-    m_gameChat->append("<span style='color:blue;'>" + timestamp()
+    m_gameChat->append("<span style='color:" + QString(QApplication::palette().window().color().value() < 128 ? "cornflowerblue" : "darkblue") + ";'>" + timestamp()
         + "* Starting: " + game.toHtmlEscaped()
         + " (" + QString::number(player) + "/" + QString::number(numPlayers) + ")</span>");
-    m_gameChat->append("<span style='color:blue;'>" + timestamp()
+    m_gameChat->append("<span style='color:" + QString(QApplication::palette().window().color().value() < 128 ? "cornflowerblue" : "darkblue") + ";'>" + timestamp()
         + "- press \"Drop\" if emulator fails</span>");
 
     if (n02_kaillera_recording_enabled)
     {
-        m_gameChat->append("<span style='color:blue;'>" + timestamp()
+        m_gameChat->append("<span style='color:" + QString(QApplication::palette().window().color().value() < 128 ? "cornflowerblue" : "darkblue") + ";'>" + timestamp()
             + "- your game will be recorded</span>");
     }
 
@@ -997,9 +1060,14 @@ void KailleraServerBrowserDialog::onGameStarted(QString game, int player, int nu
 
 void KailleraServerBrowserDialog::onGameEnded()
 {
+    // Guard: kaillera_end_game_callback() can fire multiple times
+    // (once from kaillera_game_drop(), again from server echo GAMRDROP,
+    // and possibly again from GAMESHUT). Only act on the first.
+    if (!CoreHasInitKaillera())
+        return;
+
     CoreMarkKailleraGameInactive();
     CoreStopEmulation();
-    m_gameChat->append("<span style='color:blue;'>" + timestamp() + "Game ended.</span>");
 }
 
 void KailleraServerBrowserDialog::onNetsyncWait(int tx)
@@ -1210,7 +1278,8 @@ void KailleraServerBrowserDialog::onJoinGame()
     {
         // Track the game name for advertise
         m_currentGameName = gameName;
-        kaillera_join_game(gameId);
+        QByteArray gameBytes = gameName.toUtf8();
+        kaillera_join_game(gameId, gameBytes.constData());
     }
 }
 

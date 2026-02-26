@@ -32,6 +32,7 @@
 #include <QHeaderView>
 #include <QInputDialog>
 #include <QMessageBox>
+#include <QProgressDialog>
 #include <QUrl>
 #include <QApplication>
 #include <QClipboard>
@@ -45,6 +46,7 @@
 #include <cstring>
 #include <ctime>
 #include <fstream>
+#include <future>
 
 #include <windows.h>
 
@@ -68,12 +70,16 @@ KailleraNetplayDialog::KailleraNetplayDialog(QWidget* parent)
     // Auto-ping all servers on dialog load.
     // pingServerRow() blocks (up to 2s per server), so we defer to after
     // the dialog is shown and process events between each ping.
+    // Disable sorting during the loop so row indices stay stable.
     QTimer::singleShot(100, this, [this]() {
+        m_serverTable->setSortingEnabled(false);
         for (int i = 0; i < m_servers.size(); i++)
         {
             pingServerRow(i);
             QApplication::processEvents();
         }
+        m_serverTable->setSortingEnabled(true);
+        m_serverTable->sortByColumn(2, Qt::AscendingOrder);
     });
 
     // Restore saved geometry
@@ -82,6 +88,7 @@ KailleraNetplayDialog::KailleraNetplayDialog(QWidget* parent)
     {
         restoreGeometry(QByteArray::fromBase64(QByteArray::fromStdString(geom)));
     }
+
 }
 
 KailleraNetplayDialog::~KailleraNetplayDialog()
@@ -93,6 +100,15 @@ KailleraNetplayDialog::~KailleraNetplayDialog()
     saveSettings();
     saveServerList();
     saveP2PStoredUsers();
+
+    // Save server table column widths
+    if (m_serverTable)
+    {
+        QStringList widths;
+        for (int i = 0; i < m_serverTable->columnCount(); ++i)
+            widths << QString::number(m_serverTable->columnWidth(i));
+        CoreSettingsSetValue(SettingsID::Kaillera_ServerColumnWidths, widths.join(",").toStdString());
+    }
 
     // Save geometry
     CoreSettingsSetValue(SettingsID::Kaillera_NetplayGeometry,
@@ -184,6 +200,20 @@ QWidget* KailleraNetplayDialog::createServerTab()
     connect(m_serverTable, &QWidget::customContextMenuRequested, this, &KailleraNetplayDialog::onServerRightClicked);
     layout->addWidget(m_serverTable);
 
+    // Restore saved column widths
+    std::string savedWidths = CoreSettingsGetStringValue(SettingsID::Kaillera_ServerColumnWidths);
+    if (!savedWidths.empty())
+    {
+        QStringList widths = QString::fromStdString(savedWidths).split(",");
+        for (int i = 0; i < widths.size() && i < m_serverTable->columnCount(); ++i)
+        {
+            int w = widths[i].toInt();
+            if (w > 0)
+                m_serverTable->setColumnWidth(i, w);
+        }
+    }
+
+
     // Buttons
     auto* btnLayout = new QHBoxLayout();
     m_btnAdd = new QPushButton("Add", tab);
@@ -208,6 +238,7 @@ QWidget* KailleraNetplayDialog::createServerTab()
     btnLayout->addStretch();
     btnLayout->addWidget(m_btnConnect);
     layout->addLayout(btnLayout);
+
 
     return tab;
 }
@@ -1038,8 +1069,35 @@ void KailleraNetplayDialog::onConnectServer()
     // Initialize kaillera core for server mode
     if (kaillera_core_initialize(0, APP, usernameBytes.data(), 1))
     {
-        // Connect to the selected server
-        if (kaillera_core_connect(ipBytes.data(), port))
+        // Run connect on a background thread so the UI stays responsive
+        // (kaillera_core_connect blocks for up to 15 seconds on timeout)
+        auto connectFuture = std::async(std::launch::async, [&]() {
+            return kaillera_core_connect(ipBytes.data(), port);
+        });
+
+        // Show a progress dialog while connecting
+        QProgressDialog progress("Connecting to " + m_servers[idx].name + "...",
+                                 "Cancel", 0, 0, this);
+        progress.setWindowModality(Qt::WindowModal);
+        progress.setMinimumDuration(0);
+        progress.show();
+
+        // Poll until the future completes or user cancels
+        while (connectFuture.wait_for(std::chrono::milliseconds(50)) != std::future_status::ready)
+        {
+            QApplication::processEvents();
+            if (progress.wasCanceled())
+            {
+                // Can't cancel the blocking socket wait, so keep processing events until it finishes
+                while (connectFuture.wait_for(std::chrono::milliseconds(50)) != std::future_status::ready)
+                    QApplication::processEvents();
+                kaillera_core_cleanup();
+                return;
+            }
+        }
+        progress.close();
+
+        if (connectFuture.get())
         {
             // Hide the netplay dialog while the server browser is open
             hide();
@@ -1059,9 +1117,12 @@ void KailleraNetplayDialog::onConnectServer()
         }
         else
         {
+            QString errorMsg = QString::fromUtf8(kaillera_core_get_last_error());
             kaillera_core_cleanup();
+            if (errorMsg.isEmpty())
+                errorMsg = "Failed to connect to server";
             QMessageBox::warning(this, "Connection Error",
-                                 "Failed to connect to server: " + m_servers[idx].name);
+                                 errorMsg + "\n\nServer: " + m_servers[idx].name);
         }
     }
     else

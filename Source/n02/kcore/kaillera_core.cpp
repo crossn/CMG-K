@@ -14,7 +14,7 @@
 #define GetTickCount() 0
 #endif
 
-#define KAILLERA_CONNECTION_RESP_MAX_DELAY 15000
+#define KAILLERA_CONNECTION_RESP_MAX_DELAY 5000
 #define KAILLERA_LOGIN_RESP_MAX_DELAY 10000
 #define KAILLERA_GAME_LOSTCON_TIMEOUT 10000
 #define KAILLERA_TIMEOUT_RESET 60000
@@ -23,6 +23,11 @@
 
 extern int PACKETLOSSCOUNT;
 static bool kaillera_spoofing = false;  // Set during connect based on kaillera_spoof_ping
+static char kaillera_last_error[256] = "";
+
+const char* kaillera_core_get_last_error() {
+	return kaillera_last_error;
+}
 
 typedef struct {
 	k_message * connection;
@@ -203,34 +208,41 @@ int kaillera_core_get_port(){
 }
 
 bool kaillera_core_connect(char * ip, int port){
-	
+
+	kaillera_last_error[0] = 0;
+
 	if (ip == NULL)
 		return false;
 
 	kaillera_core_debug("Connecting to %s:%i", ip, port);
-	
+
 	strncpy(KAILLERAC.IP, (ip != NULL) ? ip : "", sizeof(KAILLERAC.IP) - 1);
 	KAILLERAC.IP[sizeof(KAILLERAC.IP) - 1] = 0;
-	
+
 	k_socket ksock;
 	ksock.initialize(0, 2048);
-	
+
 	if (ksock.set_address(ip, port)){
 		ksock.send("HELLO0.83", 10);
-		
+
 		DWORD tout = p2p_GetTime();
-		
+
 		while ((!k_socket::check_sockets(0, 100) || !ksock.has_data()) && p2p_GetTime() - tout < KAILLERA_CONNECTION_RESP_MAX_DELAY);
-		
-		if (ksock.has_data()) {
-			
+
+		if (!ksock.has_data()) {
+			strncpy(kaillera_last_error, "Connection timed out - you may be temporarily blocked by this server", sizeof(kaillera_last_error) - 1);
+			return false;
+		}
+
+		{
+
 				char srsp[257];
 				srsp[0] = 0;
 				int srspl = 256;
 				sockaddr_in addr;
-			
+
 			kaillera_core_debug("server replied");
-			
+
 				if (ksock.check_recv(srsp, &srspl, false, &addr)) {
 					if (srspl < 0)
 						srspl = 0;
@@ -239,25 +251,25 @@ bool kaillera_core_connect(char * ip, int port){
 					srsp[srspl] = 0;
 
 					if (srspl >= 9 && strncmp("HELLOD00D", srsp, 9) == 0) {
-						
+
 						kaillera_core_debug("logging in");
-						
+
 						int server_port = atoi(srsp + 9);
 						if (server_port <= 0 || server_port > 65535) {
-							kaillera_error_callback("error connecting to server");
+							strncpy(kaillera_last_error, "Error connecting to server", sizeof(kaillera_last_error) - 1);
 							return false;
 						}
 						addr.sin_port = htons((u_short)server_port);
 						KAILLERAC.connection->set_addr(&addr);
 						KAILLERAC.USERSTAT = 1;
 						KAILLERAC.PLAYERSTAT = -1;
-					
+
 					k_instruction ki;
 					ki.type = USERLOGN;
 					ki.store_string(KAILLERAC.APP);
 					ki.store_char(KAILLERAC.conset);
 					ki.set_username(KAILLERAC.USERNAME);
-					
+
 					KAILLERAC.connection->send_instruction(&ki);
 
 					// Ping spoofing: send 4 delayed pongs to make server think we have higher latency
@@ -278,14 +290,14 @@ bool kaillera_core_connect(char * ip, int port){
 					}
 				} else {
 					if (strcmp("TOO", srsp) == 0) {
-						kaillera_error_callback("Server is full");
+						strncpy(kaillera_last_error, "Server is full", sizeof(kaillera_last_error) - 1);
 					} else {
-						kaillera_error_callback("error connecting to server");
+						strncpy(kaillera_last_error, "Error connecting to server", sizeof(kaillera_last_error) - 1);
 					//protocol different or unrecognized protocol
 				}
 			}
 		}
-		
+
 		return false;
 	}
 	return false;
@@ -597,8 +609,14 @@ void kaillera_kick_user (unsigned short id) {
 	}
 }
 
-void kaillera_join_game(unsigned int id){
+void kaillera_join_game(unsigned int id, const char* gameName){
 	if (!KAILLERAC.connection) return;
+
+	// Set the game name so GAMEBEGN passes it to the emulator
+	if (gameName && gameName[0]) {
+		strncpy(KAILLERAC.GAME, gameName, sizeof(KAILLERAC.GAME) - 1);
+		KAILLERAC.GAME[sizeof(KAILLERAC.GAME) - 1] = 0;
+	}
 
 	KAILLERAC.game_id_requested = false;
 	KAILLERAC.game_id = id;
