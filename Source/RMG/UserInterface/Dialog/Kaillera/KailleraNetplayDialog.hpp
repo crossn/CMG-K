@@ -16,7 +16,6 @@
 #include <QTimer>
 #include <QTabWidget>
 #include <QTableWidget>
-#include <QListWidget>
 #include <QLineEdit>
 #include <QComboBox>
 #include <QPushButton>
@@ -117,7 +116,7 @@ private:
 
     // P2P tab controls (Host sub-tab)
     QLineEdit* m_p2pGameEdit = nullptr;
-    QListWidget* m_p2pGameList = nullptr;
+    QTableWidget* m_p2pGameList = nullptr;
     QLineEdit* m_p2pPortEdit = nullptr;
     QPushButton* m_btnP2PHost = nullptr;
 

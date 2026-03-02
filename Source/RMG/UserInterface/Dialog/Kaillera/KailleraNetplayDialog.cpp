@@ -80,7 +80,7 @@ KailleraNetplayDialog::KailleraNetplayDialog(QWidget* parent)
             QApplication::processEvents();
         }
         m_serverTable->setSortingEnabled(true);
-        m_serverTable->sortByColumn(2, Qt::AscendingOrder);
+        m_serverTable->sortByColumn(1, Qt::AscendingOrder);
     });
 
     // Restore saved geometry
@@ -101,15 +101,6 @@ KailleraNetplayDialog::~KailleraNetplayDialog()
     saveSettings();
     saveServerList();
     saveP2PStoredUsers();
-
-    // Save server table column widths
-    if (m_serverTable)
-    {
-        QStringList widths;
-        for (int i = 0; i < m_serverTable->columnCount(); ++i)
-            widths << QString::number(m_serverTable->columnWidth(i));
-        CoreSettingsSetValue(SettingsID::Kaillera_ServerColumnWidths, widths.join(",").toStdString());
-    }
 
     // Save geometry
     CoreSettingsSetValue(SettingsID::Kaillera_NetplayGeometry,
@@ -186,33 +177,26 @@ QWidget* KailleraNetplayDialog::createServerTab()
 
     // Server list table (3 columns: Name, IP, Ping)
     m_serverTable = new QTableWidget(0, 3, tab);
-    m_serverTable->setHorizontalHeaderLabels({"Name", "IP", "Ping"});
-    m_serverTable->horizontalHeader()->setStretchLastSection(true);
+    m_serverTable->setHorizontalHeaderLabels({"Name", "Ping", "IP"});
     m_serverTable->verticalHeader()->setVisible(false);
     m_serverTable->setShowGrid(false);
-    m_serverTable->setStyleSheet("QTableWidget { background-color: #3a3a3a; }");
     m_serverTable->setSelectionBehavior(QAbstractItemView::SelectRows);
     m_serverTable->setSelectionMode(QAbstractItemView::SingleSelection);
     m_serverTable->setEditTriggers(QAbstractItemView::NoEditTriggers);
     m_serverTable->setSortingEnabled(true);
     m_serverTable->horizontalHeader()->setMinimumSectionSize(16);
+    // Stretch the IP column (index 1) so IPs aren't truncated;
+    // Name and Ping stay at fixed widths
+    m_serverTable->horizontalHeader()->setStretchLastSection(false);
+    m_serverTable->horizontalHeader()->setSectionResizeMode(0, QHeaderView::Interactive);
+    m_serverTable->horizontalHeader()->setSectionResizeMode(1, QHeaderView::Interactive);
+    m_serverTable->horizontalHeader()->setSectionResizeMode(2, QHeaderView::Stretch);
+    m_serverTable->setColumnWidth(0, 150);
+    m_serverTable->setColumnWidth(1, 60);
     m_serverTable->setContextMenuPolicy(Qt::CustomContextMenu);
     connect(m_serverTable, &QTableWidget::cellDoubleClicked, this, &KailleraNetplayDialog::onServerDoubleClicked);
     connect(m_serverTable, &QWidget::customContextMenuRequested, this, &KailleraNetplayDialog::onServerRightClicked);
     layout->addWidget(m_serverTable);
-
-    // Restore saved column widths
-    std::string savedWidths = CoreSettingsGetStringValue(SettingsID::Kaillera_ServerColumnWidths);
-    if (!savedWidths.empty())
-    {
-        QStringList widths = QString::fromStdString(savedWidths).split(",");
-        for (int i = 0; i < widths.size() && i < m_serverTable->columnCount(); ++i)
-        {
-            int w = widths[i].toInt();
-            if (w > 0)
-                m_serverTable->setColumnWidth(i, w);
-        }
-    }
 
 
     // Buttons
@@ -264,33 +248,43 @@ QWidget* KailleraNetplayDialog::createP2PTab()
     gameLayout->addWidget(m_p2pGameEdit);
     hostLayout->addLayout(gameLayout);
 
-    // Game list
-    m_p2pGameList = new QListWidget(hostTab);
-    m_p2pGameList->setStyleSheet("QListWidget { background-color: #3a3a3a; }");
+    // Game list (single-column table to match server list appearance)
+    m_p2pGameList = new QTableWidget(0, 1, hostTab);
+    m_p2pGameList->setHorizontalHeaderLabels({"Game"});
+    m_p2pGameList->horizontalHeader()->setStretchLastSection(true);
+    m_p2pGameList->verticalHeader()->setVisible(false);
+    m_p2pGameList->setShowGrid(false);
+    m_p2pGameList->setSelectionBehavior(QAbstractItemView::SelectRows);
+    m_p2pGameList->setSelectionMode(QAbstractItemView::SingleSelection);
+    m_p2pGameList->setEditTriggers(QAbstractItemView::NoEditTriggers);
+    m_p2pGameList->setSortingEnabled(true);
 
     // Populate from kailleraInfos game list (double-null terminated)
     if (infos.gameList)
     {
+        m_p2pGameList->setSortingEnabled(false);
         const char* p = infos.gameList;
         while (*p)
         {
-            QString gameName = QString::fromUtf8(p);
-            m_p2pGameList->addItem(gameName);
+            int row = m_p2pGameList->rowCount();
+            m_p2pGameList->insertRow(row);
+            m_p2pGameList->setItem(row, 0, new QTableWidgetItem(QString::fromUtf8(p)));
             p += strlen(p) + 1;
         }
+        m_p2pGameList->setSortingEnabled(true);
     }
 
     // Select first game by default
-    if (m_p2pGameList->count() > 0)
+    if (m_p2pGameList->rowCount() > 0)
     {
-        m_p2pGameList->setCurrentRow(0);
-        m_p2pGameEdit->setText(m_p2pGameList->item(0)->text());
+        m_p2pGameList->selectRow(0);
+        m_p2pGameEdit->setText(m_p2pGameList->item(0, 0)->text());
     }
 
-    connect(m_p2pGameList, &QListWidget::currentItemChanged, this, [this](QListWidgetItem* current, QListWidgetItem*) {
-        if (current)
+    connect(m_p2pGameList, &QTableWidget::currentCellChanged, this, [this](int row, int, int, int) {
+        if (row >= 0 && m_p2pGameList->item(row, 0))
         {
-            m_p2pGameEdit->setText(current->text());
+            m_p2pGameEdit->setText(m_p2pGameList->item(row, 0)->text());
         }
     });
 
@@ -538,6 +532,17 @@ void KailleraNetplayDialog::saveServerList()
     CoreSettingsSave();
 }
 
+// QTableWidgetItem subclass that sorts numerically by Qt::UserRole data
+class NumericSortItem : public QTableWidgetItem
+{
+public:
+    using QTableWidgetItem::QTableWidgetItem;
+    bool operator<(const QTableWidgetItem& other) const override
+    {
+        return data(Qt::UserRole).toInt() < other.data(Qt::UserRole).toInt();
+    }
+};
+
 void KailleraNetplayDialog::refreshServerListDisplay()
 {
     m_serverTable->setSortingEnabled(false);
@@ -547,10 +552,18 @@ void KailleraNetplayDialog::refreshServerListDisplay()
         auto* nameItem = new QTableWidgetItem(m_servers[i].name);
         nameItem->setData(Qt::UserRole, i); // store m_servers index
         m_serverTable->setItem(i, 0, nameItem);
-        m_serverTable->setItem(i, 1, new QTableWidgetItem(m_servers[i].host));
-        m_serverTable->setItem(i, 2, new QTableWidgetItem(m_servers[i].ping));
+        auto* pingItem = new NumericSortItem(m_servers[i].ping);
+        // Store numeric ping for proper sorting (non-numeric like "timeout" sort last)
+        QString pingStr = m_servers[i].ping;
+        pingStr.remove("ms");
+        bool ok;
+        int pingVal = pingStr.toInt(&ok);
+        pingItem->setData(Qt::UserRole, ok ? pingVal : 999999);
+        m_serverTable->setItem(i, 1, pingItem);
+        m_serverTable->setItem(i, 2, new QTableWidgetItem(m_servers[i].host));
     }
     m_serverTable->setSortingEnabled(true);
+    m_serverTable->sortByColumn(1, Qt::AscendingOrder);
 }
 
 int KailleraNetplayDialog::serverIndexFromRow(int row)
@@ -640,12 +653,31 @@ void KailleraNetplayDialog::onTabChanged(int index)
 
 void KailleraNetplayDialog::onAddServer()
 {
-    bool ok;
-    QString name = QInputDialog::getText(this, "Add Server", "Server Name:", QLineEdit::Normal, "", &ok);
-    if (!ok || name.isEmpty()) return;
+    QDialog dlg(this);
+    dlg.setWindowTitle("Add Server");
+    auto* layout = new QVBoxLayout(&dlg);
+    auto* nameEdit = new QLineEdit(&dlg);
+    nameEdit->setPlaceholderText("Server Name");
+    auto* hostEdit = new QLineEdit(&dlg);
+    hostEdit->setPlaceholderText("Host (ip:port)");
+    hostEdit->setText("127.0.0.1:27888");
+    auto* btnLayout = new QHBoxLayout();
+    auto* btnOk = new QPushButton("OK", &dlg);
+    auto* btnCancel = new QPushButton("Cancel", &dlg);
+    btnLayout->addStretch();
+    btnLayout->addWidget(btnOk);
+    btnLayout->addWidget(btnCancel);
+    layout->addWidget(nameEdit);
+    layout->addWidget(hostEdit);
+    layout->addLayout(btnLayout);
+    connect(btnOk, &QPushButton::clicked, &dlg, &QDialog::accept);
+    connect(btnCancel, &QPushButton::clicked, &dlg, &QDialog::reject);
+    nameEdit->setFocus();
 
-    QString host = QInputDialog::getText(this, "Add Server", "Host (ip:port):", QLineEdit::Normal, "127.0.0.1:27888", &ok);
-    if (!ok || host.isEmpty()) return;
+    if (dlg.exec() != QDialog::Accepted) return;
+    QString name = nameEdit->text().trimmed();
+    QString host = hostEdit->text().trimmed();
+    if (name.isEmpty() || host.isEmpty()) return;
 
     m_servers.append({name, host, "-"});
     refreshServerListDisplay();
@@ -657,14 +689,32 @@ void KailleraNetplayDialog::onEditServer()
     int idx = serverIndexFromRow(row);
     if (idx < 0 || idx >= m_servers.size()) return;
 
-    bool ok;
-    QString name = QInputDialog::getText(this, "Edit Server", "Server Name:",
-                                         QLineEdit::Normal, m_servers[idx].name, &ok);
-    if (!ok) return;
+    QDialog dlg(this);
+    dlg.setWindowTitle("Edit Server");
+    auto* layout = new QVBoxLayout(&dlg);
+    auto* nameEdit = new QLineEdit(&dlg);
+    nameEdit->setPlaceholderText("Server Name");
+    nameEdit->setText(m_servers[idx].name);
+    auto* hostEdit = new QLineEdit(&dlg);
+    hostEdit->setPlaceholderText("Host (ip:port)");
+    hostEdit->setText(m_servers[idx].host);
+    auto* btnLayout = new QHBoxLayout();
+    auto* btnOk = new QPushButton("OK", &dlg);
+    auto* btnCancel = new QPushButton("Cancel", &dlg);
+    btnLayout->addStretch();
+    btnLayout->addWidget(btnOk);
+    btnLayout->addWidget(btnCancel);
+    layout->addWidget(nameEdit);
+    layout->addWidget(hostEdit);
+    layout->addLayout(btnLayout);
+    connect(btnOk, &QPushButton::clicked, &dlg, &QDialog::accept);
+    connect(btnCancel, &QPushButton::clicked, &dlg, &QDialog::reject);
+    nameEdit->setFocus();
 
-    QString host = QInputDialog::getText(this, "Edit Server", "Host (ip:port):",
-                                         QLineEdit::Normal, m_servers[idx].host, &ok);
-    if (!ok) return;
+    if (dlg.exec() != QDialog::Accepted) return;
+    QString name = nameEdit->text().trimmed();
+    QString host = hostEdit->text().trimmed();
+    if (name.isEmpty() || host.isEmpty()) return;
 
     m_servers[idx].name = name;
     m_servers[idx].host = host;
@@ -714,16 +764,6 @@ void KailleraNetplayDialog::onServerRightClicked(QPoint pos)
     }
 }
 
-// QTableWidgetItem subclass that sorts numerically by Qt::UserRole data
-class NumericSortItem : public QTableWidgetItem
-{
-public:
-    using QTableWidgetItem::QTableWidgetItem;
-    bool operator<(const QTableWidgetItem& other) const override
-    {
-        return data(Qt::UserRole).toInt() < other.data(Qt::UserRole).toInt();
-    }
-};
 
 void KailleraNetplayDialog::onLiveServerList()
 {
@@ -946,6 +986,7 @@ void KailleraNetplayDialog::onLiveServerList()
                 QApplication::processEvents();
             }
             liveTable->setSortingEnabled(true);
+            liveTable->sortByColumn(2, Qt::AscendingOrder);
             liveLabel->setText(QString::number(total) + " servers found");
         });
     });
@@ -1166,8 +1207,12 @@ void KailleraNetplayDialog::onConnectServer()
             loop.exec();
             // Browser dialog handles disconnect/cleanup on close
 
-            // Re-show the netplay dialog
-            show();
+            // Re-show the netplay dialog, unless the main window
+            // is closing (user clicked X on the emulator window)
+            if (parentWidget() && parentWidget()->isVisible())
+                show();
+            else
+                accept();
         }
         else
         {
