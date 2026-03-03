@@ -34,6 +34,7 @@
 #include <QApplication>
 #include <QColor>
 #include <QIcon>
+#include <QProxyStyle>
 #include <QStyle>
 #include <windows.h>
 
@@ -66,6 +67,24 @@ QColor blendColors(const QColor& fg, const QColor& bg, int fgWeight)
         (fg.green() * clampedWeight + bg.green() * bgWeight) / 100,
         (fg.blue() * clampedWeight + bg.blue() * bgWeight) / 100);
 }
+
+class ThinSplitterStyle final : public QProxyStyle
+{
+public:
+    explicit ThinSplitterStyle(QStyle* baseStyle)
+        : QProxyStyle(baseStyle)
+    {
+    }
+
+    int pixelMetric(PixelMetric metric, const QStyleOption* option, const QWidget* widget) const override
+    {
+        if (metric == QStyle::PM_SplitterWidth)
+        {
+            return 1;
+        }
+        return QProxyStyle::pixelMetric(metric, option, widget);
+    }
+};
 }
 
 // QTableWidgetItem subclass that sorts numerically instead of alphabetically
@@ -180,10 +199,38 @@ void KailleraServerBrowserDialog::setupUI()
         "  border-radius: 10px;"
         "  background-color: palette(base);"
         "}"
+        "QWidget#KailleraPaneLeftJoined {"
+        "  border: 1px solid palette(mid);"
+        "  border-right: none;"
+        "  border-top-left-radius: 10px;"
+        "  border-bottom-left-radius: 10px;"
+        "  border-top-right-radius: 0px;"
+        "  border-bottom-right-radius: 0px;"
+        "  background-color: palette(base);"
+        "}"
+        "QWidget#KailleraPaneRightJoined {"
+        "  border: 1px solid palette(mid);"
+        "  border-left: none;"
+        "  border-top-left-radius: 0px;"
+        "  border-bottom-left-radius: 0px;"
+        "  border-top-right-radius: 10px;"
+        "  border-bottom-right-radius: 10px;"
+        "  background-color: palette(base);"
+        "}"
         "QWidget#KailleraPaneHeader {"
         "  border: none;"
         "  border-bottom: 1px solid palette(mid);"
+        "  min-height: 30px;"
         "  background-color: transparent;"
+        "}"
+        "QSplitter#KailleraJoinedSplitter::handle {"
+        "  background-color: palette(mid);"
+        "  margin: 0px;"
+        "  padding: 0px;"
+        "}"
+        "QSplitter#KailleraJoinedSplitter::handle:horizontal {"
+        "  width: 1px;"
+        "  border: none;"
         "}"
         "QLabel#KailleraPaneTitle {"
         "  font-weight: 700;"
@@ -281,8 +328,8 @@ void KailleraServerBrowserDialog::setupUI()
         "  border-radius: 7px;"
         "  min-height: 20px;"
         "  max-height: 20px;"
-        "  min-width: 56px;"
-        "  max-width: 56px;"
+        "  min-width: 102px;"
+        "  max-width: 102px;"
         "  padding: 0px 6px;"
         "  background-color: palette(window);"
         "  font-weight: 600;"
@@ -322,10 +369,14 @@ void KailleraServerBrowserDialog::setupUI()
 
     // Lobby chat (left) + User table (right)
     m_topSplitter = new QSplitter(Qt::Horizontal, this);
-    m_topSplitter->setHandleWidth(6);
+    m_topSplitter->setObjectName("KailleraJoinedSplitter");
+    m_topSplitter->setHandleWidth(1);
+    auto* topSplitterStyle = new ThinSplitterStyle(m_topSplitter->style());
+    topSplitterStyle->setParent(m_topSplitter);
+    m_topSplitter->setStyle(topSplitterStyle);
 
     auto* lobbyPane = new QWidget(this);
-    lobbyPane->setObjectName("KailleraPane");
+    lobbyPane->setObjectName("KailleraPaneLeftJoined");
     auto* lobbyPaneLayout = new QVBoxLayout(lobbyPane);
     lobbyPaneLayout->setContentsMargins(0, 0, 0, 0);
     lobbyPaneLayout->setSpacing(0);
@@ -393,7 +444,7 @@ void KailleraServerBrowserDialog::setupUI()
 
     // User list — styled as a selectable list
     auto* usersPane = new QWidget(this);
-    usersPane->setObjectName("KailleraPane");
+    usersPane->setObjectName("KailleraPaneRightJoined");
     auto* usersPaneLayout = new QVBoxLayout(usersPane);
     usersPaneLayout->setContentsMargins(0, 0, 0, 0);
     usersPaneLayout->setSpacing(0);
@@ -525,12 +576,16 @@ QWidget* KailleraServerBrowserDialog::createGameRoomWidget()
 
     // Main game room area: Game chat (left) + Player table (center) + Buttons (right)
     m_roomSplitter = new QSplitter(Qt::Horizontal, widget);
-    m_roomSplitter->setHandleWidth(6);
+    m_roomSplitter->setObjectName("KailleraJoinedSplitter");
+    m_roomSplitter->setHandleWidth(1);
+    auto* roomSplitterStyle = new ThinSplitterStyle(m_roomSplitter->style());
+    roomSplitterStyle->setParent(m_roomSplitter);
+    m_roomSplitter->setStyle(roomSplitterStyle);
     auto* roomSplitter = m_roomSplitter;
 
     // Game chat (left)
     auto* chatPane = new QWidget(widget);
-    chatPane->setObjectName("KailleraPane");
+    chatPane->setObjectName("KailleraPaneLeftJoined");
     auto* chatPaneLayout = new QVBoxLayout(chatPane);
     chatPaneLayout->setContentsMargins(0, 0, 0, 0);
     chatPaneLayout->setSpacing(0);
@@ -547,7 +602,7 @@ QWidget* KailleraServerBrowserDialog::createGameRoomWidget()
     chatHeaderLayout->addWidget(chatHeaderIcon);
     chatHeaderLayout->addWidget(chatHeaderTitle);
     chatHeaderLayout->addStretch();
-    m_btnSwapChat = new QPushButton("Swap", chatHeader);
+    m_btnSwapChat = new QPushButton("Show lobbies", chatHeader);
     m_btnSwapChat->setObjectName("KailleraTinyButton");
     m_btnSwapChat->setIcon(themedLineIcon("swap-line"));
     m_btnSwapChat->setToolTip("Show open lobbies");
@@ -632,7 +687,7 @@ QWidget* KailleraServerBrowserDialog::createGameRoomWidget()
 
     // Player table (center)
     auto* playersPane = new QWidget(widget);
-    playersPane->setObjectName("KailleraPane");
+    playersPane->setObjectName("KailleraPaneRightJoined");
     auto* playersPaneLayout = new QVBoxLayout(playersPane);
     playersPaneLayout->setContentsMargins(0, 0, 0, 0);
     playersPaneLayout->setSpacing(0);
@@ -763,13 +818,15 @@ QWidget* KailleraServerBrowserDialog::createGameRoomWidget()
     connect(m_btnOptions, &QPushButton::clicked, this, &KailleraServerBrowserDialog::onOptions);
     connect(m_btnAdvertise, &QPushButton::clicked, this, &KailleraServerBrowserDialog::onAdvertise);
 
-    roomSplitter->addWidget(rightWidget);
+    roomSplitter->setStretchFactor(0, 3);  // lobby chat
+    roomSplitter->setStretchFactor(1, 2);  // lobby
 
-    roomSplitter->setStretchFactor(0, 3);  // game chat
-    roomSplitter->setStretchFactor(1, 2);  // player table
-    roomSplitter->setStretchFactor(2, 0);  // buttons (fixed width)
-
-    layout->addWidget(roomSplitter);
+    auto* roomRow = new QHBoxLayout();
+    roomRow->setContentsMargins(0, 0, 0, 0);
+    roomRow->setSpacing(8);
+    roomRow->addWidget(roomSplitter, 1);
+    roomRow->addWidget(rightWidget);
+    layout->addLayout(roomRow);
 
     return widget;
 }
@@ -921,8 +978,8 @@ void KailleraServerBrowserDialog::setRoomChatSwapView(bool showLobbies)
     }
     if (m_btnSwapChat != nullptr)
     {
-        m_btnSwapChat->setText(showLobbies ? "Chat" : "Swap");
-        m_btnSwapChat->setToolTip(showLobbies ? "Return to game chat" : "Show open lobbies");
+        m_btnSwapChat->setText(showLobbies ? "Show chat" : "Show lobbies");
+        m_btnSwapChat->setToolTip(showLobbies ? "Show lobby chat" : "Show open lobbies");
     }
     if (showLobbies)
     {
