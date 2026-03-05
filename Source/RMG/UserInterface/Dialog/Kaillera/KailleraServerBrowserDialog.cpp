@@ -452,11 +452,10 @@ void KailleraServerBrowserDialog::connectSignals()
             this, &KailleraServerBrowserDialog::onNetsyncWait);
 
     // Wire Record checkbox to recording flag
-    n02_kaillera_recording_enabled = CoreSettingsGetBoolValue(SettingsID::Kaillera_RecordingEnabled);
+    n02_kaillera_recording_enabled = CoreGetKailleraEffectiveRecordingDefault();
     m_recordCheck->setChecked(n02_kaillera_recording_enabled);
     connect(m_recordCheck, &QCheckBox::toggled, this, [](bool checked) {
         n02_kaillera_recording_enabled = checked;
-        CoreSettingsSetValue(SettingsID::Kaillera_RecordingEnabled, checked);
     });
 }
 

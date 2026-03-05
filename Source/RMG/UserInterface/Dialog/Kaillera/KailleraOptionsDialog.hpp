@@ -14,7 +14,6 @@
 
 #include <QDialog>
 #include <QSpinBox>
-#include <QCheckBox>
 
 class KailleraOptionsDialog : public QDialog
 {
@@ -29,8 +28,6 @@ private:
 
     QSpinBox* m_maxPlayers = nullptr;
     QSpinBox* m_maxPing = nullptr;
-    QCheckBox* m_flashOnJoin = nullptr;
-    QCheckBox* m_beepOnJoin = nullptr;
 };
 
 #endif // _WIN32

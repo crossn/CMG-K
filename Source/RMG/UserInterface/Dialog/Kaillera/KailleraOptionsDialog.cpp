@@ -18,14 +18,13 @@
 #include <QFormLayout>
 #include <QDialogButtonBox>
 #include <QIcon>
-#include <QLabel>
 
 KailleraOptionsDialog::KailleraOptionsDialog(QWidget* parent)
     : QDialog(parent)
 {
     setWindowIcon(QIcon(":Resource/Kaillera.svg"));
     setWindowTitle("Kaillera Options");
-    setFixedSize(280, 200);
+    setFixedSize(280, 150);
 
     auto* layout = new QVBoxLayout(this);
 
@@ -39,12 +38,7 @@ KailleraOptionsDialog::KailleraOptionsDialog(QWidget* parent)
     m_maxPing->setRange(1, 9999);
     form->addRow("Max ping:", m_maxPing);
 
-    m_flashOnJoin = new QCheckBox("Flash taskbar on player join", this);
-    m_beepOnJoin = new QCheckBox("Beep on player join", this);
-
     layout->addLayout(form);
-    layout->addWidget(m_flashOnJoin);
-    layout->addWidget(m_beepOnJoin);
     layout->addStretch();
 
     auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, this);
@@ -62,16 +56,12 @@ void KailleraOptionsDialog::loadSettings()
 {
     m_maxPlayers->setValue(CoreSettingsGetIntValue(SettingsID::Kaillera_MaxPlayers));
     m_maxPing->setValue(CoreSettingsGetIntValue(SettingsID::Kaillera_MaxPing));
-    m_flashOnJoin->setChecked(CoreSettingsGetBoolValue(SettingsID::Kaillera_FlashOnJoin));
-    m_beepOnJoin->setChecked(CoreSettingsGetBoolValue(SettingsID::Kaillera_BeepOnJoin));
 }
 
 void KailleraOptionsDialog::saveSettings()
 {
     CoreSettingsSetValue(SettingsID::Kaillera_MaxPlayers, m_maxPlayers->value());
     CoreSettingsSetValue(SettingsID::Kaillera_MaxPing, m_maxPing->value());
-    CoreSettingsSetValue(SettingsID::Kaillera_FlashOnJoin, m_flashOnJoin->isChecked());
-    CoreSettingsSetValue(SettingsID::Kaillera_BeepOnJoin, m_beepOnJoin->isChecked());
     CoreSettingsSave();
 }
 
