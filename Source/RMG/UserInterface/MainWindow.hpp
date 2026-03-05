@@ -187,6 +187,7 @@ class MainWindow : public QMainWindow, private Ui::MainWindow
     void showNetplaySessionDialog(QWebSocket* webSocket, QJsonObject json, QString sessionFile);
     QString findRomByName(QString gameName);
     void tryAutoStartNetplayOnStartup(void);
+    void refreshKailleraRecordingStorageStatus(bool showStartupWarning);
 #endif // NETPLAY
   protected:
     void showEvent(QShowEvent *event) Q_DECL_OVERRIDE;
@@ -254,6 +255,7 @@ class MainWindow : public QMainWindow, private Ui::MainWindow
     void on_Kaillera_ChatReceived(QString nickname, QString message);
     void on_Kaillera_PlayerDropped(QString nickname, int playerNum);
     void on_Kaillera_GameEnded(void);
+    void on_Kaillera_RecordingFileClosed(void);
     void on_RomBrowser_RomListRefreshFinished(bool canceled);
 #endif
 

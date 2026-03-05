@@ -50,6 +50,11 @@
 
 #include <windows.h>
 
+static QString getKailleraRecordsDirectory()
+{
+    return QString::fromStdString(CoreGetKailleraRecordsDirectory());
+}
+
 KailleraNetplayDialog::KailleraNetplayDialog(QWidget* parent)
     : QDialog(parent)
 {
@@ -1525,10 +1530,11 @@ void KailleraNetplayDialog::populatePlaybackList()
     m_playbackTable->setSortingEnabled(false);
     m_playbackTable->setRowCount(0);
 
-    QDir recordsDir("./records");
+    const QString recordsPath = getKailleraRecordsDirectory();
+    QDir recordsDir(recordsPath);
     if (!recordsDir.exists())
     {
-        QDir(".").mkdir("records");
+        QDir().mkpath(recordsPath);
         m_playbackTable->setSortingEnabled(true);
         return;
     }
@@ -1772,7 +1778,7 @@ void KailleraNetplayDialog::onPlaybackPlay()
     QTableWidgetItem* fnItem = m_playbackTable->item(row, 5);
     if (!fnItem) return;
 
-    QString filename = "./records/" + fnItem->text();
+    QString filename = QDir(getKailleraRecordsDirectory()).filePath(fnItem->text());
     QByteArray pathBytes = filename.toUtf8();
 
     // Ensure playback mode is active
@@ -1819,7 +1825,7 @@ void KailleraNetplayDialog::onPlaybackDelete()
         return;
     }
 
-    QString fullPath = "./records/" + filename;
+    QString fullPath = QDir(getKailleraRecordsDirectory()).filePath(filename);
     QFile::remove(fullPath);
     populatePlaybackList();
 }
@@ -1831,8 +1837,9 @@ void KailleraNetplayDialog::onPlaybackRefresh()
 
 void KailleraNetplayDialog::onPlaybackOpenFolder()
 {
-    QDir(".").mkdir("records");
-    QDesktopServices::openUrl(QUrl::fromLocalFile(QDir("./records").absolutePath()));
+    const QString recordsPath = getKailleraRecordsDirectory();
+    QDir().mkpath(recordsPath);
+    QDesktopServices::openUrl(QUrl::fromLocalFile(QDir(recordsPath).absolutePath()));
 }
 
 void KailleraNetplayDialog::onPlaybackDoubleClicked(int row, int column)

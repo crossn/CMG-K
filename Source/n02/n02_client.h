@@ -5,6 +5,7 @@
 #pragma once
 
 #include <functional>
+#include <string>
 
 // Forward declaration - internal struct defined in kailleraclient.h
 struct kailleraInfos;
@@ -50,6 +51,9 @@ int getActiveMode();
 // mode: 0=P2P, 1=Server, 2=Playback
 // Returns true if mode changed
 bool activateMode(int mode);
+
+// Set the records directory path used for .krec writes
+void setRecordsDirectory(const std::string& recordsDirectory);
 
 // Check if a game is currently in the "running" state (KSSDFA state 2)
 bool isGameRunning();
@@ -106,6 +110,7 @@ struct UICallbacks {
     std::function<void()> kailleraEndGameCallback;
     std::function<void(char* msg)> kailleraDebugCallback;
     std::function<void(char* msg)> kailleraErrorCallback;
+    std::function<void()> recordingFileClosedCallback;
 };
 
 // Register UI callbacks (called by Qt UI layer)
