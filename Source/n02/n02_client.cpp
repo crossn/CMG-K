@@ -38,6 +38,7 @@ extern void p2p_EndGame();
 extern int kaillera_modify_play_values(void * values, int size);
 extern void kaillera_game_chat_send(char * text);
 extern void kaillera_end_game();
+extern unsigned short kaillera_get_user_id();
 extern bool kaillera_SelectServerDlgStep();
 extern bool p2p_SelectServerDlgStep();
 extern int kaillera_get_delay();
@@ -665,6 +666,13 @@ int getFrameDelay() {
         return kaillera_get_delay();
     }
     // P2P mode doesn't expose delay this way
+    return 0;
+}
+
+unsigned short getUserId() {
+    if (active_mod_index == 1) {
+        return kaillera_get_user_id();
+    }
     return 0;
 }
 

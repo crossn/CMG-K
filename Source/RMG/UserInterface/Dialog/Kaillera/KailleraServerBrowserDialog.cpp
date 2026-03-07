@@ -268,10 +268,9 @@ void KailleraServerBrowserDialog::setupUI()
     setMinimumSize(700, 500);
     resize(800, 600);
 
-    // Use a classic blue selection instead of the default purple and style modern chat composers.
+    // Style the joined-server UI surfaces and keep list/table selection visually neutral.
     setStyleSheet(
         "QTableWidget::item { padding-left: 6px; }"
-        "QTableWidget::item:selected { background-color: #0078D7; color: white; }"
         "QWidget#KailleraPane {"
         "  border: 1px solid palette(mid);"
         "  border-radius: 10px;"
@@ -331,6 +330,12 @@ void KailleraServerBrowserDialog::setupUI()
         "QTableWidget#KailleraSurface {"
         "  gridline-color: transparent;"
         "  alternate-background-color: palette(alternate-base);"
+        "  selection-background-color: transparent;"
+        "  selection-color: palette(text);"
+        "}"
+        "QTableWidget#KailleraSurface::item:selected {"
+        "  background: transparent;"
+        "  color: palette(text);"
         "}"
         "QListWidget#KailleraPlayerList {"
         "  border: none;"
@@ -346,9 +351,28 @@ void KailleraServerBrowserDialog::setupUI()
         "  background: transparent;"
         "}"
         "QWidget#KailleraPlayerCard {"
-        "  border: 1px solid palette(mid);"
+        "  border: none;"
         "  border-radius: 8px;"
-        "  background-color: palette(base);"
+        "}"
+        "QPushButton#KailleraPlayerKickButton {"
+        "  border: 1px solid transparent;"
+        "  border-radius: 10px;"
+        "  min-width: 20px;"
+        "  max-width: 20px;"
+        "  min-height: 20px;"
+        "  max-height: 20px;"
+        "  padding: 0px;"
+        "  color: #c03a3a;"
+        "  background-color: transparent;"
+        "  font-weight: 800;"
+        "}"
+        "QPushButton#KailleraPlayerKickButton:hover {"
+        "  border-color: #d77a7a;"
+        "  background-color: rgba(208, 72, 72, 0.10);"
+        "}"
+        "QPushButton#KailleraPlayerKickButton:pressed {"
+        "  border-color: #b55a5a;"
+        "  background-color: rgba(208, 72, 72, 0.18);"
         "}"
         "QLabel#KailleraPlayerName {"
         "  font-weight: 600;"
@@ -434,7 +458,10 @@ void KailleraServerBrowserDialog::setupUI()
         "  background-color: #1c88dc;"
         "}"
         "QPushButton#KailleraPrimaryButton:pressed {"
+        "  border-color: #004f8b;"
         "  background-color: #005a9e;"
+        "  padding-top: 5px;"
+        "  padding-bottom: 3px;"
         "}"
         "QPushButton#KailleraSecondaryButton {"
         "  border: 1px solid palette(mid);"
@@ -447,7 +474,10 @@ void KailleraServerBrowserDialog::setupUI()
         "  background-color: palette(light);"
         "}"
         "QPushButton#KailleraSecondaryButton:pressed {"
-        "  background-color: palette(midlight);"
+        "  border-color: palette(shadow);"
+        "  background-color: palette(mid);"
+        "  padding-top: 5px;"
+        "  padding-bottom: 3px;"
         "}"
         "QPushButton#KailleraTinyButton {"
         "  border: 1px solid palette(mid);"
@@ -464,7 +494,44 @@ void KailleraServerBrowserDialog::setupUI()
         "  background-color: palette(light);"
         "}"
         "QPushButton#KailleraTinyButton:pressed {"
-        "  background-color: palette(midlight);"
+        "  border-color: palette(shadow);"
+        "  background-color: palette(mid);"
+        "  padding-top: 1px;"
+        "}"
+        "QPushButton#KailleraHeaderIconButton {"
+        "  border: 1px solid transparent;"
+        "  border-radius: 6px;"
+        "  min-width: 20px;"
+        "  max-width: 20px;"
+        "  min-height: 20px;"
+        "  max-height: 20px;"
+        "  padding: 0px;"
+        "  background-color: transparent;"
+        "}"
+        "QPushButton#KailleraHeaderIconButton:hover {"
+        "  border: 1px solid palette(mid);"
+        "  background-color: palette(light);"
+        "}"
+        "QPushButton#KailleraHeaderIconButton:pressed {"
+        "  border: 1px solid palette(shadow);"
+        "  background-color: palette(mid);"
+        "  padding-top: 1px;"
+        "}"
+        "QPushButton#KailleraHeaderActionButton {"
+        "  border: 1px solid palette(mid);"
+        "  border-radius: 7px;"
+        "  min-height: 22px;"
+        "  padding: 0px 8px;"
+        "  background-color: palette(window);"
+        "  font-weight: 600;"
+        "}"
+        "QPushButton#KailleraHeaderActionButton:hover {"
+        "  background-color: palette(light);"
+        "}"
+        "QPushButton#KailleraHeaderActionButton:pressed {"
+        "  border-color: palette(shadow);"
+        "  background-color: palette(mid);"
+        "  padding-top: 1px;"
         "}"
         "QPushButton#KailleraStartButton {"
         "  border: 1px solid #005a9e;"
@@ -480,7 +547,10 @@ void KailleraServerBrowserDialog::setupUI()
         "  background-color: #1c88dc;"
         "}"
         "QPushButton#KailleraStartButton:pressed {"
+        "  border-color: #004f8b;"
         "  background-color: #005a9e;"
+        "  padding-top: 7px;"
+        "  padding-bottom: 5px;"
         "}"
         "QPushButton#KailleraStartButton:disabled {"
         "  border: 1px solid palette(mid);"
@@ -523,6 +593,15 @@ void KailleraServerBrowserDialog::setupUI()
     lobbyHeaderLayout->addWidget(lobbyHeaderIcon);
     lobbyHeaderLayout->addWidget(lobbyHeaderTitle);
     lobbyHeaderLayout->addStretch();
+    auto* leaveServerButton = new QPushButton("Leave Server", lobbyHeader);
+    leaveServerButton->setObjectName("KailleraHeaderActionButton");
+    leaveServerButton->setIcon(themedLineIcon("door-open-line"));
+    leaveServerButton->setIconSize(QSize(14, 14));
+    leaveServerButton->setToolTip("Disconnect from the server and return to the server list");
+    leaveServerButton->setAutoDefault(false);
+    leaveServerButton->setDefault(false);
+    connect(leaveServerButton, &QPushButton::clicked, this, [this]() { reject(); });
+    lobbyHeaderLayout->addWidget(leaveServerButton);
 
     auto* lobbyBody = new QWidget(lobbyPane);
     auto* lobbyBodyLayout = new QVBoxLayout(lobbyBody);
@@ -554,6 +633,8 @@ void KailleraServerBrowserDialog::setupUI()
     m_btnSendLobby->setText("");
     m_btnSendLobby->setIcon(themedLineIcon("play-line"));
     m_btnSendLobby->setIconSize(QSize(13, 13));
+    m_btnSendLobby->setAutoDefault(false);
+    m_btnSendLobby->setDefault(false);
     connect(m_btnSendLobby, &QPushButton::clicked, this, &KailleraServerBrowserDialog::onSendLobbyChat);
     connect(m_lobbyChatInput, &QLineEdit::returnPressed, this, &KailleraServerBrowserDialog::onSendLobbyChat);
 
@@ -566,6 +647,8 @@ void KailleraServerBrowserDialog::setupUI()
     m_btnCreateSwap->setIcon(whiteLineIcon("add-line"));
     m_btnCreateSwap->setIconSize(QSize(16, 16));
     m_btnCreateSwap->setMinimumWidth(90);
+    m_btnCreateSwap->setAutoDefault(false);
+    m_btnCreateSwap->setDefault(false);
     connect(m_btnCreateSwap, &QPushButton::clicked, this, &KailleraServerBrowserDialog::onCreateOrSwap);
 
     auto* lobbyComposerRow = new QHBoxLayout();
@@ -753,6 +836,8 @@ QWidget* KailleraServerBrowserDialog::createGameRoomWidget()
     m_btnSwapChat->setObjectName("KailleraTinyButton");
     m_btnSwapChat->setIcon(themedLineIcon("swap-line"));
     m_btnSwapChat->setToolTip("Show open lobbies");
+    m_btnSwapChat->setAutoDefault(false);
+    m_btnSwapChat->setDefault(false);
     connect(m_btnSwapChat, &QPushButton::clicked, this, &KailleraServerBrowserDialog::onCreateOrSwap);
     chatHeaderLayout->addWidget(m_btnSwapChat);
 
@@ -792,6 +877,8 @@ QWidget* KailleraServerBrowserDialog::createGameRoomWidget()
     m_btnSendGame->setText("");
     m_btnSendGame->setIcon(themedLineIcon("play-line"));
     m_btnSendGame->setIconSize(QSize(13, 13));
+    m_btnSendGame->setAutoDefault(false);
+    m_btnSendGame->setDefault(false);
     connect(m_btnSendGame, &QPushButton::clicked, this, &KailleraServerBrowserDialog::onSendGameChat);
     connect(m_gameChatInput, &QLineEdit::returnPressed, this, &KailleraServerBrowserDialog::onSendGameChat);
 
@@ -838,11 +925,18 @@ QWidget* KailleraServerBrowserDialog::createGameRoomWidget()
     });
     connect(m_roomLobbyTable->horizontalHeader(), &QHeaderView::sectionResized,
             this, [this](int logicalIndex, int, int newSize) {
+        const int lastColumn = (m_roomLobbyTable != nullptr) ? (m_roomLobbyTable->columnCount() - 1) : -1;
+        if (logicalIndex == lastColumn)
+        {
+            return;
+        }
         if (m_gameTable != nullptr && logicalIndex >= 0 && logicalIndex < m_gameTable->columnCount())
         {
             m_gameTable->setColumnWidth(logicalIndex, newSize);
         }
     });
+    connect(m_roomLobbyTable, &QTableWidget::cellDoubleClicked,
+            this, [this](int row, int) { tryJoinGameFromTable(m_roomLobbyTable, row, true); });
     enableBlankAreaDeselect(m_roomLobbyTable);
     roomLobbiesLayout->addWidget(m_roomLobbyTable);
 
@@ -875,7 +969,17 @@ QWidget* KailleraServerBrowserDialog::createGameRoomWidget()
     playersHeaderLayout->addStretch();
     m_playersInGameCountLabel = new QLabel("(0/?)", playersHeader);
     m_playersInGameCountLabel->setObjectName("KailleraPaneMeta");
-    playersHeaderLayout->addWidget(m_playersInGameCountLabel);
+    m_playersInGameCountLabel->setAlignment(Qt::AlignVCenter | Qt::AlignRight);
+    playersHeaderLayout->addWidget(m_playersInGameCountLabel, 0, Qt::AlignVCenter);
+    m_btnOptions = new QPushButton(playersHeader);
+    m_btnOptions->setObjectName("KailleraHeaderIconButton");
+    m_btnOptions->setToolTip("Lobby options");
+    m_btnOptions->setText("");
+    m_btnOptions->setIcon(themedLineIcon("settings-3-line"));
+    m_btnOptions->setIconSize(QSize(14, 14));
+    m_btnOptions->setAutoDefault(false);
+    m_btnOptions->setDefault(false);
+    playersHeaderLayout->addWidget(m_btnOptions, 0, Qt::AlignVCenter);
 
     auto* playersBody = new QWidget(playersPane);
     auto* playersBodyLayout = new QVBoxLayout(playersBody);
@@ -906,56 +1010,51 @@ QWidget* KailleraServerBrowserDialog::createGameRoomWidget()
     m_btnStart->setObjectName("KailleraStartButton");
     m_btnStart->setIcon(whiteLineIcon("play-line"));
     m_btnStart->setIconSize(QSize(16, 16));
+    m_btnStart->setAutoDefault(false);
+    m_btnStart->setDefault(false);
     rightVBox->addWidget(m_btnStart);
 
-    auto* dropLeaveRow = new QHBoxLayout();
-    dropLeaveRow->setSpacing(6);
-    m_btnDrop = new QPushButton("Drop", rightWidget);
-    m_btnDrop->setObjectName("KailleraSecondaryButton");
-    m_btnDrop->setIcon(style()->standardIcon(QStyle::SP_BrowserStop));
-    m_btnDrop->setIconSize(QSize(16, 16));
-    m_btnLeave = new QPushButton("Leave", rightWidget);
-    m_btnLeave->setObjectName("KailleraSecondaryButton");
-    m_btnLeave->setIcon(themedLineIcon("door-open-line"));
-    m_btnLeave->setIconSize(QSize(16, 16));
-    dropLeaveRow->addWidget(m_btnDrop);
-    dropLeaveRow->addWidget(m_btnLeave);
-    rightVBox->addLayout(dropLeaveRow);
-
-    auto* statsOptionRow = new QHBoxLayout();
-    statsOptionRow->setSpacing(6);
+    auto* utilityRow = new QHBoxLayout();
+    utilityRow->setSpacing(6);
     m_btnLagStat = new QPushButton("Lagstat", rightWidget);
     m_btnLagStat->setObjectName("KailleraSecondaryButton");
     m_btnLagStat->setIcon(themedLineIcon("search-line"));
     m_btnLagStat->setIconSize(QSize(16, 16));
-    m_btnOptions = new QPushButton("Options", rightWidget);
-    m_btnOptions->setObjectName("KailleraSecondaryButton");
-    m_btnOptions->setIcon(themedLineIcon("settings-3-line"));
-    m_btnOptions->setIconSize(QSize(16, 16));
-    statsOptionRow->addWidget(m_btnLagStat);
-    statsOptionRow->addWidget(m_btnOptions);
-    rightVBox->addLayout(statsOptionRow);
-
-    auto* advRow = new QHBoxLayout();
-    advRow->setSpacing(6);
+    m_btnLagStat->setAutoDefault(false);
+    m_btnLagStat->setDefault(false);
     m_btnAdvertise = new QPushButton("Advertise", rightWidget);
     m_btnAdvertise->setObjectName("KailleraSecondaryButton");
     m_btnAdvertise->setIcon(themedLineIcon("volume-up-line"));
     m_btnAdvertise->setIconSize(QSize(16, 16));
-    advRow->addWidget(m_btnAdvertise);
-    rightVBox->addLayout(advRow);
+    m_btnAdvertise->setAutoDefault(false);
+    m_btnAdvertise->setDefault(false);
+    utilityRow->addWidget(m_btnLagStat);
+    utilityRow->addWidget(m_btnAdvertise);
+    rightVBox->addLayout(utilityRow);
+
+    m_btnDrop = new QPushButton("Close Game", rightWidget);
+    m_btnDrop->setObjectName("KailleraSecondaryButton");
+    m_btnDrop->setIcon(themedLineIcon("shut-down-line"));
+    m_btnDrop->setIconSize(QSize(16, 16));
+    m_btnDrop->setAutoDefault(false);
+    m_btnDrop->setDefault(false);
+    rightVBox->addWidget(m_btnDrop);
+
+    m_btnLeave = new QPushButton("Leave Lobby", rightWidget);
+    m_btnLeave->setObjectName("KailleraSecondaryButton");
+    m_btnLeave->setIcon(themedLineIcon("door-open-line"));
+    m_btnLeave->setIconSize(QSize(16, 16));
+    m_btnLeave->setAutoDefault(false);
+    m_btnLeave->setDefault(false);
+    rightVBox->addWidget(m_btnLeave);
 
     m_recordCheck = new QCheckBox("Record game", rightWidget);
     rightVBox->addWidget(m_recordCheck);
 
     m_fpsLabel = new QLabel("<span style='color:#8b8b8b;'>Rate</span> <span style='font-weight:600;'>0 fps / 0 pps</span>", rightWidget);
     m_fpsLabel->setObjectName("KailleraStatValue");
-    m_delayLabel = new QLabel("<span style='color:#8b8b8b;'>Delay</span> <span style='font-weight:600;'>0 frames</span>", rightWidget);
-    m_delayLabel->setObjectName("KailleraStatValue");
     m_fpsLabel->setTextFormat(Qt::RichText);
-    m_delayLabel->setTextFormat(Qt::RichText);
     rightVBox->addWidget(m_fpsLabel);
-    rightVBox->addWidget(m_delayLabel);
 
     rightVBox->addStretch();
 
@@ -1052,6 +1151,7 @@ void KailleraServerBrowserDialog::switchToLobby()
     m_inGameRoom = false;
     m_isHost = false;
     m_currentGameName.clear();
+    m_currentGameId = 0;
     m_roomMaxPlayers = 0;
     m_statsTimer->stop();
 
@@ -1163,12 +1263,19 @@ void KailleraServerBrowserDialog::refreshRoomLobbyTable()
     for (int col = 0; col < targetColumns; ++col)
     {
         m_roomLobbyTable->setColumnHidden(col, m_gameTable->isColumnHidden(col));
+        if (col == targetColumns - 1)
+        {
+            continue;
+        }
+
         const int width = m_gameTable->columnWidth(col);
         if (width > 0)
         {
             m_roomLobbyTable->setColumnWidth(col, width);
         }
     }
+
+    m_roomLobbyTable->setHorizontalHeaderLabels({"Game", "GameID", "Emulator", "User", "Status", "Users"});
 
     m_roomLobbyTable->setSortingEnabled(true);
     if (previousSortColumn >= 0 && previousSortColumn < targetColumns)
@@ -1220,6 +1327,7 @@ void KailleraServerBrowserDialog::requestCreateGame(const QString& gameName)
     }
 
     m_currentGameName = gameName;
+    m_currentGameId = 0;
     QByteArray nameBytes = gameName.toUtf8();
     kaillera_create_game(nameBytes.data());
 }
@@ -1317,12 +1425,20 @@ int KailleraServerBrowserDialog::detectCurrentRoomMaxPlayers()
         return m_roomMaxPlayers;
     }
 
-    if (m_currentGameName.isEmpty() || m_gameTable == nullptr)
+    if (m_gameTable == nullptr)
     {
         return 0;
     }
 
-    int gameRow = findRowByText(m_gameTable, 0, m_currentGameName);
+    int gameRow = -1;
+    if (m_currentGameId > 0)
+    {
+        gameRow = findRowByValue(m_gameTable, 1, m_currentGameId);
+    }
+    if (gameRow < 0 && !m_currentGameName.isEmpty())
+    {
+        gameRow = findRowByText(m_gameTable, 0, m_currentGameName);
+    }
     if (gameRow < 0)
     {
         return 0;
@@ -1397,7 +1513,7 @@ void KailleraServerBrowserDialog::refreshPlayerCards()
     }
 
     const QColor frameColor = palette().text().color();
-    const QColor msColor = blendColors(frameColor, palette().base().color(), 55);
+    const QString msColorCss = "rgba(0, 0, 0, 0.55)";
 
     for (int row = 0; row < m_playerList->count(); ++row)
     {
@@ -1410,9 +1526,15 @@ void KailleraServerBrowserDialog::refreshPlayerCards()
         const QString name = item->data(PlayerNameRole).toString();
         const int ping = item->data(PlayerPingRole).toInt();
         const int delay = item->data(PlayerDelayRole).toInt();
+        const unsigned short playerId = static_cast<unsigned short>(item->data(PlayerIdRole).toUInt());
 
         auto* card = new QWidget(m_playerList);
         card->setObjectName("KailleraPlayerCard");
+        const QColor portColor = playerPortColor(row);
+        const QColor cardTint = blendColors(portColor, palette().base().color(), 16);
+        card->setStyleSheet(QString(
+            "QWidget#KailleraPlayerCard { border: none; border-radius: 8px; background-color: %1; }")
+            .arg(cardTint.name()));
         auto* cardLayout = new QHBoxLayout(card);
         cardLayout->setContentsMargins(8, 6, 8, 6);
         cardLayout->setSpacing(8);
@@ -1420,7 +1542,6 @@ void KailleraServerBrowserDialog::refreshPlayerCards()
         auto* portBadge = new QLabel(QString::number(row + 1), card);
         portBadge->setFixedSize(22, 22);
         portBadge->setAlignment(Qt::AlignCenter);
-        const QColor portColor = playerPortColor(row);
         portBadge->setStyleSheet(QString(
             "QLabel { border-radius: 11px; background-color: %1; color: white; font-weight: 700; }")
             .arg(portColor.name()));
@@ -1440,15 +1561,30 @@ void KailleraServerBrowserDialog::refreshPlayerCards()
             "<span style='color:%3;'> / %4 ms</span>")
             .arg(frameColor.name())
             .arg(delay)
-            .arg(msColor.name())
+            .arg(msColorCss)
             .arg(ping));
 
         textColumn->addWidget(nameLabel);
         textColumn->addWidget(statsLabel);
 
-        cardLayout->addWidget(portBadge, 0, Qt::AlignTop);
+        cardLayout->addWidget(portBadge, 0, Qt::AlignVCenter);
         cardLayout->addLayout(textColumn, 1);
         cardLayout->addStretch();
+
+        if (m_isHost && row > 0 && playerId > 0)
+        {
+            auto* kickButton = new QPushButton("X", card);
+            kickButton->setObjectName("KailleraPlayerKickButton");
+            kickButton->setCursor(Qt::PointingHandCursor);
+            kickButton->setToolTip("Kick player");
+            connect(kickButton, &QPushButton::clicked, this, [this, playerId]() {
+                if (m_isHost && playerId > 0)
+                {
+                    kaillera_kick_user(playerId);
+                }
+            });
+            cardLayout->addWidget(kickButton, 0, Qt::AlignVCenter);
+        }
 
         if (QWidget* oldCard = m_playerList->itemWidget(item))
         {
@@ -1523,6 +1659,174 @@ QString KailleraServerBrowserDialog::gameStatusString(char status)
         case 1: return "Playing";
         case 2: return "Playing";
         default: return "Unknown";
+    }
+}
+
+bool KailleraServerBrowserDialog::hasOpenSlot(QTableWidget* table, int row) const
+{
+    if (table == nullptr || row < 0)
+    {
+        return false;
+    }
+
+    QTableWidgetItem* usersItem = table->item(row, 5);
+    if (usersItem == nullptr)
+    {
+        return false;
+    }
+
+    const QStringList parts = usersItem->text().trimmed().split('/');
+    if (parts.size() != 2)
+    {
+        return false;
+    }
+
+    bool currentOk = false;
+    bool maxOk = false;
+    const int currentPlayers = parts[0].trimmed().toInt(&currentOk);
+    const int maxPlayers = parts[1].trimmed().toInt(&maxOk);
+
+    if (!currentOk || currentPlayers < 0)
+    {
+        return false;
+    }
+    if (!maxOk || maxPlayers <= 0)
+    {
+        return true;
+    }
+
+    return currentPlayers < maxPlayers;
+}
+
+bool KailleraServerBrowserDialog::tryJoinGameFromTable(QTableWidget* table, int row, bool leaveCurrentGame)
+{
+    if (table == nullptr || row < 0)
+    {
+        if (!leaveCurrentGame)
+        {
+            QMessageBox::information(this, "Join Game", "Select a game from the list to join.");
+        }
+        return false;
+    }
+
+    QTableWidgetItem* gameNameItem = table->item(row, 0);
+    QTableWidgetItem* statusItem = table->item(row, 4);
+    QTableWidgetItem* gameIdItem = table->item(row, 1);
+    const QString gameName = gameNameItem ? gameNameItem->text() : "";
+    const unsigned int gameId = gameIdItem ? gameIdItem->data(Qt::UserRole).toUInt() : 0;
+
+    if (leaveCurrentGame && m_inGameRoom)
+    {
+        const bool isCurrentLobby = (m_currentGameId > 0 && gameId == m_currentGameId)
+            || (m_currentGameId == 0 && !m_currentGameName.isEmpty() && gameName == m_currentGameName);
+        if (isCurrentLobby)
+        {
+            return false;
+        }
+    }
+
+    if (statusItem && statusItem->text() != "Waiting")
+    {
+        QMessageBox::warning(this, "Join Game", "Joining a running game is not allowed.");
+        return false;
+    }
+
+    if (leaveCurrentGame && !hasOpenSlot(table, row))
+    {
+        QMessageBox::warning(this, "Join Game", "That lobby is full.");
+        return false;
+    }
+
+    if (!gameName.startsWith("*") && infos.gameList)
+    {
+        bool found = false;
+        const char* p = infos.gameList;
+        while (*p)
+        {
+            if (gameName == QString::fromUtf8(p))
+            {
+                found = true;
+                break;
+            }
+            p += strlen(p) + 1;
+        }
+        if (!found)
+        {
+            QMessageBox::warning(this, "Join Game",
+                QString("The ROM '%1' is not in your list.").arg(gameName));
+            return false;
+        }
+    }
+
+    QTableWidgetItem* emuItem = table->item(row, 2);
+    if (emuItem)
+    {
+        const QString remoteEmu = emuItem->text();
+        const QString localEmu = QString::fromUtf8(APP);
+        if (remoteEmu != localEmu)
+        {
+            int ret = QMessageBox::warning(this, "Version Mismatch",
+                "Emulator/version mismatch and the game may desync.\nDo you want to continue?",
+                QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
+            if (ret != QMessageBox::Yes)
+            {
+                return false;
+            }
+        }
+    }
+
+    if (gameId == 0)
+    {
+        return false;
+    }
+
+    if (leaveCurrentGame && m_inGameRoom)
+    {
+        m_pendingJoinGameName = gameName;
+        m_pendingJoinGameId = gameId;
+        kaillera_leave_game();
+        return true;
+    }
+
+    m_currentGameName = gameName;
+    m_currentGameId = gameId;
+    QByteArray gameBytes = gameName.toUtf8();
+    kaillera_join_game(gameId, gameBytes.constData());
+    return true;
+}
+
+void KailleraServerBrowserDialog::syncCurrentGameUsersCount()
+{
+    if (!m_inGameRoom || m_gameTable == nullptr || m_playerList == nullptr)
+    {
+        return;
+    }
+
+    int row = -1;
+    if (m_currentGameId > 0)
+    {
+        row = findRowByValue(m_gameTable, 1, m_currentGameId);
+    }
+    if (row < 0 && !m_currentGameName.isEmpty())
+    {
+        row = findRowByText(m_gameTable, 0, m_currentGameName);
+    }
+    if (row < 0)
+    {
+        return;
+    }
+
+    const int currentPlayers = m_playerList->count();
+    const int maxPlayers = detectCurrentRoomMaxPlayers();
+    const QString usersText = (maxPlayers > 0)
+        ? QString("%1/%2").arg(currentPlayers).arg(maxPlayers)
+        : QString("%1/?").arg(currentPlayers);
+
+    m_gameTable->setItem(row, 5, new QTableWidgetItem(usersText));
+
+    if (m_roomShowingLobbies)
+    {
+        refreshRoomLobbyTable();
     }
 }
 
@@ -1686,6 +1990,11 @@ void KailleraServerBrowserDialog::onGameCreated(QString gameName, unsigned int i
         refreshRoomLobbyTable();
     }
 
+    if (m_currentGameId == 0 && gameName == m_currentGameName)
+    {
+        m_currentGameId = id;
+    }
+
     // Update owner's user status to Waiting (game hasn't started yet)
     updateUserStatus(owner, "Waiting", 0);
     updateTitle();
@@ -1748,10 +2057,13 @@ void KailleraServerBrowserDialog::onGameStatusChanged(unsigned int id, char stat
         }
 
         QTableWidgetItem* gameNameItem = m_gameTable->item(row, 0);
-        if (m_inGameRoom && gameNameItem && gameNameItem->text() == m_currentGameName && maxPlayers > 0)
+        const bool isCurrentGame = (m_currentGameId > 0 && id == m_currentGameId)
+            || (m_currentGameId == 0 && gameNameItem && gameNameItem->text() == m_currentGameName);
+        if (m_inGameRoom && isCurrentGame && maxPlayers > 0)
         {
             m_roomMaxPlayers = maxPlayers;
             updateHeaderCounts();
+            syncCurrentGameUsersCount();
         }
 
         if (m_roomShowingLobbies)
@@ -1818,6 +2130,12 @@ void KailleraServerBrowserDialog::onUserGameJoined()
 
 void KailleraServerBrowserDialog::onUserGameClosed()
 {
+    if (m_pendingJoinGameId > 0)
+    {
+        switchToLobby();
+        return;
+    }
+
     constexpr const char* errorColor = "red";
     m_gameChat->append("<span style='color:red;'>" + timestamp(errorColor) + "Game has been closed.</span>");
     switchToLobby();
@@ -1841,6 +2159,7 @@ void KailleraServerBrowserDialog::onPlayerAdded(QString name, int ping, unsigned
     }
     refreshPlayerCards();
     updateHeaderCounts();
+    syncCurrentGameUsersCount();
 }
 
 void KailleraServerBrowserDialog::onPlayerJoined(QString name, int ping, unsigned short uid, char conn)
@@ -1860,6 +2179,7 @@ void KailleraServerBrowserDialog::onPlayerJoined(QString name, int ping, unsigne
     }
     refreshPlayerCards();
     updateHeaderCounts();
+    syncCurrentGameUsersCount();
 
     const QString color = infoMessageColor();
     m_gameChat->append("<span style='color:" + color + ";'>" + timestamp(color) + "* " + name.toHtmlEscaped() + " joined the game</span>");
@@ -1914,12 +2234,27 @@ void KailleraServerBrowserDialog::onPlayerLeft(QString name, unsigned short id)
         refreshPlayerCards();
     }
     updateHeaderCounts();
+    syncCurrentGameUsersCount();
 
     const QString color = infoMessageColor();
     m_gameChat->append("<span style='color:" + color + ";'>" + timestamp(color) + "* " + name.toHtmlEscaped() + " left the game</span>");
 
     // Update this user's status in the lobby user table
     updateUserStatus(name, "Idle", 1);
+
+    if (m_pendingJoinGameId > 0 && id == n02::getUserId())
+    {
+        const QString pendingGameName = m_pendingJoinGameName;
+        const unsigned int pendingGameId = m_pendingJoinGameId;
+        m_pendingJoinGameName.clear();
+        m_pendingJoinGameId = 0;
+        QTimer::singleShot(0, this, [this, pendingGameName, pendingGameId]() {
+            m_currentGameName = pendingGameName;
+            m_currentGameId = pendingGameId;
+            QByteArray gameBytes = pendingGameName.toUtf8();
+            kaillera_join_game(pendingGameId, gameBytes.constData());
+        });
+    }
 }
 
 void KailleraServerBrowserDialog::onGameChatReceived(QString name, QString message)
@@ -1929,12 +2264,19 @@ void KailleraServerBrowserDialog::onGameChatReceived(QString name, QString messa
 
 void KailleraServerBrowserDialog::onUserKicked()
 {
+    m_pendingJoinGameName.clear();
+    m_pendingJoinGameId = 0;
     QMessageBox::warning(this, "Kicked", "You have been kicked from the game.");
     switchToLobby();
 }
 
 void KailleraServerBrowserDialog::onPlayerDropped(QString name, int player)
 {
+    if (m_pendingJoinGameId > 0 && player == playerno)
+    {
+        return;
+    }
+
     constexpr const char* warnColor = "orange";
     m_gameChat->append("<span style='color:orange;'>" + timestamp(warnColor)
         + "* " + name.toHtmlEscaped() + " (player " + QString::number(player) + ") has dropped</span>");
@@ -1989,10 +2331,9 @@ void KailleraServerBrowserDialog::onGameEnded()
 
 void KailleraServerBrowserDialog::onNetsyncWait(int tx)
 {
-    m_fpsLabel->setText("<span style='color:#8b8b8b;'>Rate</span> <span style='font-weight:600;'>Waiting for others...</span>");
     int secs = tx / 1000;
     int tenths = (tx % 1000) / 100;
-    m_delayLabel->setText(QString("<span style='color:#8b8b8b;'>Sync wait</span> <span style='font-weight:600;'>%1.%2s</span>")
+    m_fpsLabel->setText(QString("<span style='color:#8b8b8b;'>Sync wait</span> <span style='font-weight:600;'>%1.%2s</span>")
         .arg(secs, 3, 10, QChar('0'))
         .arg(tenths));
 }
@@ -2154,76 +2495,7 @@ void KailleraServerBrowserDialog::onCreateOrSwap()
 void KailleraServerBrowserDialog::onJoinGame()
 {
     int row = m_gameTable->currentRow();
-    if (row < 0)
-    {
-        QMessageBox::information(this, "Join Game", "Select a game from the list to join.");
-        return;
-    }
-
-    // Check game status — block joining running games
-    QTableWidgetItem* statusItem = m_gameTable->item(row, 4);
-    if (statusItem && statusItem->text() != "Waiting")
-    {
-        QMessageBox::warning(this, "Join Game", "Joining a running game is not allowed.");
-        return;
-    }
-
-    // Check if the ROM is in our local game list
-    QString gameName = m_gameTable->item(row, 0) ? m_gameTable->item(row, 0)->text() : "";
-    if (!gameName.startsWith("*") && infos.gameList)
-    {
-        bool found = false;
-        const char* p = infos.gameList;
-        while (*p)
-        {
-            if (gameName == QString::fromUtf8(p))
-            {
-                found = true;
-                break;
-            }
-            p += strlen(p) + 1;
-        }
-        if (!found)
-        {
-            QMessageBox::warning(this, "Join Game",
-                QString("The ROM '%1' is not in your list.").arg(gameName));
-            return;
-        }
-    }
-
-    // Check emulator version mismatch
-    QTableWidgetItem* emuItem = m_gameTable->item(row, 2);
-    if (emuItem)
-    {
-        QString remoteEmu = emuItem->text();
-        QString localEmu = QString::fromUtf8(APP);
-        if (remoteEmu != localEmu)
-        {
-            int ret = QMessageBox::warning(this, "Version Mismatch",
-                "Emulator/version mismatch and the game may desync.\nDo you want to continue?",
-                QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
-            if (ret != QMessageBox::Yes)
-            {
-                return;
-            }
-        }
-    }
-
-    // Get game ID from GameID column
-    unsigned int gameId = 0;
-    QTableWidgetItem* gameIdItem = m_gameTable->item(row, 1);
-    if (gameIdItem)
-    {
-        gameId = gameIdItem->data(Qt::UserRole).toUInt();
-    }
-
-    if (gameId > 0)
-    {
-        // Track the game name for advertise
-        m_currentGameName = gameName;
-        QByteArray gameBytes = gameName.toUtf8();
-        kaillera_join_game(gameId, gameBytes.constData());
-    }
+    tryJoinGameFromTable(m_gameTable, row, false);
 }
 
 void KailleraServerBrowserDialog::onStartGame()
@@ -2431,9 +2703,6 @@ void KailleraServerBrowserDialog::onStatsTimer()
         .arg(fps)
         .arg(pps));
 
-    int delay = kaillera_get_delay();
-    m_delayLabel->setText(QString("<span style='color:#8b8b8b;'>Delay</span> <span style='font-weight:600;'>%1 frames</span>")
-        .arg(delay));
 }
 
 #endif // _WIN32

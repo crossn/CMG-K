@@ -44,6 +44,9 @@ void endGame();
 // Get the current frame delay (for Kaillera server mode)
 int getFrameDelay();
 
+// Get the current Kaillera user ID (server mode)
+unsigned short getUserId();
+
 // Get the current active mode index (0=P2P, 1=Server, 2=Playback)
 int getActiveMode();
 

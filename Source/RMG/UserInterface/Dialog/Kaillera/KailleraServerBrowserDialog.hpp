@@ -111,6 +111,9 @@ private:
     QString connString(char conn);
     QString userStatusString(char status);
     QString gameStatusString(char status);
+    bool hasOpenSlot(QTableWidget* table, int row) const;
+    bool tryJoinGameFromTable(QTableWidget* table, int row, bool leaveCurrentGame);
+    void syncCurrentGameUsersCount();
     void refreshPlayerCards();
     int findPlayerIndexById(unsigned short id) const;
     int findRowByText(QTableWidget* table, int column, const QString& text);
@@ -125,6 +128,9 @@ private:
     bool m_isHost = false;
     bool m_isClosing = false;
     QString m_currentGameName;
+    unsigned int m_currentGameId = 0;
+    QString m_pendingJoinGameName;
+    unsigned int m_pendingJoinGameId = 0;
 
     // Top section (always visible)
     QSplitter* m_topSplitter = nullptr;
@@ -156,7 +162,6 @@ private:
     QPushButton* m_btnAdvertise = nullptr;
     QCheckBox* m_recordCheck = nullptr;
     QLabel* m_fpsLabel = nullptr;
-    QLabel* m_delayLabel = nullptr;
     QLabel* m_playersInGameCountLabel = nullptr;
     int m_roomMaxPlayers = 0;
 

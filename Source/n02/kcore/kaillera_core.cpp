@@ -96,6 +96,9 @@ int kaillera_get_frames_count(){
 int kaillera_get_delay(){
 	return KAILLERAC.dframeno;
 }
+unsigned short kaillera_get_user_id(){
+	return KAILLERAC.user_id;
+}
 
 bool kaillera_core_cleanup(){
 	//kprintf(__FILE__ ":%i", __LINE__);
