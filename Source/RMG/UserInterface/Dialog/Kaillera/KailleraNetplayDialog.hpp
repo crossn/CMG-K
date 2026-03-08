@@ -23,10 +23,15 @@
 #include <QNetworkAccessManager>
 #include <QNetworkReply>
 
+#include <future>
+
 struct ServerEntry {
     QString name;
     QString host; // "ip:port"
+    QString players = "-";
+    int playerCount = -1;
     QString ping;
+    int pingValue = 999999;
 };
 
 class KailleraNetplayDialog : public QDialog
@@ -43,20 +48,15 @@ private slots:
     // Server tab
     void onAddServer();
     void onEditServer();
-    void onDeleteServer();
     void onConnectServer();
     void onServerDoubleClicked(int row, int column);
     void onServerRightClicked(QPoint pos);
-    void onLiveServerList();
     void onWaitingGames();
 
     // P2P tab
     void onP2PHost();
     void onP2PJoin();
     void onP2PPasteAndGo();
-    void onP2PAddStored();
-    void onP2PEditStored();
-    void onP2PDeleteStored();
     void onP2PWaitingGames();
     void onP2PStoredClicked(int row, int column);
 
@@ -83,15 +83,32 @@ private:
     void loadServerList();
     void saveServerList();
     void refreshServerListDisplay();
+    void fetchLiveServerList();
+    void schedulePingAllServers();
+    void pingAllServers();
+    void startNextServerPing();
+    void pollServerPing();
+    QVector<ServerEntry> parseLiveServerList(const QByteArray& data) const;
+    int favoriteServerIndexByHost(const QString& host) const;
+    int cachedServerIndexByHost(const QString& host) const;
+    void toggleFavoriteServer(const QString& host, const QString& name);
+    void moveFavoriteServer(int favoriteIndex, int delta);
+    void updateServerPing(const QString& host, int pingMs);
+    void updateVisibleServerPing(const QString& host, const QString& pingText);
+    void cacheVisibleLiveServerOrder();
+    void updateServerButtons();
     void saveSettings();
     void loadSettings();
-    void pingServerRow(int row);
-    int serverIndexFromRow(int row);
 
-    // P2P stored users
+    // P2P recent/favorite peers
     void loadP2PStoredUsers();
     void saveP2PStoredUsers();
     void refreshP2PStoredDisplay();
+    int p2pStoredIndexByHost(const QString& host) const;
+    int p2pFavoriteCount() const;
+    void toggleP2PStoredFavorite(int row);
+    void rememberP2PStoredEntry(const QString& host, const QString& nickname = QString());
+    void updateP2PStoredNickname(const QString& host, const QString& nickname);
 
     // Playback
     void populatePlaybackList();
@@ -104,34 +121,31 @@ private:
 
     // Server list (Server tab)
     QTableWidget* m_serverTable = nullptr;
-    QVector<ServerEntry> m_servers;
+    QVector<ServerEntry> m_favoriteServers;
+    QVector<ServerEntry> m_cachedLiveServers;
+    QVector<ServerEntry> m_displayServers;
 
     // Server tab buttons
     QPushButton* m_btnAdd = nullptr;
-    QPushButton* m_btnEdit = nullptr;
-    QPushButton* m_btnDelete = nullptr;
     QPushButton* m_btnConnect = nullptr;
-    QPushButton* m_btnLiveList = nullptr;
     QPushButton* m_btnWaitingGames = nullptr;
 
-    // P2P tab controls (Host sub-tab)
+    // P2P host controls
     QComboBox* m_p2pGameCombo = nullptr;
     QLineEdit* m_p2pPortEdit = nullptr;
     QPushButton* m_btnP2PHost = nullptr;
 
-    // P2P tab controls (Connect sub-tab)
+    // P2P connect controls
     QLineEdit* m_p2pHostEdit = nullptr;
     QPushButton* m_btnP2PJoin = nullptr;
     QPushButton* m_btnP2PPasteGo = nullptr;
     QTableWidget* m_p2pStoredTable = nullptr;
-    QPushButton* m_btnP2PAddStored = nullptr;
-    QPushButton* m_btnP2PEditStored = nullptr;
-    QPushButton* m_btnP2PDeleteStored = nullptr;
     QPushButton* m_btnP2PWaitingGames = nullptr;
 
     struct P2PStoredEntry {
         QString name;
         QString host;
+        bool favorite = false;
     };
     QVector<P2PStoredEntry> m_p2pStoredUsers;
 
@@ -152,6 +166,13 @@ private:
 
     // Network manager for master list fetching
     QNetworkAccessManager* m_netManager = nullptr;
+    QTimer* m_serverPingPollTimer = nullptr;
+    QStringList m_pendingPingHosts;
+    QString m_activePingHost;
+    std::future<int> m_activePingFuture;
+    bool m_serverListNeedsRefresh = false;
+    bool m_pingAllQueued = false;
+    bool m_pingAllInProgress = false;
 
 };
 

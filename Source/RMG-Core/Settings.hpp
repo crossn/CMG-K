@@ -76,6 +76,8 @@ enum class SettingsID
     Kaillera_JoinMessageJoin,
     Kaillera_ServerListNames,
     Kaillera_ServerListHosts,
+    Kaillera_LiveServerCacheNames,
+    Kaillera_LiveServerCacheHosts,
     Kaillera_BrowserGeometry,
     Kaillera_BrowserTopSplitter,
     Kaillera_BrowserBottomSplitter,

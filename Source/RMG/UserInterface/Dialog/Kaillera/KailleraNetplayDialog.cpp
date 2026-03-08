@@ -43,9 +43,13 @@
 #include <QDir>
 #include <QFileInfo>
 #include <QFrame>
+#include <QEvent>
 #include <QListWidget>
+#include <QScrollBar>
+#include <QSignalBlocker>
 #include <QStringList>
 
+#include <chrono>
 #include <cstring>
 #include <ctime>
 #include <fstream>
@@ -54,9 +58,43 @@
 
 #include <windows.h>
 
+static constexpr int kMaxP2PRecentEntries = 12;
+
 static QString getKailleraRecordsDirectory()
 {
     return QString::fromStdString(CoreGetKailleraRecordsDirectory());
+}
+
+static QIcon themedLineIcon(const QString& iconName)
+{
+    const bool darkTheme = QApplication::palette().window().color().value() < 128;
+    const QString iconPath = QString(":/icons/%1/svg/%2.svg")
+        .arg(darkTheme ? "white" : "black", iconName);
+    return QIcon(iconPath);
+}
+
+static bool isPrivateHostPort(const QString& hostPort)
+{
+    if (hostPort.startsWith("10.") || hostPort.startsWith("192.168.") || hostPort.startsWith("127."))
+    {
+        return true;
+    }
+
+    if (hostPort.startsWith("172."))
+    {
+        QStringList octets = hostPort.split('.');
+        if (octets.size() >= 2)
+        {
+            bool ok = false;
+            const int second = octets[1].toInt(&ok);
+            if (ok && second >= 16 && second <= 31)
+            {
+                return true;
+            }
+        }
+    }
+
+    return false;
 }
 
 class SearchableComboBox final : public QComboBox
@@ -200,11 +238,68 @@ private:
     QListWidget* m_listWidget = nullptr;
 };
 
+class FloatingCornerButtonFilter final : public QObject
+{
+public:
+    FloatingCornerButtonFilter(QWidget* container, QWidget* button, int rightMargin, int bottomMargin)
+        : QObject(container)
+        , m_container(container)
+        , m_button(button)
+        , m_rightMargin(rightMargin)
+        , m_bottomMargin(bottomMargin)
+    {
+        reposition();
+    }
+
+protected:
+    bool eventFilter(QObject* watched, QEvent* event) override
+    {
+        if (watched == m_container && (event->type() == QEvent::Resize || event->type() == QEvent::Show))
+        {
+            reposition();
+        }
+        return QObject::eventFilter(watched, event);
+    }
+
+private:
+    void reposition()
+    {
+        if (m_container == nullptr || m_button == nullptr)
+        {
+            return;
+        }
+
+        const int x = qMax(0, m_container->width() - m_button->width() - m_rightMargin);
+        const int y = qMax(0, m_container->height() - m_button->height() - m_bottomMargin);
+        m_button->move(x, y);
+        m_button->raise();
+    }
+
+    QWidget* m_container = nullptr;
+    QWidget* m_button = nullptr;
+    int m_rightMargin = 0;
+    int m_bottomMargin = 0;
+};
+
+static void attachFloatingCornerButton(QWidget* container, QWidget* button, int rightMargin, int bottomMargin)
+{
+    if (container == nullptr || button == nullptr)
+    {
+        return;
+    }
+
+    container->installEventFilter(
+        new FloatingCornerButtonFilter(container, button, rightMargin, bottomMargin));
+}
+
 KailleraNetplayDialog::KailleraNetplayDialog(QWidget* parent)
     : QDialog(parent)
 {
     setWindowIcon(QIcon(":Resource/Kaillera.svg"));
     m_netManager = new QNetworkAccessManager(this);
+    m_serverPingPollTimer = new QTimer(this);
+    m_serverPingPollTimer->setInterval(50);
+    connect(m_serverPingPollTimer, &QTimer::timeout, this, &KailleraNetplayDialog::pollServerPing);
 
     setupUI();
     loadSettings();
@@ -218,20 +313,8 @@ KailleraNetplayDialog::KailleraNetplayDialog(QWidget* parent)
     connect(m_stateMachineTimer, &QTimer::timeout, this, &KailleraNetplayDialog::onStateMachineTimer);
     m_stateMachineTimer->start(1);
 
-    // Auto-ping all servers on dialog load.
-    // pingServerRow() blocks (up to 2s per server), so we defer to after
-    // the dialog is shown and process events between each ping.
-    // Disable sorting during the loop so row indices stay stable.
-    QTimer::singleShot(100, this, [this]() {
-        m_serverTable->setSortingEnabled(false);
-        for (int i = 0; i < m_servers.size(); i++)
-        {
-            pingServerRow(i);
-            QApplication::processEvents();
-        }
-        m_serverTable->setSortingEnabled(true);
-        m_serverTable->sortByColumn(1, Qt::AscendingOrder);
-    });
+    schedulePingAllServers();
+    fetchLiveServerList();
 
     // Restore saved geometry
     std::string geom = CoreSettingsGetStringValue(SettingsID::Kaillera_NetplayGeometry);
@@ -247,6 +330,10 @@ KailleraNetplayDialog::~KailleraNetplayDialog()
     if (m_stateMachineTimer)
     {
         m_stateMachineTimer->stop();
+    }
+    if (m_serverPingPollTimer)
+    {
+        m_serverPingPollTimer->stop();
     }
     saveSettings();
     saveServerList();
@@ -290,9 +377,80 @@ QWidget* KailleraNetplayDialog::createServerTab()
     auto* tab = new QWidget();
     auto* layout = new QVBoxLayout(tab);
 
-    // Frame delay at top of Server tab
-    auto* fdlyLayout = new QHBoxLayout();
-    fdlyLayout->addWidget(new QLabel("Frame Delay:", tab));
+    // Server list table
+    auto* tablePane = new QWidget(tab);
+    auto* tablePaneLayout = new QVBoxLayout(tablePane);
+    tablePaneLayout->setContentsMargins(0, 0, 0, 0);
+    tablePaneLayout->setSpacing(0);
+
+    m_serverTable = new QTableWidget(0, 5, tablePane);
+    m_serverTable->setHorizontalHeaderLabels({"*", "Name", "Players", "Ping", "IP"});
+    m_serverTable->verticalHeader()->setVisible(false);
+    m_serverTable->setShowGrid(false);
+    m_serverTable->setSelectionBehavior(QAbstractItemView::SelectRows);
+    m_serverTable->setSelectionMode(QAbstractItemView::SingleSelection);
+    m_serverTable->setEditTriggers(QAbstractItemView::NoEditTriggers);
+    m_serverTable->setSortingEnabled(false);
+    m_serverTable->horizontalHeader()->setMinimumSectionSize(16);
+    // Stretch the IP column so IPs aren't truncated.
+    m_serverTable->horizontalHeader()->setStretchLastSection(false);
+    m_serverTable->horizontalHeader()->setSectionResizeMode(0, QHeaderView::Interactive);
+    m_serverTable->horizontalHeader()->setSectionResizeMode(1, QHeaderView::Interactive);
+    m_serverTable->horizontalHeader()->setSectionResizeMode(2, QHeaderView::Interactive);
+    m_serverTable->horizontalHeader()->setSectionResizeMode(3, QHeaderView::Interactive);
+    m_serverTable->horizontalHeader()->setSectionResizeMode(4, QHeaderView::Stretch);
+    m_serverTable->setColumnWidth(0, 28);
+    m_serverTable->setColumnWidth(1, 170);
+    m_serverTable->setColumnWidth(2, 58);
+    m_serverTable->setColumnWidth(3, 60);
+    m_serverTable->setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(m_serverTable, &QTableWidget::cellDoubleClicked, this, &KailleraNetplayDialog::onServerDoubleClicked);
+    connect(m_serverTable, &QWidget::customContextMenuRequested, this, &KailleraNetplayDialog::onServerRightClicked);
+    connect(m_serverTable, &QTableWidget::cellClicked, this, [this](int row, int column) {
+        if (column != 0 || row < 0 || row >= m_displayServers.size())
+        {
+            updateServerButtons();
+            return;
+        }
+
+        const ServerEntry& entry = m_displayServers[row];
+        toggleFavoriteServer(entry.host, entry.name);
+    });
+    connect(m_serverTable, &QTableWidget::itemSelectionChanged, this, &KailleraNetplayDialog::updateServerButtons);
+    tablePaneLayout->addWidget(m_serverTable);
+
+    m_btnAdd = new QPushButton(tablePane);
+    m_btnAdd->setToolTip("Add a custom server");
+    m_btnAdd->setText("");
+    m_btnAdd->setIcon(QIcon(":/icons/white/svg/add-line.svg"));
+    m_btnAdd->setIconSize(QSize(22, 22));
+    m_btnAdd->setCursor(Qt::PointingHandCursor);
+    m_btnAdd->setFixedSize(46, 46);
+    m_btnAdd->setStyleSheet(
+        "QPushButton {"
+        "  border: 1px solid #005a9e;"
+        "  border-radius: 23px;"
+        "  padding: 0px;"
+        "  background-color: #0078D7;"
+        "}"
+        "QPushButton:hover {"
+        "  background-color: #1c88dc;"
+        "}"
+        "QPushButton:pressed {"
+        "  border-color: #004f8b;"
+        "  background-color: #005a9e;"
+        "}");
+    connect(m_btnAdd, &QPushButton::clicked, this, &KailleraNetplayDialog::onAddServer);
+    attachFloatingCornerButton(tablePane, m_btnAdd, 14, 14);
+
+    layout->addWidget(tablePane, 1);
+
+
+    // Bottom action row
+    auto* btnLayout = new QHBoxLayout();
+    m_btnWaitingGames = new QPushButton("Waiting Games", tab);
+    m_btnConnect = new QPushButton("Connect", tab);
+    auto* frameDelayLabel = new QLabel("Frame Delay:", tab);
     m_frameDelayCombo = new QComboBox(tab);
     m_frameDelayCombo->addItem("Auto");
     m_frameDelayCombo->addItem("1 frame (8ms)");
@@ -304,58 +462,18 @@ QWidget* KailleraNetplayDialog::createServerTab()
     m_frameDelayCombo->addItem("7 frames (104ms)");
     m_frameDelayCombo->addItem("8 frames (120ms)");
     m_frameDelayCombo->addItem("9 frames (136ms)");
-    fdlyLayout->addWidget(m_frameDelayCombo);
-    fdlyLayout->addStretch();
-    layout->addLayout(fdlyLayout);
 
-    // Server list table (3 columns: Name, IP, Ping)
-    m_serverTable = new QTableWidget(0, 3, tab);
-    m_serverTable->setHorizontalHeaderLabels({"Name", "Ping", "IP"});
-    m_serverTable->verticalHeader()->setVisible(false);
-    m_serverTable->setShowGrid(false);
-    m_serverTable->setSelectionBehavior(QAbstractItemView::SelectRows);
-    m_serverTable->setSelectionMode(QAbstractItemView::SingleSelection);
-    m_serverTable->setEditTriggers(QAbstractItemView::NoEditTriggers);
-    m_serverTable->setSortingEnabled(true);
-    m_serverTable->horizontalHeader()->setMinimumSectionSize(16);
-    // Stretch the IP column (index 1) so IPs aren't truncated;
-    // Name and Ping stay at fixed widths
-    m_serverTable->horizontalHeader()->setStretchLastSection(false);
-    m_serverTable->horizontalHeader()->setSectionResizeMode(0, QHeaderView::Interactive);
-    m_serverTable->horizontalHeader()->setSectionResizeMode(1, QHeaderView::Interactive);
-    m_serverTable->horizontalHeader()->setSectionResizeMode(2, QHeaderView::Stretch);
-    m_serverTable->setColumnWidth(0, 150);
-    m_serverTable->setColumnWidth(1, 60);
-    m_serverTable->setContextMenuPolicy(Qt::CustomContextMenu);
-    connect(m_serverTable, &QTableWidget::cellDoubleClicked, this, &KailleraNetplayDialog::onServerDoubleClicked);
-    connect(m_serverTable, &QWidget::customContextMenuRequested, this, &KailleraNetplayDialog::onServerRightClicked);
-    layout->addWidget(m_serverTable);
-
-
-    // Buttons
-    auto* btnLayout = new QHBoxLayout();
-    m_btnAdd = new QPushButton("Add", tab);
-    m_btnEdit = new QPushButton("Edit", tab);
-    m_btnDelete = new QPushButton("Delete", tab);
-    m_btnLiveList = new QPushButton("Live Servers", tab);
-    m_btnWaitingGames = new QPushButton("Waiting Games", tab);
-    m_btnConnect = new QPushButton("Connect", tab);
-
-    connect(m_btnAdd, &QPushButton::clicked, this, &KailleraNetplayDialog::onAddServer);
-    connect(m_btnEdit, &QPushButton::clicked, this, &KailleraNetplayDialog::onEditServer);
-    connect(m_btnDelete, &QPushButton::clicked, this, &KailleraNetplayDialog::onDeleteServer);
-    connect(m_btnLiveList, &QPushButton::clicked, this, &KailleraNetplayDialog::onLiveServerList);
     connect(m_btnWaitingGames, &QPushButton::clicked, this, &KailleraNetplayDialog::onWaitingGames);
     connect(m_btnConnect, &QPushButton::clicked, this, &KailleraNetplayDialog::onConnectServer);
 
-    btnLayout->addWidget(m_btnAdd);
-    btnLayout->addWidget(m_btnEdit);
-    btnLayout->addWidget(m_btnDelete);
-    btnLayout->addWidget(m_btnLiveList);
     btnLayout->addWidget(m_btnWaitingGames);
     btnLayout->addStretch();
+    btnLayout->addWidget(frameDelayLabel);
+    btnLayout->addWidget(m_frameDelayCombo);
     btnLayout->addWidget(m_btnConnect);
     layout->addLayout(btnLayout);
+
+    updateServerButtons();
 
 
     return tab;
@@ -366,17 +484,15 @@ QWidget* KailleraNetplayDialog::createP2PTab()
     auto* tab = new QWidget();
     auto* layout = new QVBoxLayout(tab);
 
-    // Sub-tabs: Host | Connect
-    auto* subTabs = new QTabWidget(tab);
-
-    // ---- Host sub-tab ----
-    auto* hostTab = new QWidget();
-    auto* hostLayout = new QVBoxLayout(hostTab);
+    // Host area
+    auto* hostLayout = new QVBoxLayout();
+    hostLayout->setSpacing(10);
+    hostLayout->addWidget(new QLabel("Host", tab));
 
     // Game picker
     auto* gameLayout = new QHBoxLayout();
-    gameLayout->addWidget(new QLabel("ROM:", hostTab));
-    m_p2pGameCombo = new SearchableComboBox(hostTab);
+    gameLayout->addWidget(new QLabel("ROM:", tab));
+    m_p2pGameCombo = new SearchableComboBox(tab);
     m_p2pGameCombo->setToolTip("Choose the ROM to host");
     gameLayout->addWidget(m_p2pGameCombo, 1);
     hostLayout->addLayout(gameLayout);
@@ -403,68 +519,64 @@ QWidget* KailleraNetplayDialog::createP2PTab()
 
     // Host port + Host button
     auto* hostBtnLayout = new QHBoxLayout();
-    hostBtnLayout->addWidget(new QLabel("Host port:", hostTab));
-    m_p2pPortEdit = new QLineEdit(hostTab);
+    hostBtnLayout->addWidget(new QLabel("Host port:", tab));
+    m_p2pPortEdit = new QLineEdit(tab);
     m_p2pPortEdit->setText("27886");
     m_p2pPortEdit->setMaximumWidth(80);
     hostBtnLayout->addWidget(m_p2pPortEdit);
     hostBtnLayout->addStretch();
-    m_btnP2PHost = new QPushButton("Host", hostTab);
+    m_btnP2PHost = new QPushButton("Host", tab);
     connect(m_btnP2PHost, &QPushButton::clicked, this, &KailleraNetplayDialog::onP2PHost);
     hostBtnLayout->addWidget(m_btnP2PHost);
     hostLayout->addLayout(hostBtnLayout);
 
-    subTabs->addTab(hostTab, "Host");
+    layout->addLayout(hostLayout);
 
-    // ---- Connect sub-tab ----
-    auto* connectTab = new QWidget();
-    auto* connectLayout = new QVBoxLayout(connectTab);
+    auto* divider = new QFrame(tab);
+    divider->setFrameShape(QFrame::HLine);
+    divider->setFrameShadow(QFrame::Plain);
+    layout->addWidget(divider);
+
+    // Connect area
+    auto* connectLayout = new QVBoxLayout();
+    connectLayout->setSpacing(10);
+    connectLayout->addWidget(new QLabel("Connect", tab));
 
     // Top row: IP/Code field + Connect + Paste & Go
     auto* addrLayout = new QHBoxLayout();
-    addrLayout->addWidget(new QLabel("IP/Code:", connectTab));
-    m_p2pHostEdit = new QLineEdit(connectTab);
+    addrLayout->addWidget(new QLabel("IP/Code:", tab));
+    m_p2pHostEdit = new QLineEdit(tab);
     m_p2pHostEdit->setPlaceholderText("Connect code or ip:port");
     addrLayout->addWidget(m_p2pHostEdit, 1);
-    m_btnP2PJoin = new QPushButton("Connect", connectTab);
+    m_btnP2PJoin = new QPushButton("Connect", tab);
     connect(m_btnP2PJoin, &QPushButton::clicked, this, &KailleraNetplayDialog::onP2PJoin);
     addrLayout->addWidget(m_btnP2PJoin);
-    m_btnP2PPasteGo = new QPushButton("Paste && Go", connectTab);
+    m_btnP2PPasteGo = new QPushButton("Paste && Go", tab);
     connect(m_btnP2PPasteGo, &QPushButton::clicked, this, &KailleraNetplayDialog::onP2PPasteAndGo);
     addrLayout->addWidget(m_btnP2PPasteGo);
     connectLayout->addLayout(addrLayout);
 
-    // Stored list + side buttons
+    // Stored list + waiting games button
     auto* storedAreaLayout = new QHBoxLayout();
+    storedAreaLayout->setSpacing(12);
 
-    // Left side: waiting games + Add/Edit/Delete buttons
     auto* storedBtnLayout = new QVBoxLayout();
-    m_btnP2PWaitingGames = new QPushButton("waiting\ngames", connectTab);
-    m_btnP2PWaitingGames->setFixedWidth(60);
+    m_btnP2PWaitingGames = new QPushButton("Waiting\nGames", tab);
+    m_btnP2PWaitingGames->setFixedWidth(88);
     connect(m_btnP2PWaitingGames, &QPushButton::clicked, this, &KailleraNetplayDialog::onP2PWaitingGames);
     storedBtnLayout->addWidget(m_btnP2PWaitingGames);
     storedBtnLayout->addStretch();
-    m_btnP2PAddStored = new QPushButton("Add", connectTab);
-    m_btnP2PAddStored->setFixedWidth(60);
-    connect(m_btnP2PAddStored, &QPushButton::clicked, this, &KailleraNetplayDialog::onP2PAddStored);
-    storedBtnLayout->addWidget(m_btnP2PAddStored);
-    m_btnP2PEditStored = new QPushButton("Edit", connectTab);
-    m_btnP2PEditStored->setFixedWidth(60);
-    connect(m_btnP2PEditStored, &QPushButton::clicked, this, &KailleraNetplayDialog::onP2PEditStored);
-    storedBtnLayout->addWidget(m_btnP2PEditStored);
-    m_btnP2PDeleteStored = new QPushButton("Delete", connectTab);
-    m_btnP2PDeleteStored->setFixedWidth(60);
-    connect(m_btnP2PDeleteStored, &QPushButton::clicked, this, &KailleraNetplayDialog::onP2PDeleteStored);
-    storedBtnLayout->addWidget(m_btnP2PDeleteStored);
     storedAreaLayout->addLayout(storedBtnLayout);
 
-    // Right side: Stored users table
     auto* storedRightLayout = new QVBoxLayout();
-    storedRightLayout->addWidget(new QLabel("Stored:", connectTab));
-    m_p2pStoredTable = new QTableWidget(0, 2, connectTab);
-    m_p2pStoredTable->setHorizontalHeaderLabels({"Name", "IP"});
-    m_p2pStoredTable->horizontalHeader()->setStretchLastSection(true);
-    m_p2pStoredTable->horizontalHeader()->resizeSection(0, 200);
+    m_p2pStoredTable = new QTableWidget(0, 3, tab);
+    m_p2pStoredTable->setHorizontalHeaderLabels({"*", "Name", "IP / Code"});
+    m_p2pStoredTable->horizontalHeader()->setSectionResizeMode(0, QHeaderView::Interactive);
+    m_p2pStoredTable->horizontalHeader()->setSectionResizeMode(1, QHeaderView::Interactive);
+    m_p2pStoredTable->horizontalHeader()->setSectionResizeMode(2, QHeaderView::Stretch);
+    m_p2pStoredTable->setColumnWidth(0, 28);
+    m_p2pStoredTable->setColumnWidth(1, 140);
+    m_p2pStoredTable->setShowGrid(false);
     m_p2pStoredTable->verticalHeader()->setVisible(false);
     m_p2pStoredTable->setSelectionBehavior(QAbstractItemView::SelectRows);
     m_p2pStoredTable->setSelectionMode(QAbstractItemView::SingleSelection);
@@ -474,10 +586,7 @@ QWidget* KailleraNetplayDialog::createP2PTab()
     storedAreaLayout->addLayout(storedRightLayout, 1);
 
     connectLayout->addLayout(storedAreaLayout, 1);
-
-    subTabs->addTab(connectTab, "Connect");
-
-    layout->addWidget(subTabs);
+    layout->addLayout(connectLayout, 1);
 
     return tab;
 }
@@ -595,31 +704,46 @@ void KailleraNetplayDialog::saveSettings()
 
 void KailleraNetplayDialog::loadServerList()
 {
-    m_servers.clear();
+    m_favoriteServers.clear();
+    m_cachedLiveServers.clear();
+    m_displayServers.clear();
 
-    std::vector<std::string> names = CoreSettingsGetStringListValue(SettingsID::Kaillera_ServerListNames);
-    std::vector<std::string> hosts = CoreSettingsGetStringListValue(SettingsID::Kaillera_ServerListHosts);
-
-    if (!names.empty() && names.size() == hosts.size())
+    const std::vector<std::string> favoriteNames =
+        CoreSettingsGetStringListValue(SettingsID::Kaillera_ServerListNames);
+    const std::vector<std::string> favoriteHosts =
+        CoreSettingsGetStringListValue(SettingsID::Kaillera_ServerListHosts);
+    for (size_t i = 0; i < favoriteNames.size() && i < favoriteHosts.size(); ++i)
     {
-        // Load saved server list
-        for (size_t i = 0; i < names.size(); i++)
-        {
-            m_servers.append({
-                QString::fromStdString(names[i]),
-                QString::fromStdString(hosts[i]),
-                "-"
-            });
-        }
+        m_favoriteServers.append({
+            QString::fromStdString(favoriteNames[i]),
+            QString::fromStdString(favoriteHosts[i]),
+            "-",
+            -1,
+            "-",
+            999999
+        });
     }
-    else
+
+    const std::vector<std::string> cachedNames =
+        CoreSettingsGetStringListValue(SettingsID::Kaillera_LiveServerCacheNames);
+    const std::vector<std::string> cachedHosts =
+        CoreSettingsGetStringListValue(SettingsID::Kaillera_LiveServerCacheHosts);
+    for (size_t i = 0; i < cachedNames.size() && i < cachedHosts.size(); ++i)
     {
-        // First run — seed default servers
-        m_servers.append({"Chicago SSB", "92.38.176.115:27888", "-"});
-        m_servers.append({"SSBL Georgia Netplay", "45.61.60.96:27888", "-"});
-        m_servers.append({"Miami Secret", "185.144.159.190:27888", "-"});
-        m_servers.append({"Seattle", "23.227.163.253:27888", "-"});
-        m_servers.append({"San Fran", "165.227.60.3:27888", "-"});
+        const QString host = QString::fromStdString(cachedHosts[i]);
+        if (host.isEmpty() || favoriteServerIndexByHost(host) >= 0)
+        {
+            continue;
+        }
+
+        m_cachedLiveServers.append({
+            QString::fromStdString(cachedNames[i]),
+            host,
+            "-",
+            -1,
+            "-",
+            999999
+        });
     }
 
     refreshServerListDisplay();
@@ -627,19 +751,30 @@ void KailleraNetplayDialog::loadServerList()
 
 void KailleraNetplayDialog::saveServerList()
 {
-    std::vector<std::string> names;
-    std::vector<std::string> hosts;
-    names.reserve(m_servers.size());
-    hosts.reserve(m_servers.size());
-
-    for (const auto& s : m_servers)
+    std::vector<std::string> favoriteNames;
+    std::vector<std::string> favoriteHosts;
+    favoriteNames.reserve(m_favoriteServers.size());
+    favoriteHosts.reserve(m_favoriteServers.size());
+    for (const auto& server : m_favoriteServers)
     {
-        names.push_back(s.name.toStdString());
-        hosts.push_back(s.host.toStdString());
+        favoriteNames.push_back(server.name.toStdString());
+        favoriteHosts.push_back(server.host.toStdString());
     }
 
-    CoreSettingsSetValue(SettingsID::Kaillera_ServerListNames, names);
-    CoreSettingsSetValue(SettingsID::Kaillera_ServerListHosts, hosts);
+    std::vector<std::string> cachedNames;
+    std::vector<std::string> cachedHosts;
+    cachedNames.reserve(m_cachedLiveServers.size());
+    cachedHosts.reserve(m_cachedLiveServers.size());
+    for (const auto& server : m_cachedLiveServers)
+    {
+        cachedNames.push_back(server.name.toStdString());
+        cachedHosts.push_back(server.host.toStdString());
+    }
+
+    CoreSettingsSetValue(SettingsID::Kaillera_ServerListNames, favoriteNames);
+    CoreSettingsSetValue(SettingsID::Kaillera_ServerListHosts, favoriteHosts);
+    CoreSettingsSetValue(SettingsID::Kaillera_LiveServerCacheNames, cachedNames);
+    CoreSettingsSetValue(SettingsID::Kaillera_LiveServerCacheHosts, cachedHosts);
     CoreSettingsSave();
 }
 
@@ -656,73 +791,550 @@ public:
 
 void KailleraNetplayDialog::refreshServerListDisplay()
 {
-    m_serverTable->setSortingEnabled(false);
-    m_serverTable->setRowCount(m_servers.size());
-    for (int i = 0; i < m_servers.size(); i++)
+    QString selectedHost;
+    const int currentRow = m_serverTable->currentRow();
+    if (currentRow >= 0 && currentRow < m_displayServers.size())
     {
-        auto* nameItem = new QTableWidgetItem(m_servers[i].name);
-        nameItem->setData(Qt::UserRole, i); // store m_servers index
-        m_serverTable->setItem(i, 0, nameItem);
-        auto* pingItem = new NumericSortItem(m_servers[i].ping);
-        // Store numeric ping for proper sorting (non-numeric like "timeout" sort last)
-        QString pingStr = m_servers[i].ping;
-        pingStr.remove("ms");
-        bool ok;
-        int pingVal = pingStr.toInt(&ok);
-        pingItem->setData(Qt::UserRole, ok ? pingVal : 999999);
-        m_serverTable->setItem(i, 1, pingItem);
-        m_serverTable->setItem(i, 2, new QTableWidgetItem(m_servers[i].host));
+        selectedHost = m_displayServers[currentRow].host;
     }
-    m_serverTable->setSortingEnabled(true);
-    m_serverTable->sortByColumn(1, Qt::AscendingOrder);
+
+    const int verticalScroll = m_serverTable->verticalScrollBar() != nullptr
+        ? m_serverTable->verticalScrollBar()->value()
+        : 0;
+    const int horizontalScroll = m_serverTable->horizontalScrollBar() != nullptr
+        ? m_serverTable->horizontalScrollBar()->value()
+        : 0;
+
+    m_displayServers = m_favoriteServers;
+
+    QVector<ServerEntry> nonFavorites;
+    nonFavorites.reserve(m_cachedLiveServers.size());
+    for (const auto& server : m_cachedLiveServers)
+    {
+        if (favoriteServerIndexByHost(server.host) < 0)
+        {
+            nonFavorites.append(server);
+        }
+    }
+
+    std::stable_sort(nonFavorites.begin(), nonFavorites.end(), [](const ServerEntry& a, const ServerEntry& b) {
+        return a.pingValue < b.pingValue;
+    });
+
+    for (const auto& server : nonFavorites)
+    {
+        m_displayServers.append(server);
+    }
+
+    QSignalBlocker blocker(m_serverTable);
+    m_serverTable->setUpdatesEnabled(false);
+    m_serverTable->setRowCount(m_displayServers.size());
+    for (int i = 0; i < m_displayServers.size(); ++i)
+    {
+        const ServerEntry& server = m_displayServers[i];
+        const bool favorite = (favoriteServerIndexByHost(server.host) >= 0);
+
+        auto* favoriteItem = new QTableWidgetItem();
+        favoriteItem->setIcon(themedLineIcon(favorite ? "star-fill" : "star"));
+        favoriteItem->setTextAlignment(Qt::AlignCenter);
+        favoriteItem->setFlags((favoriteItem->flags() | Qt::ItemIsEnabled | Qt::ItemIsSelectable)
+            & ~Qt::ItemIsEditable);
+        favoriteItem->setToolTip(favorite ? "Favorited server" : "Favorite server");
+        m_serverTable->setItem(i, 0, favoriteItem);
+
+        auto* nameItem = new QTableWidgetItem(server.name);
+        m_serverTable->setItem(i, 1, nameItem);
+
+        auto* playersItem = new QTableWidgetItem(server.players);
+        playersItem->setTextAlignment(Qt::AlignCenter);
+        m_serverTable->setItem(i, 2, playersItem);
+
+        auto* pingItem = new QTableWidgetItem(server.ping);
+        pingItem->setTextAlignment(Qt::AlignCenter);
+        m_serverTable->setItem(i, 3, pingItem);
+
+        m_serverTable->setItem(i, 4, new QTableWidgetItem(server.host));
+    }
+
+    bool restoredSelection = false;
+    if (!selectedHost.isEmpty())
+    {
+        for (int i = 0; i < m_displayServers.size(); ++i)
+        {
+            if (m_displayServers[i].host == selectedHost)
+            {
+                m_serverTable->selectRow(i);
+                restoredSelection = true;
+                break;
+            }
+        }
+    }
+    if (!restoredSelection)
+    {
+        m_serverTable->clearSelection();
+    }
+
+    m_serverTable->setUpdatesEnabled(true);
+    if (m_serverTable->verticalScrollBar() != nullptr)
+    {
+        m_serverTable->verticalScrollBar()->setValue(verticalScroll);
+    }
+    if (m_serverTable->horizontalScrollBar() != nullptr)
+    {
+        m_serverTable->horizontalScrollBar()->setValue(horizontalScroll);
+    }
+
+    updateServerButtons();
 }
 
-int KailleraNetplayDialog::serverIndexFromRow(int row)
+void KailleraNetplayDialog::fetchLiveServerList()
 {
-    if (row < 0 || row >= m_serverTable->rowCount()) return -1;
-    QTableWidgetItem* item = m_serverTable->item(row, 0);
-    if (!item) return -1;
-    return item->data(Qt::UserRole).toInt();
+    QNetworkRequest request(QUrl("http://kaillerareborn.2manygames.fr/server_list.php"));
+    QNetworkReply* reply = m_netManager->get(request);
+    connect(reply, &QNetworkReply::finished, this, [this, reply]() {
+        reply->deleteLater();
+
+        if (reply->error() != QNetworkReply::NoError)
+        {
+            return;
+        }
+
+        const QVector<ServerEntry> liveServers = parseLiveServerList(reply->readAll());
+        if (liveServers.isEmpty())
+        {
+            return;
+        }
+
+        QVector<ServerEntry> mergedLiveServers;
+        mergedLiveServers.reserve(liveServers.size());
+
+        for (const auto& cachedServer : m_cachedLiveServers)
+        {
+            for (const auto& liveServer : liveServers)
+            {
+                if (liveServer.host == cachedServer.host)
+                {
+                    ServerEntry merged = liveServer;
+                    merged.ping = cachedServer.ping;
+                    merged.pingValue = cachedServer.pingValue;
+                    mergedLiveServers.append(merged);
+                    break;
+                }
+            }
+        }
+
+        for (const auto& liveServer : liveServers)
+        {
+            if (cachedServerIndexByHost(liveServer.host) < 0)
+            {
+                mergedLiveServers.append(liveServer);
+            }
+        }
+
+        m_cachedLiveServers = mergedLiveServers;
+        for (auto& favoriteServer : m_favoriteServers)
+        {
+            for (const auto& liveServer : liveServers)
+            {
+                if (liveServer.host == favoriteServer.host)
+                {
+                    favoriteServer.players = liveServer.players;
+                    favoriteServer.playerCount = liveServer.playerCount;
+                    break;
+                }
+            }
+        }
+        refreshServerListDisplay();
+        saveServerList();
+        schedulePingAllServers();
+    });
 }
 
-void KailleraNetplayDialog::pingServerRow(int row)
+void KailleraNetplayDialog::schedulePingAllServers()
 {
-    int idx = serverIndexFromRow(row);
-    if (idx < 0 || idx >= m_servers.size()) return;
+    if (m_pingAllInProgress)
+    {
+        m_pingAllQueued = true;
+        return;
+    }
 
-    // Parse host:port
-    QString hostStr = m_servers[idx].host;
+    if (m_pingAllQueued)
+    {
+        return;
+    }
+
+    m_pingAllQueued = true;
+    QTimer::singleShot(100, this, [this]() {
+        if (!m_pingAllQueued || m_pingAllInProgress)
+        {
+            return;
+        }
+
+        m_pingAllQueued = false;
+        pingAllServers();
+    });
+}
+
+void KailleraNetplayDialog::pingAllServers()
+{
+    m_pingAllInProgress = true;
+    m_serverListNeedsRefresh = false;
+    m_pendingPingHosts.clear();
+    m_pendingPingHosts.reserve(m_displayServers.size());
+    for (const auto& server : m_displayServers)
+    {
+        m_pendingPingHosts.append(server.host);
+    }
+
+    startNextServerPing();
+}
+
+void KailleraNetplayDialog::startNextServerPing()
+{
+    if (m_pendingPingHosts.isEmpty())
+    {
+        m_pingAllInProgress = false;
+        if (m_serverListNeedsRefresh)
+        {
+            m_serverListNeedsRefresh = false;
+            refreshServerListDisplay();
+            cacheVisibleLiveServerOrder();
+            saveServerList();
+        }
+        if (m_pingAllQueued)
+        {
+            m_pingAllQueued = false;
+            schedulePingAllServers();
+        }
+        return;
+    }
+
+    m_activePingHost = m_pendingPingHosts.takeFirst();
+    updateServerPing(m_activePingHost, -2);
+
     QByteArray ipBytes;
     int port = 27888;
-    int colonIdx = hostStr.lastIndexOf(':');
+    const int colonIdx = m_activePingHost.lastIndexOf(':');
     if (colonIdx >= 0)
     {
-        ipBytes = hostStr.left(colonIdx).toUtf8();
-        port = hostStr.mid(colonIdx + 1).toInt();
-        if (port == 0) port = 27888;
+        ipBytes = m_activePingHost.left(colonIdx).toUtf8();
+        port = m_activePingHost.mid(colonIdx + 1).toInt();
+        if (port == 0)
+        {
+            port = 27888;
+        }
     }
     else
     {
-        ipBytes = hostStr.toUtf8();
+        ipBytes = m_activePingHost.toUtf8();
     }
 
-    // Show pinging state
-    m_servers[idx].ping = "...";
-    refreshServerListDisplay();
-    m_serverTable->repaint();
+    m_activePingFuture = std::async(std::launch::async, [ipBytes, port]() {
+        return kaillera_ping_server(const_cast<char*>(ipBytes.constData()), port, 2000);
+    });
 
-    // Use n02's built-in ping function (2 second timeout)
-    int pingMs = kaillera_ping_server(ipBytes.data(), port, 2000);
-    if (pingMs >= 0)
+    if (m_serverPingPollTimer != nullptr)
     {
-        m_servers[idx].ping = QString::number(pingMs) + "ms";
+        m_serverPingPollTimer->start();
+    }
+}
+
+void KailleraNetplayDialog::pollServerPing()
+{
+    if (!m_activePingFuture.valid())
+    {
+        if (m_serverPingPollTimer != nullptr)
+        {
+            m_serverPingPollTimer->stop();
+        }
+        return;
+    }
+
+    if (m_activePingFuture.wait_for(std::chrono::milliseconds(0)) != std::future_status::ready)
+    {
+        return;
+    }
+
+    if (m_serverPingPollTimer != nullptr)
+    {
+        m_serverPingPollTimer->stop();
+    }
+
+    updateServerPing(m_activePingHost, m_activePingFuture.get());
+    m_activePingHost.clear();
+    startNextServerPing();
+}
+
+QVector<ServerEntry> KailleraNetplayDialog::parseLiveServerList(const QByteArray& data) const
+{
+    QVector<ServerEntry> parsedServers;
+    if (data.size() < 32)
+    {
+        return parsedServers;
+    }
+
+    const char* ptr = data.constData();
+    const char* end = ptr + data.size();
+
+    while (ptr < end - 10)
+    {
+        const char* nameStart = ptr;
+        while (ptr < end && *ptr != '\n') ++ptr;
+        if (ptr >= end)
+        {
+            break;
+        }
+        const QString name = QString::fromUtf8(nameStart, ptr - nameStart).trimmed();
+        ++ptr;
+
+        const char* lineStart = ptr;
+        while (ptr < end && *ptr != '\n') ++ptr;
+        const QString line = QString::fromUtf8(lineStart, ptr - lineStart).trimmed();
+        if (ptr < end)
+        {
+            ++ptr;
+        }
+
+        if (name.isEmpty() || line.isEmpty())
+        {
+            continue;
+        }
+
+        const QStringList parts = line.split(';');
+        if (parts.isEmpty())
+        {
+            continue;
+        }
+
+        const QString hostPort = parts[0].trimmed();
+        if (hostPort.isEmpty() || isPrivateHostPort(hostPort))
+        {
+            continue;
+        }
+
+        bool duplicate = false;
+        for (const auto& server : parsedServers)
+        {
+            if (server.host == hostPort)
+            {
+                duplicate = true;
+                break;
+            }
+        }
+        if (duplicate)
+        {
+            continue;
+        }
+
+        QString players = "-";
+        int playerCount = -1;
+        if (parts.size() > 1)
+        {
+            players = parts[1].trimmed();
+            if (players.isEmpty())
+            {
+                players = "-";
+            }
+            else
+            {
+                bool ok = false;
+                const int parsedCount = players.toInt(&ok);
+                if (ok)
+                {
+                    playerCount = parsedCount;
+                }
+            }
+        }
+
+        parsedServers.append({name, hostPort, players, playerCount, "-", 999999});
+    }
+
+    return parsedServers;
+}
+
+int KailleraNetplayDialog::favoriteServerIndexByHost(const QString& host) const
+{
+    for (int i = 0; i < m_favoriteServers.size(); ++i)
+    {
+        if (m_favoriteServers[i].host == host)
+        {
+            return i;
+        }
+    }
+    return -1;
+}
+
+int KailleraNetplayDialog::cachedServerIndexByHost(const QString& host) const
+{
+    for (int i = 0; i < m_cachedLiveServers.size(); ++i)
+    {
+        if (m_cachedLiveServers[i].host == host)
+        {
+            return i;
+        }
+    }
+    return -1;
+}
+
+void KailleraNetplayDialog::toggleFavoriteServer(const QString& host, const QString& name)
+{
+    const int favoriteIndex = favoriteServerIndexByHost(host);
+    if (favoriteIndex >= 0)
+    {
+        m_favoriteServers.removeAt(favoriteIndex);
     }
     else
     {
-        m_servers[idx].ping = "timeout";
+        ServerEntry entry{name, host, "-", -1, "-", 999999};
+        const int cachedIndex = cachedServerIndexByHost(host);
+        if (cachedIndex >= 0)
+        {
+            entry = m_cachedLiveServers[cachedIndex];
+        }
+        m_favoriteServers.append(entry);
     }
 
     refreshServerListDisplay();
+    saveServerList();
+}
+
+void KailleraNetplayDialog::moveFavoriteServer(int favoriteIndex, int delta)
+{
+    const int targetIndex = favoriteIndex + delta;
+    if (favoriteIndex < 0 || favoriteIndex >= m_favoriteServers.size()
+        || targetIndex < 0 || targetIndex >= m_favoriteServers.size())
+    {
+        return;
+    }
+
+    m_favoriteServers.move(favoriteIndex, targetIndex);
+    refreshServerListDisplay();
+    if (targetIndex >= 0 && targetIndex < m_displayServers.size())
+    {
+        m_serverTable->selectRow(targetIndex);
+    }
+    saveServerList();
+}
+
+void KailleraNetplayDialog::updateServerPing(const QString& host, int pingMs)
+{
+    QString pingText;
+    auto applyPing = [pingMs](ServerEntry& server) {
+        if (pingMs == -2)
+        {
+            server.ping = "...";
+            server.pingValue = 999998;
+        }
+        else if (pingMs >= 0)
+        {
+            server.ping = QString::number(pingMs) + "ms";
+            server.pingValue = pingMs;
+        }
+        else
+        {
+            server.ping = "timeout";
+            server.pingValue = 999999;
+        }
+    };
+
+    if (pingMs == -2)
+    {
+        pingText = "...";
+    }
+    else if (pingMs >= 0)
+    {
+        pingText = QString::number(pingMs) + "ms";
+    }
+    else
+    {
+        pingText = "timeout";
+    }
+
+    const int favoriteIndex = favoriteServerIndexByHost(host);
+    if (favoriteIndex >= 0)
+    {
+        applyPing(m_favoriteServers[favoriteIndex]);
+    }
+
+    const int cachedIndex = cachedServerIndexByHost(host);
+    if (cachedIndex >= 0)
+    {
+        applyPing(m_cachedLiveServers[cachedIndex]);
+    }
+
+    for (auto& server : m_displayServers)
+    {
+        if (server.host == host)
+        {
+            applyPing(server);
+            break;
+        }
+    }
+
+    if (m_pingAllInProgress)
+    {
+        updateVisibleServerPing(host, pingText);
+        if (pingMs != -2)
+        {
+            m_serverListNeedsRefresh = true;
+        }
+        return;
+    }
+
+    refreshServerListDisplay();
+}
+
+void KailleraNetplayDialog::updateVisibleServerPing(const QString& host, const QString& pingText)
+{
+    for (int row = 0; row < m_displayServers.size(); ++row)
+    {
+        if (m_displayServers[row].host != host)
+        {
+            continue;
+        }
+
+        QTableWidgetItem* pingItem = m_serverTable->item(row, 3);
+        if (pingItem != nullptr)
+        {
+            pingItem->setText(pingText);
+        }
+        break;
+    }
+}
+
+void KailleraNetplayDialog::cacheVisibleLiveServerOrder()
+{
+    QVector<ServerEntry> sortedNonFavorites;
+    sortedNonFavorites.reserve(m_displayServers.size());
+    for (const auto& server : m_displayServers)
+    {
+        if (favoriteServerIndexByHost(server.host) < 0)
+        {
+            sortedNonFavorites.append(server);
+        }
+    }
+
+    int nextNonFavorite = 0;
+    for (int i = 0; i < m_cachedLiveServers.size() && nextNonFavorite < sortedNonFavorites.size(); ++i)
+    {
+        if (favoriteServerIndexByHost(m_cachedLiveServers[i].host) >= 0)
+        {
+            continue;
+        }
+
+        m_cachedLiveServers[i] = sortedNonFavorites[nextNonFavorite];
+        ++nextNonFavorite;
+    }
+}
+
+void KailleraNetplayDialog::updateServerButtons()
+{
+    const int row = m_serverTable ? m_serverTable->currentRow() : -1;
+    const bool hasSelection = (row >= 0 && row < m_displayServers.size());
+    if (m_btnConnect != nullptr)
+    {
+        m_btnConnect->setEnabled(hasSelection);
+    }
 }
 
 void KailleraNetplayDialog::onStateMachineTimer()
@@ -790,25 +1402,45 @@ void KailleraNetplayDialog::onAddServer()
     QString host = hostEdit->text().trimmed();
     if (name.isEmpty() || host.isEmpty()) return;
 
-    m_servers.append({name, host, "-"});
+    const int existingFavorite = favoriteServerIndexByHost(host);
+    if (existingFavorite >= 0)
+    {
+        m_favoriteServers[existingFavorite].name = name;
+    }
+    else
+    {
+        ServerEntry entry{name, host, "-", -1, "-", 999999};
+        const int cachedIndex = cachedServerIndexByHost(host);
+        if (cachedIndex >= 0)
+        {
+            entry.ping = m_cachedLiveServers[cachedIndex].ping;
+            entry.pingValue = m_cachedLiveServers[cachedIndex].pingValue;
+        }
+        m_favoriteServers.append(entry);
+    }
     refreshServerListDisplay();
+    saveServerList();
+    schedulePingAllServers();
 }
 
 void KailleraNetplayDialog::onEditServer()
 {
     int row = m_serverTable->currentRow();
-    int idx = serverIndexFromRow(row);
-    if (idx < 0 || idx >= m_servers.size()) return;
+    if (row < 0 || row >= m_displayServers.size()) return;
+
+    const QString selectedHost = m_displayServers[row].host;
+    const int favoriteIndex = favoriteServerIndexByHost(selectedHost);
+    if (favoriteIndex < 0 || favoriteIndex >= m_favoriteServers.size()) return;
 
     QDialog dlg(this);
     dlg.setWindowTitle("Edit Server");
     auto* layout = new QVBoxLayout(&dlg);
     auto* nameEdit = new QLineEdit(&dlg);
     nameEdit->setPlaceholderText("Server Name");
-    nameEdit->setText(m_servers[idx].name);
+    nameEdit->setText(m_favoriteServers[favoriteIndex].name);
     auto* hostEdit = new QLineEdit(&dlg);
     hostEdit->setPlaceholderText("Host (ip:port)");
-    hostEdit->setText(m_servers[idx].host);
+    hostEdit->setText(m_favoriteServers[favoriteIndex].host);
     auto* btnLayout = new QHBoxLayout();
     auto* btnOk = new QPushButton("OK", &dlg);
     auto* btnCancel = new QPushButton("Cancel", &dlg);
@@ -826,47 +1458,97 @@ void KailleraNetplayDialog::onEditServer()
     QString name = nameEdit->text().trimmed();
     QString host = hostEdit->text().trimmed();
     if (name.isEmpty() || host.isEmpty()) return;
+    const int duplicateFavorite = favoriteServerIndexByHost(host);
+    if (duplicateFavorite >= 0 && duplicateFavorite != favoriteIndex)
+    {
+        QMessageBox::information(this, "Edit Server",
+            "That host is already in your favorites.");
+        return;
+    }
 
-    m_servers[idx].name = name;
-    m_servers[idx].host = host;
-    m_servers[idx].ping = "-";
+    m_favoriteServers[favoriteIndex].name = name;
+    m_favoriteServers[favoriteIndex].host = host;
+    m_favoriteServers[favoriteIndex].ping = "-";
+    m_favoriteServers[favoriteIndex].pingValue = 999999;
     refreshServerListDisplay();
-}
-
-void KailleraNetplayDialog::onDeleteServer()
-{
-    int row = m_serverTable->currentRow();
-    int idx = serverIndexFromRow(row);
-    if (idx < 0 || idx >= m_servers.size()) return;
-
-    m_servers.removeAt(idx);
-    refreshServerListDisplay();
+    saveServerList();
+    schedulePingAllServers();
 }
 
 void KailleraNetplayDialog::onServerRightClicked(QPoint pos)
 {
     int row = m_serverTable->rowAt(pos.y());
-    int idx = serverIndexFromRow(row);
-    if (idx < 0 || idx >= m_servers.size()) return;
+    if (row < 0 || row >= m_displayServers.size()) return;
 
     m_serverTable->selectRow(row);
+    const ServerEntry& entry = m_displayServers[row];
+    const int favoriteIndex = favoriteServerIndexByHost(entry.host);
+    const bool favorite = favoriteIndex >= 0;
 
     QMenu menu(this);
+    QAction* actFavorite = menu.addAction(favorite ? "Unfavorite" : "Favorite");
+    QAction* actEdit = nullptr;
+    QAction* actMoveUp = nullptr;
+    QAction* actMoveDown = nullptr;
+    if (favorite)
+    {
+        actEdit = menu.addAction("Edit");
+        actMoveUp = menu.addAction("Move Favorite Up");
+        actMoveDown = menu.addAction("Move Favorite Down");
+        actMoveUp->setEnabled(favoriteIndex > 0);
+        actMoveDown->setEnabled(favoriteIndex + 1 < m_favoriteServers.size());
+        menu.addSeparator();
+    }
     QAction* actPing = menu.addAction("Ping");
     QAction* actTraceroute = menu.addAction("Traceroute");
 
     QAction* chosen = menu.exec(m_serverTable->viewport()->mapToGlobal(pos));
     if (!chosen) return;
 
-    if (chosen == actPing)
+    if (chosen == actFavorite)
     {
-        pingServerRow(row);
+        toggleFavoriteServer(entry.host, entry.name);
+    }
+    else if (chosen == actEdit)
+    {
+        onEditServer();
+    }
+    else if (chosen == actMoveUp)
+    {
+        moveFavoriteServer(favoriteIndex, -1);
+    }
+    else if (chosen == actMoveDown)
+    {
+        moveFavoriteServer(favoriteIndex, 1);
+    }
+    else if (chosen == actPing)
+    {
+        const QString hostStr = entry.host;
+        QByteArray ipBytes;
+        int port = 27888;
+        const int colonIdx = hostStr.lastIndexOf(':');
+        if (colonIdx >= 0)
+        {
+            ipBytes = hostStr.left(colonIdx).toUtf8();
+            port = hostStr.mid(colonIdx + 1).toInt();
+            if (port == 0)
+            {
+                port = 27888;
+            }
+        }
+        else
+        {
+            ipBytes = hostStr.toUtf8();
+        }
+
+        updateServerPing(hostStr, -2);
+        QApplication::processEvents();
+        updateServerPing(hostStr, kaillera_ping_server(ipBytes.data(), port, 2000));
     }
     else if (chosen == actTraceroute)
     {
         // Extract IP (strip port)
-        QString host = m_servers[idx].host;
-        QString ip = host.split(':').first();
+        const QString ip = entry.host.split(':').first();
 
         // Launch tracert in a new console window
         QString cmd = "cmd.exe /c \"tracert " + ip + " & pause\"";
@@ -875,236 +1557,6 @@ void KailleraNetplayDialog::onServerRightClicked(QPoint pos)
     }
 }
 
-
-void KailleraNetplayDialog::onLiveServerList()
-{
-    // Open the live server list as a separate dialog
-    QDialog* liveDialog = new QDialog(this);
-    liveDialog->setWindowTitle("Live Server List");
-    liveDialog->setWindowIcon(QIcon(":Resource/Kaillera.svg"));
-    liveDialog->setMinimumSize(600, 400);
-    liveDialog->resize(700, 500);
-
-    auto* dlgLayout = new QVBoxLayout(liveDialog);
-
-    auto* liveLabel = new QLabel("Downloading server list...", liveDialog);
-    liveLabel->setStyleSheet("color: blue;");
-    dlgLayout->addWidget(liveLabel);
-
-    auto* liveTable = new QTableWidget(0, 7, liveDialog);
-    liveTable->setHorizontalHeaderLabels({"Name", "IP", "Ping", "Users", "Games", "Version", "Location"});
-    liveTable->horizontalHeader()->setStretchLastSection(true);
-    liveTable->setSelectionBehavior(QAbstractItemView::SelectRows);
-    liveTable->setSelectionMode(QAbstractItemView::SingleSelection);
-    liveTable->setEditTriggers(QAbstractItemView::NoEditTriggers);
-    liveTable->setSortingEnabled(true);
-    liveTable->horizontalHeader()->setMinimumSectionSize(16);
-    dlgLayout->addWidget(liveTable);
-
-    auto* liveBtnLayout = new QHBoxLayout();
-    auto* btnAddToList = new QPushButton("Add to Server List", liveDialog);
-    auto* btnLiveConnect = new QPushButton("Connect", liveDialog);
-    auto* btnLiveClose = new QPushButton("Close", liveDialog);
-    liveBtnLayout->addWidget(btnAddToList);
-    liveBtnLayout->addWidget(btnLiveConnect);
-    liveBtnLayout->addStretch();
-    liveBtnLayout->addWidget(btnLiveClose);
-    dlgLayout->addLayout(liveBtnLayout);
-
-    connect(btnLiveClose, &QPushButton::clicked, liveDialog, &QDialog::accept);
-
-    // "Add to Server List" — adds selected server to the main server table
-    connect(btnAddToList, &QPushButton::clicked, this, [this, liveTable, liveDialog]() {
-        int row = liveTable->currentRow();
-        if (row < 0) return;
-
-        QString name = liveTable->item(row, 0)->text();
-        QString hostPort = liveTable->item(row, 1)->text();
-
-        for (const auto& s : m_servers)
-        {
-            if (s.host == hostPort)
-            {
-                QMessageBox::information(liveDialog, "Already Added",
-                    "This server is already in your list.");
-                return;
-            }
-        }
-
-        m_servers.append({name, hostPort, "-"});
-        refreshServerListDisplay();
-    });
-
-    // "Connect" — add to list if needed and connect
-    connect(btnLiveConnect, &QPushButton::clicked, this, [this, liveTable, liveDialog]() {
-        int row = liveTable->currentRow();
-        if (row < 0) return;
-
-        QString name = liveTable->item(row, 0)->text();
-        QString hostPort = liveTable->item(row, 1)->text();
-
-        // Add to server list if not already there
-        bool found = false;
-        for (int i = 0; i < m_servers.size(); i++)
-        {
-            if (m_servers[i].host == hostPort)
-            {
-                m_serverTable->selectRow(i);
-                found = true;
-                break;
-            }
-        }
-        if (!found)
-        {
-            m_servers.append({name, hostPort, "-"});
-            refreshServerListDisplay();
-            m_serverTable->selectRow(m_servers.size() - 1);
-        }
-
-        liveDialog->accept();
-        onConnectServer();
-    });
-
-    // Fetch the master server list
-    QNetworkRequest request(QUrl("http://kaillerareborn.2manygames.fr/server_list.php"));
-    QNetworkReply* reply = m_netManager->get(request);
-    connect(reply, &QNetworkReply::finished, this, [reply, liveTable, liveLabel]() {
-        reply->deleteLater();
-
-        if (reply->error() != QNetworkReply::NoError)
-        {
-            liveLabel->setText("Error: " + reply->errorString());
-            liveLabel->setStyleSheet("color: red;");
-            return;
-        }
-
-        QByteArray data = reply->readAll();
-        if (data.size() < 150)
-        {
-            liveLabel->setText("Error: server list too small or empty");
-            liveLabel->setStyleSheet("color: red;");
-            return;
-        }
-
-        // Parse response: ServerName\nIP:Port;Users;Games;Version;Location\n (repeating)
-        const char* ptr = data.constData();
-        const char* end = ptr + data.size();
-        int total = 0;
-        liveTable->setSortingEnabled(false);
-
-        while (ptr < end - 10)
-        {
-            // Server name (until \n)
-            const char* nameStart = ptr;
-            while (ptr < end && *ptr != '\n') ptr++;
-            if (ptr >= end) break;
-            QString name = QString::fromUtf8(nameStart, ptr - nameStart).trimmed();
-            ptr++; // skip \n
-
-            // IP:Port;Users;Games;Version;Location (until \n)
-            const char* lineStart = ptr;
-            while (ptr < end && *ptr != '\n') ptr++;
-            if (ptr >= end && ptr == lineStart) break;
-            QString line = QString::fromUtf8(lineStart, ptr - lineStart).trimmed();
-            if (ptr < end) ptr++; // skip \n
-
-            if (name.isEmpty() || line.isEmpty()) continue;
-
-            QStringList parts = line.split(';');
-            if (parts.size() < 1) continue;
-
-            QString hostPort = parts[0];
-            QString users = parts.size() > 1 ? parts[1] : "";
-            QString games = parts.size() > 2 ? parts[2] : "";
-            QString version = parts.size() > 3 ? parts[3] : "";
-            QString location = parts.size() > 4 ? parts[4] : "";
-
-            // Filter private IPs (10.x, 127.x, 192.168.x, 172.16-31.x)
-            {
-                bool isPrivate = false;
-                if (hostPort.startsWith("10.") || hostPort.startsWith("192.168.") ||
-                    hostPort.startsWith("127."))
-                {
-                    isPrivate = true;
-                }
-                else if (hostPort.startsWith("172."))
-                {
-                    QStringList octets = hostPort.split('.');
-                    if (octets.size() >= 2)
-                    {
-                        int second = octets[1].toInt();
-                        if (second >= 16 && second <= 31)
-                            isPrivate = true;
-                    }
-                }
-                if (isPrivate) continue;
-            }
-
-            int row = liveTable->rowCount();
-            liveTable->insertRow(row);
-            liveTable->setItem(row, 0, new QTableWidgetItem(name));
-            liveTable->setItem(row, 1, new QTableWidgetItem(hostPort));
-            auto* pingItem = new NumericSortItem("...");
-            pingItem->setData(Qt::UserRole, -1);
-            liveTable->setItem(row, 2, pingItem);
-            auto* usersItem = new NumericSortItem(users);
-            usersItem->setData(Qt::UserRole, users.toInt());
-            liveTable->setItem(row, 3, usersItem);
-            auto* gamesItem = new NumericSortItem(games);
-            gamesItem->setData(Qt::UserRole, games.toInt());
-            liveTable->setItem(row, 4, gamesItem);
-            liveTable->setItem(row, 5, new QTableWidgetItem(version));
-            liveTable->setItem(row, 6, new QTableWidgetItem(location));
-            total++;
-        }
-
-        liveTable->setSortingEnabled(true);
-        liveLabel->setText(QString::number(total) + " servers found — pinging...");
-        liveLabel->setStyleSheet("color: green;");
-
-        // Ping each server after loading
-        QTimer::singleShot(100, liveTable, [liveTable, liveLabel, total]() {
-            liveTable->setSortingEnabled(false);
-            for (int i = 0; i < liveTable->rowCount(); i++)
-            {
-                QString hostStr = liveTable->item(i, 1)->text();
-                QByteArray ipBytes;
-                int port = 27888;
-                int colonIdx = hostStr.lastIndexOf(':');
-                if (colonIdx >= 0)
-                {
-                    ipBytes = hostStr.left(colonIdx).toUtf8();
-                    port = hostStr.mid(colonIdx + 1).toInt();
-                    if (port == 0) port = 27888;
-                }
-                else
-                {
-                    ipBytes = hostStr.toUtf8();
-                }
-
-                int pingMs = kaillera_ping_server(ipBytes.data(), port, 2000);
-                auto* item = liveTable->item(i, 2);
-                if (pingMs >= 0)
-                {
-                    item->setText(QString::number(pingMs) + "ms");
-                    item->setData(Qt::UserRole, pingMs);
-                }
-                else
-                {
-                    item->setText("timeout");
-                    item->setData(Qt::UserRole, 99999);
-                }
-                QApplication::processEvents();
-            }
-            liveTable->setSortingEnabled(true);
-            liveTable->sortByColumn(2, Qt::AscendingOrder);
-            liveLabel->setText(QString::number(total) + " servers found");
-        });
-    });
-
-    liveDialog->exec();
-    delete liveDialog;
-}
 
 void KailleraNetplayDialog::onWaitingGames()
 {
@@ -1154,7 +1606,7 @@ void KailleraNetplayDialog::onWaitingGamesReply(QNetworkReply* reply)
     wgLayout->addWidget(wgTable);
 
     auto* wgBtnLayout = new QHBoxLayout();
-    auto* btnAddToList = new QPushButton("Add Server to List", wgDialog);
+    auto* btnAddToList = new QPushButton("Favorite Server", wgDialog);
     auto* btnWgClose = new QPushButton("Close", wgDialog);
     wgBtnLayout->addWidget(btnAddToList);
     wgBtnLayout->addStretch();
@@ -1177,26 +1629,7 @@ void KailleraNetplayDialog::onWaitingGamesReply(QNetworkReply* reply)
         QString emulator = fields[i + 3].trimmed();
         QString serverName = fields[i + 5].trimmed();
 
-        // Filter private IPs (10.x, 127.x, 192.168.x, 172.16-31.x)
-        {
-            bool isPrivate = false;
-            if (hostPort.startsWith("10.") || hostPort.startsWith("192.168.") ||
-                hostPort.startsWith("127."))
-            {
-                isPrivate = true;
-            }
-            else if (hostPort.startsWith("172."))
-            {
-                QStringList octets = hostPort.split('.');
-                if (octets.size() >= 2)
-                {
-                    int second = octets[1].toInt();
-                    if (second >= 16 && second <= 31)
-                        isPrivate = true;
-                }
-            }
-            if (isPrivate) continue;
-        }
+        if (isPrivateHostPort(hostPort)) continue;
 
         int row = wgTable->rowCount();
         wgTable->insertRow(row);
@@ -1217,18 +1650,14 @@ void KailleraNetplayDialog::onWaitingGamesReply(QNetworkReply* reply)
         QString serverName = wgTable->item(row, 3)->text();
         QString hostPort = wgTable->item(row, 4)->text();
 
-        for (const auto& s : m_servers)
+        if (favoriteServerIndexByHost(hostPort) >= 0)
         {
-            if (s.host == hostPort)
-            {
-                QMessageBox::information(wgDialog, "Already Added",
-                    "This server is already in your list.");
-                return;
-            }
+            QMessageBox::information(wgDialog, "Already Favorited",
+                "This server is already in your favorites.");
+            return;
         }
 
-        m_servers.append({serverName, hostPort, "-"});
-        refreshServerListDisplay();
+        toggleFavoriteServer(hostPort, serverName);
     });
 
     wgDialog->exec();
@@ -1238,11 +1667,11 @@ void KailleraNetplayDialog::onWaitingGamesReply(QNetworkReply* reply)
 void KailleraNetplayDialog::onConnectServer()
 {
     int row = m_serverTable->currentRow();
-    int idx = serverIndexFromRow(row);
-    if (idx < 0 || idx >= m_servers.size()) return;
+    if (row < 0 || row >= m_displayServers.size()) return;
+    const ServerEntry& entry = m_displayServers[row];
 
     // Parse host:port
-    QString hostStr = m_servers[idx].host;
+    QString hostStr = entry.host;
     QByteArray ipBytes;
     int port = 27888;
     int colonIdx = hostStr.lastIndexOf(':');
@@ -1293,7 +1722,7 @@ void KailleraNetplayDialog::onConnectServer()
         });
 
         // Show a progress dialog while connecting
-        QProgressDialog progress("Connecting to " + m_servers[idx].name + "...",
+        QProgressDialog progress("Connecting to " + entry.name + "...",
                                  "Cancel", 0, 0, this);
         progress.setWindowModality(Qt::WindowModal);
         progress.setMinimumDuration(0);
@@ -1331,7 +1760,7 @@ void KailleraNetplayDialog::onConnectServer()
 
             // Open the server browser dialog as a standalone top-level window
             // so it doesn't stay on top of the emulator frame
-            KailleraServerBrowserDialog browser(m_servers[idx].name, nullptr);
+            KailleraServerBrowserDialog browser(entry.name, nullptr);
             browser.show();
 
             QEventLoop loop;
@@ -1351,9 +1780,11 @@ void KailleraNetplayDialog::onConnectServer()
             QString errorMsg = QString::fromUtf8(kaillera_core_get_last_error());
             kaillera_core_cleanup();
             if (errorMsg.isEmpty())
+            {
                 errorMsg = "Failed to connect to server";
+            }
             QMessageBox::warning(this, "Connection Error",
-                                 errorMsg + "\n\nServer: " + m_servers[idx].name);
+                                 errorMsg + "\n\nServer: " + entry.name);
         }
     }
     else
@@ -1365,9 +1796,9 @@ void KailleraNetplayDialog::onConnectServer()
 void KailleraNetplayDialog::onServerDoubleClicked(int row, int column)
 {
     (void)column;
-    int idx = serverIndexFromRow(row);
-    if (idx >= 0 && idx < m_servers.size())
+    if (row >= 0 && row < m_displayServers.size())
     {
+        m_serverTable->selectRow(row);
         onConnectServer();
     }
 }
@@ -1430,6 +1861,7 @@ static bool looksLikeTraversalCode(const QString& s)
 void KailleraNetplayDialog::onP2PJoin()
 {
     QString addrText = m_p2pHostEdit->text().trimmed();
+    addrText.remove(' ');
     if (addrText.isEmpty())
     {
         QMessageBox::warning(this, "P2P Join", "Please enter a connect code or host address (ip:port).");
@@ -1446,10 +1878,15 @@ void KailleraNetplayDialog::onP2PJoin()
         if (isCode)
         {
             // Join by traversal code — the dialog handles connecting via NAT traversal
+            rememberP2PStoredEntry(addrText);
             hide();
 
             QString username = QString::fromUtf8(usernameBytes);
             KailleraP2PDialog p2pDialog(false, QString(), username, addrText, nullptr);
+            connect(&p2pDialog, &KailleraP2PDialog::peerNicknameResolved, this,
+                [this, addrText](const QString& nickname) {
+                    updateP2PStoredNickname(addrText, nickname);
+                });
             p2pDialog.show();
 
             QEventLoop loop;
@@ -1477,10 +1914,15 @@ void KailleraNetplayDialog::onP2PJoin()
 
             if (p2p_core_connect(ipBytes.data(), port))
             {
+                rememberP2PStoredEntry(addrText);
                 hide();
 
                 QString username = QString::fromUtf8(usernameBytes);
                 KailleraP2PDialog p2pDialog(false, QString(), username, QString(), nullptr);
+                connect(&p2pDialog, &KailleraP2PDialog::peerNicknameResolved, this,
+                    [this, addrText](const QString& nickname) {
+                        updateP2PStoredNickname(addrText, nickname);
+                    });
                 p2pDialog.show();
 
                 QEventLoop loop;
@@ -1502,33 +1944,91 @@ void KailleraNetplayDialog::onP2PJoin()
     }
 }
 
-// ---- P2P stored users persistence ----
+// ---- P2P recent/favorite peers ----
 
 void KailleraNetplayDialog::loadP2PStoredUsers()
 {
     QSettings settings("RMG-K", "n02");
-    int count = settings.value("P2P_StoredCount", 0).toInt();
     m_p2pStoredUsers.clear();
-    for (int i = 0; i < count; i++)
+
+    int count = settings.value("P2P_HistoryCount", -1).toInt();
+    if (count >= 0)
     {
-        P2PStoredEntry entry;
-        entry.name = settings.value(QString("P2P_StoredName_%1").arg(i)).toString();
-        entry.host = settings.value(QString("P2P_StoredHost_%1").arg(i)).toString();
-        if (!entry.name.isEmpty() || !entry.host.isEmpty())
-            m_p2pStoredUsers.append(entry);
+        for (int i = 0; i < count; i++)
+        {
+            P2PStoredEntry entry;
+            entry.name = settings.value(QString("P2P_HistoryName_%1").arg(i)).toString().trimmed();
+            entry.host = settings.value(QString("P2P_HistoryHost_%1").arg(i)).toString().trimmed();
+            entry.favorite = settings.value(QString("P2P_HistoryFavorite_%1").arg(i), false).toBool();
+            if (!entry.host.isEmpty())
+            {
+                m_p2pStoredUsers.append(entry);
+            }
+        }
     }
+    else
+    {
+        count = settings.value("P2P_StoredCount", 0).toInt();
+        for (int i = 0; i < count; i++)
+        {
+            P2PStoredEntry entry;
+            entry.name = settings.value(QString("P2P_StoredName_%1").arg(i)).toString().trimmed();
+            entry.host = settings.value(QString("P2P_StoredHost_%1").arg(i)).toString().trimmed();
+            if (!entry.host.isEmpty())
+            {
+                m_p2pStoredUsers.append(entry);
+            }
+        }
+    }
+
+    QVector<P2PStoredEntry> favorites;
+    QVector<P2PStoredEntry> recents;
+    favorites.reserve(m_p2pStoredUsers.size());
+    recents.reserve(m_p2pStoredUsers.size());
+    for (const auto& entry : m_p2pStoredUsers)
+    {
+        if (entry.favorite)
+        {
+            favorites.append(entry);
+        }
+        else
+        {
+            recents.append(entry);
+        }
+    }
+    m_p2pStoredUsers = favorites;
+    m_p2pStoredUsers += recents;
+
+    while (m_p2pStoredUsers.size() - p2pFavoriteCount() > kMaxP2PRecentEntries)
+    {
+        m_p2pStoredUsers.removeLast();
+    }
+
     refreshP2PStoredDisplay();
 }
 
 void KailleraNetplayDialog::saveP2PStoredUsers()
 {
     QSettings settings("RMG-K", "n02");
-    settings.setValue("P2P_StoredCount", m_p2pStoredUsers.size());
+    const int cleanupCount = std::max(
+        settings.value("P2P_HistoryCount", 0).toInt(),
+        settings.value("P2P_StoredCount", 0).toInt());
+    settings.setValue("P2P_HistoryCount", m_p2pStoredUsers.size());
+    for (int i = 0; i < cleanupCount; i++)
+    {
+        settings.remove(QString("P2P_HistoryName_%1").arg(i));
+        settings.remove(QString("P2P_HistoryHost_%1").arg(i));
+        settings.remove(QString("P2P_HistoryFavorite_%1").arg(i));
+        settings.remove(QString("P2P_StoredName_%1").arg(i));
+        settings.remove(QString("P2P_StoredHost_%1").arg(i));
+    }
     for (int i = 0; i < m_p2pStoredUsers.size(); i++)
     {
-        settings.setValue(QString("P2P_StoredName_%1").arg(i), m_p2pStoredUsers[i].name);
-        settings.setValue(QString("P2P_StoredHost_%1").arg(i), m_p2pStoredUsers[i].host);
+        settings.setValue(QString("P2P_HistoryName_%1").arg(i), m_p2pStoredUsers[i].name);
+        settings.setValue(QString("P2P_HistoryHost_%1").arg(i), m_p2pStoredUsers[i].host);
+        settings.setValue(QString("P2P_HistoryFavorite_%1").arg(i), m_p2pStoredUsers[i].favorite);
     }
+    settings.setValue("P2P_StoredCount", 0);
 }
 
 void KailleraNetplayDialog::refreshP2PStoredDisplay()
@@ -1537,66 +2037,128 @@ void KailleraNetplayDialog::refreshP2PStoredDisplay()
     m_p2pStoredTable->setRowCount(m_p2pStoredUsers.size());
     for (int i = 0; i < m_p2pStoredUsers.size(); i++)
     {
-        m_p2pStoredTable->setItem(i, 0, new QTableWidgetItem(m_p2pStoredUsers[i].name));
-        m_p2pStoredTable->setItem(i, 1, new QTableWidgetItem(m_p2pStoredUsers[i].host));
+        auto* favoriteItem = new QTableWidgetItem();
+        favoriteItem->setIcon(themedLineIcon(m_p2pStoredUsers[i].favorite ? "star-fill" : "star"));
+        favoriteItem->setTextAlignment(Qt::AlignCenter);
+        favoriteItem->setFlags((favoriteItem->flags() | Qt::ItemIsEnabled | Qt::ItemIsSelectable)
+            & ~Qt::ItemIsEditable);
+        m_p2pStoredTable->setItem(i, 0, favoriteItem);
+        m_p2pStoredTable->setItem(i, 1, new QTableWidgetItem(
+            m_p2pStoredUsers[i].name.isEmpty() ? "-" : m_p2pStoredUsers[i].name));
+        m_p2pStoredTable->setItem(i, 2, new QTableWidgetItem(m_p2pStoredUsers[i].host));
     }
 }
 
 void KailleraNetplayDialog::onP2PStoredClicked(int row, int column)
 {
-    (void)column;
     if (row >= 0 && row < m_p2pStoredUsers.size())
     {
+        if (column == 0)
+        {
+            toggleP2PStoredFavorite(row);
+            return;
+        }
+
+        m_p2pStoredTable->selectRow(row);
         m_p2pHostEdit->setText(m_p2pStoredUsers[row].host);
     }
 }
 
-void KailleraNetplayDialog::onP2PAddStored()
+int KailleraNetplayDialog::p2pStoredIndexByHost(const QString& host) const
 {
-    QString name = QInputDialog::getText(this, "Add Stored Entry", "Name:");
-    if (name.isEmpty()) return;
-    QString host = QInputDialog::getText(this, "Add Stored Entry", "IP/Code:");
-    if (host.isEmpty()) return;
-
-    P2PStoredEntry entry;
-    entry.name = name;
-    entry.host = host.remove(' ');
-    m_p2pStoredUsers.append(entry);
-    refreshP2PStoredDisplay();
+    for (int i = 0; i < m_p2pStoredUsers.size(); ++i)
+    {
+        if (m_p2pStoredUsers[i].host == host)
+        {
+            return i;
+        }
+    }
+    return -1;
 }
 
-void KailleraNetplayDialog::onP2PEditStored()
+int KailleraNetplayDialog::p2pFavoriteCount() const
 {
-    int row = m_p2pStoredTable ? m_p2pStoredTable->currentRow() : -1;
+    int count = 0;
+    while (count < m_p2pStoredUsers.size() && m_p2pStoredUsers[count].favorite)
+    {
+        ++count;
+    }
+    return count;
+}
+
+void KailleraNetplayDialog::toggleP2PStoredFavorite(int row)
+{
     if (row < 0 || row >= m_p2pStoredUsers.size())
     {
-        QMessageBox::information(this, "Edit", "Select a stored entry first.");
         return;
     }
 
-    bool ok = false;
-    QString name = QInputDialog::getText(this, "Edit Stored Entry", "Name:",
-                                         QLineEdit::Normal, m_p2pStoredUsers[row].name, &ok);
-    if (!ok) return;
-    QString host = QInputDialog::getText(this, "Edit Stored Entry", "IP/Code:",
-                                         QLineEdit::Normal, m_p2pStoredUsers[row].host, &ok);
-    if (!ok) return;
-
-    m_p2pStoredUsers[row].name = name;
-    m_p2pStoredUsers[row].host = host.remove(' ');
-    refreshP2PStoredDisplay();
-}
-
-void KailleraNetplayDialog::onP2PDeleteStored()
-{
-    int row = m_p2pStoredTable ? m_p2pStoredTable->currentRow() : -1;
-    if (row < 0 || row >= m_p2pStoredUsers.size())
-    {
-        QMessageBox::information(this, "Delete", "Select a stored entry first.");
-        return;
-    }
+    P2PStoredEntry entry = m_p2pStoredUsers[row];
     m_p2pStoredUsers.removeAt(row);
+    entry.favorite = !entry.favorite;
+
+    const int insertIndex = p2pFavoriteCount();
+    m_p2pStoredUsers.insert(insertIndex, entry);
     refreshP2PStoredDisplay();
+    m_p2pStoredTable->selectRow(insertIndex);
+    saveP2PStoredUsers();
+}
+
+void KailleraNetplayDialog::rememberP2PStoredEntry(const QString& host, const QString& nickname)
+{
+    QString normalizedHost = host.trimmed();
+    normalizedHost.remove(' ');
+    if (normalizedHost.isEmpty())
+    {
+        return;
+    }
+
+    const int existingIndex = p2pStoredIndexByHost(normalizedHost);
+    if (existingIndex >= 0)
+    {
+        P2PStoredEntry entry = m_p2pStoredUsers[existingIndex];
+        if (!nickname.trimmed().isEmpty())
+        {
+            entry.name = nickname.trimmed();
+        }
+        if (entry.favorite)
+        {
+            m_p2pStoredUsers[existingIndex] = entry;
+            refreshP2PStoredDisplay();
+            saveP2PStoredUsers();
+            return;
+        }
+
+        m_p2pStoredUsers.removeAt(existingIndex);
+        m_p2pStoredUsers.insert(p2pFavoriteCount(), entry);
+        while (m_p2pStoredUsers.size() - p2pFavoriteCount() > kMaxP2PRecentEntries)
+        {
+            m_p2pStoredUsers.removeLast();
+        }
+        refreshP2PStoredDisplay();
+        saveP2PStoredUsers();
+        return;
+    }
+
+    m_p2pStoredUsers.insert(p2pFavoriteCount(), {nickname.trimmed(), normalizedHost, false});
+    while (m_p2pStoredUsers.size() - p2pFavoriteCount() > kMaxP2PRecentEntries)
+    {
+        m_p2pStoredUsers.removeLast();
+    }
+
+    refreshP2PStoredDisplay();
+    saveP2PStoredUsers();
+}
+
+void KailleraNetplayDialog::updateP2PStoredNickname(const QString& host, const QString& nickname)
+{
+    const QString trimmedNickname = nickname.trimmed();
+    if (trimmedNickname.isEmpty())
+    {
+        return;
+    }
+
+    rememberP2PStoredEntry(host, trimmedNickname);
 }
 
 void KailleraNetplayDialog::onP2PPasteAndGo()

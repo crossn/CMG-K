@@ -805,6 +805,7 @@ void KailleraP2PDialog::onPeerLeft()
 
 void KailleraP2PDialog::onPeerInfo(QString name, QString app)
 {
+    emit peerNicknameResolved(name);
     m_chat->append("<span style='color:green;'>" + timestamp() + "Peer: " +
                    name.toHtmlEscaped() + " (" + app.toHtmlEscaped() + ")</span>");
 }

@@ -33,6 +33,9 @@ public:
                                QWidget* parent = nullptr);
     ~KailleraP2PDialog() override;
 
+signals:
+    void peerNicknameResolved(QString nickname);
+
 protected:
     void reject() override;
 
