@@ -1900,7 +1900,13 @@ void KailleraServerBrowserDialog::refreshPlayerCards()
     const QString theme = QString::fromStdString(CoreSettingsGetStringValue(SettingsID::GUI_Theme));
     const bool modern = (theme == "Modern");
     const QColor frameColor = palette().text().color();
-    const QString msColorCss = "rgba(0, 0, 0, 0.55)";
+    const bool darkTheme = palette().base().color().value() < 128;
+    const QColor msColor = darkTheme ? QColor(255, 255, 255, 180) : QColor(0, 0, 0, 140);
+    const QString msColorCss = QString("rgba(%1, %2, %3, %4)")
+        .arg(msColor.red())
+        .arg(msColor.green())
+        .arg(msColor.blue())
+        .arg(msColor.alpha());
 
     for (int row = 0; row < m_playerList->count(); ++row)
     {
