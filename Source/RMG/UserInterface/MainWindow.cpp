@@ -23,7 +23,7 @@
 #include "Dialog/Netplay/CreateNetplaySessionDialog.hpp"
 #include "Dialog/Netplay/NetplaySessionDialog.hpp"
 #endif // NETPLAY
-#ifdef _WIN32
+#if defined(NETPLAY) && defined(_WIN32)
 #include "KailleraUIBridge.hpp"
 #include "Dialog/Kaillera/KailleraPlaybackDialog.hpp"
 #endif
@@ -128,7 +128,7 @@ QPalette resolveStyleStandardPalette(const QString& styleName, const QPalette& f
     return palette;
 }
 
-#ifdef _WIN32
+#ifdef NETPLAY
 constexpr std::chrono::seconds kLocalEchoMaxAge(2);
 constexpr size_t kLocalEchoMaxEntries = 8;
 
@@ -139,7 +139,7 @@ QString NormalizeOsdKailleraChatMessage(QString message)
     message.replace('\n', ' ');
     return message;
 }
-#endif // _WIN32
+#endif // NETPLAY
 } // namespace
 
 MainWindow::MainWindow() : QMainWindow(nullptr)
@@ -2439,7 +2439,7 @@ void MainWindow::on_Action_Settings_Input(void)
 
 void MainWindow::on_Action_Playback(void)
 {
-#ifdef _WIN32
+#if defined(NETPLAY) && defined(_WIN32)
     // If already open, just bring it to front
     auto* existing = findChild<KailleraPlaybackDialog*>();
     if (existing)
@@ -2459,7 +2459,7 @@ void MainWindow::on_Action_Playback(void)
     auto* dialog = new KailleraPlaybackDialog(this);
     dialog->setAttribute(Qt::WA_DeleteOnClose);
     dialog->show();
-#endif // _WIN32
+#endif // NETPLAY && _WIN32
 }
 
 void MainWindow::on_Action_Settings_Settings(void)
