@@ -479,6 +479,11 @@ CORE_EXPORT bool CoreHasInitKaillera(void)
     return false;
 }
 
+CORE_EXPORT bool CoreIsKailleraPlaybackMode(void)
+{
+    return false;
+}
+
 CORE_EXPORT bool CoreShowKailleraServerDialog(void* parentHwnd)
 {
     (void)parentHwnd;
