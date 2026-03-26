@@ -8,6 +8,7 @@
  * along with this program. If not, see <https://www.gnu.org/licenses/>.
  */
 #include "KailleraWaitingGamesDialog.hpp"
+#include "KailleraTableStyle.hpp"
 
 #ifdef _WIN32
 
@@ -64,6 +65,7 @@ KailleraWaitingGamesDialog::KailleraWaitingGamesDialog(QWidget* parent)
     m_table->setSelectionMode(QAbstractItemView::SingleSelection);
     m_table->setEditTriggers(QAbstractItemView::NoEditTriggers);
     m_table->setSortingEnabled(true);
+    applyNoAccentStyle(m_table);
     connect(m_table, &QTableWidget::cellDoubleClicked,
             this, &KailleraWaitingGamesDialog::onRowDoubleClicked);
     mainLayout->addWidget(m_table, 1);

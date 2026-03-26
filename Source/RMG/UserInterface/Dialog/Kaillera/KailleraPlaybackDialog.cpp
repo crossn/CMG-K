@@ -8,6 +8,7 @@
  * along with this program. If not, see <https://www.gnu.org/licenses/>.
  */
 #include "KailleraPlaybackDialog.hpp"
+#include "KailleraTableStyle.hpp"
 
 #ifdef _WIN32
 
@@ -80,6 +81,7 @@ void KailleraPlaybackDialog::setupUI()
     m_playbackTable->setColumnWidth(2, 140);
     m_playbackTable->setColumnWidth(3, 60);
     m_playbackTable->setColumnWidth(4, 60);
+    applyNoAccentStyle(m_playbackTable);
     connect(m_playbackTable, &QTableWidget::cellDoubleClicked, this, &KailleraPlaybackDialog::onPlaybackDoubleClicked);
     mainLayout->addWidget(m_playbackTable);
 

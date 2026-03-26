@@ -10,6 +10,7 @@
 #include "KailleraNetplayDialog.hpp"
 #include "KailleraServerBrowserDialog.hpp"
 #include "KailleraP2PDialog.hpp"
+#include "KailleraTableStyle.hpp"
 #include "KailleraWaitingGamesDialog.hpp"
 
 #ifdef _WIN32
@@ -52,6 +53,9 @@
 #include <QScrollBar>
 #include <QSignalBlocker>
 #include <QStylePainter>
+#include <QItemDelegate>
+#include <QPainter>
+#include <QProxyStyle>
 #include <QStyledItemDelegate>
 #include <QStringList>
 #include <QToolButton>
@@ -321,11 +325,11 @@ private:
     int m_displayTextInset = 0;
 };
 
-class CenteredIconDelegate final : public QStyledItemDelegate
+class CenteredIconDelegate final : public QItemDelegate
 {
 public:
     explicit CenteredIconDelegate(QObject* parent = nullptr)
-        : QStyledItemDelegate(parent)
+        : QItemDelegate(parent)
     {
     }
 
@@ -333,25 +337,31 @@ public:
         const QModelIndex& index) const override
     {
         QStyleOptionViewItem viewOption(option);
-        initStyleOption(&viewOption, index);
+        viewOption.state &= ~(QStyle::State_HasFocus | QStyle::State_Selected | QStyle::State_MouseOver);
+
+        if (option.state & QStyle::State_Selected)
+        {
+            painter->fillRect(option.rect, QColor(100, 149, 237, 60));
+        }
+        else if (option.state & QStyle::State_MouseOver)
+        {
+            painter->fillRect(option.rect, QColor(100, 149, 237, 30));
+        }
 
         const QIcon icon = qvariant_cast<QIcon>(index.data(Qt::UserRole));
-        const bool hasText = !viewOption.text.isEmpty();
-        if (icon.isNull() || hasText)
+        const QString text = index.data(Qt::DisplayRole).toString();
+        if (icon.isNull() || !text.isEmpty())
         {
-            QStyledItemDelegate::paint(painter, option, index);
+            QItemDelegate::paint(painter, viewOption, index);
             return;
         }
 
-        viewOption.icon = QIcon();
-        viewOption.text.clear();
-        viewOption.features &= ~QStyleOptionViewItem::HasDecoration;
-        viewOption.features &= ~QStyleOptionViewItem::HasDisplay;
-        QStyledItemDelegate::paint(painter, viewOption, index);
+        // Clear decoration/text so base paint just draws background
+        viewOption.decorationSize = QSize(0, 0);
+        QItemDelegate::paint(painter, viewOption, index);
 
-        const QSize iconSize = viewOption.decorationSize.isValid()
-            ? viewOption.decorationSize
-            : QSize(16, 16);
+        // Draw icon centered manually
+        const QSize iconSize(16, 16);
         const QRect iconRect(
             viewOption.rect.x() + (viewOption.rect.width() - iconSize.width()) / 2,
             viewOption.rect.y() + (viewOption.rect.height() - iconSize.height()) / 2,
@@ -646,6 +656,9 @@ static QString buildLauncherStyleSheet(const QString& theme)
         : blendColors(windowColor, appPalette.base().color(), 0.75);
     const QString shellBackground = cssColor(shellColor);
     const bool darkTheme = windowColor.value() < 128;
+    const QString borderColor = darkTheme
+        ? cssColor(blendColors(windowColor, QColor(Qt::white), 0.20))
+        : "palette(mid)";
     const QString comboArrowIcon = QString(":/icons/%1/svg/arrow-down-s-line.svg")
         .arg(darkTheme ? "white" : "black");
 
@@ -688,12 +701,6 @@ static QString buildLauncherStyleSheet(const QString& theme)
         "QTableWidget#KailleraSurface {"
         "  gridline-color: transparent;"
         "  alternate-background-color: palette(alternate-base);"
-        "  selection-background-color: transparent;"
-        "  selection-color: palette(text);"
-        "}"
-        "QTableWidget#KailleraSurface::item:selected {"
-        "  background: transparent;"
-        "  color: palette(text);"
         "}"
         "QFrame#KailleraDivider {"
         "  background-color: %8;"
@@ -862,6 +869,11 @@ static QString buildLauncherStyleSheet(const QString& theme)
                 comboArrowIcon);
     }
 
+    if (darkTheme)
+    {
+        style.replace("palette(mid)", borderColor);
+    }
+
     return style;
 }
 
@@ -1005,6 +1017,7 @@ QWidget* KailleraNetplayDialog::createServerTab()
     m_serverTable->setColumnWidth(2, 58);
     m_serverTable->setColumnWidth(3, 60);
     m_serverTable->setContextMenuPolicy(Qt::CustomContextMenu);
+    applyNoAccentStyle(m_serverTable);
     m_serverTable->setItemDelegateForColumn(0, new CenteredIconDelegate(m_serverTable));
     if (theme != "Modern" && !isFusionFamilyTheme(theme))
     {
@@ -1257,6 +1270,7 @@ QWidget* KailleraNetplayDialog::createP2PTab()
     m_p2pStoredTable->setSelectionBehavior(QAbstractItemView::SelectRows);
     m_p2pStoredTable->setSelectionMode(QAbstractItemView::SingleSelection);
     m_p2pStoredTable->setEditTriggers(QAbstractItemView::NoEditTriggers);
+    applyNoAccentStyle(m_p2pStoredTable);
     m_p2pStoredTable->setItemDelegateForColumn(0, new CenteredIconDelegate(m_p2pStoredTable));
     if (theme != "Modern" && !isFusionFamilyTheme(theme))
     {
@@ -2221,6 +2235,7 @@ void KailleraNetplayDialog::onWaitingGamesReply(QNetworkReply* reply)
     wgTable->setEditTriggers(QAbstractItemView::NoEditTriggers);
     wgTable->setSortingEnabled(true);
     wgTable->horizontalHeader()->setMinimumSectionSize(16);
+    applyNoAccentStyle(wgTable);
     wgLayout->addWidget(wgTable);
 
     auto* wgBtnLayout = new QHBoxLayout();
