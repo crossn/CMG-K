@@ -657,7 +657,7 @@ static QString buildLauncherStyleSheet(const QString& theme)
     const QString shellBackground = cssColor(shellColor);
     const bool darkTheme = windowColor.value() < 128;
     const QString borderColor = darkTheme
-        ? cssColor(blendColors(windowColor, QColor(Qt::white), 0.25))
+        ? cssColor(blendColors(windowColor, QColor(Qt::white), 0.20))
         : "palette(mid)";
     const QString comboArrowIcon = QString(":/icons/%1/svg/arrow-down-s-line.svg")
         .arg(darkTheme ? "white" : "black");

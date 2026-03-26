@@ -880,7 +880,7 @@ void KailleraServerBrowserDialog::setupUI()
 
     if (darkTheme)
     {
-        const QString borderColor = blendColors(windowColor, QColor(Qt::white), 25).name(QColor::HexRgb);
+        const QString borderColor = blendColors(QColor(Qt::white), windowColor, 20).name(QColor::HexRgb);
         style.replace("palette(mid)", borderColor);
     }
 
