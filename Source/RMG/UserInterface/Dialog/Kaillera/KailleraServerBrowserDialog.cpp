@@ -8,6 +8,7 @@
  * along with this program. If not, see <https://www.gnu.org/licenses/>.
  */
 #include "KailleraServerBrowserDialog.hpp"
+#include "KailleraTableStyle.hpp"
 
 #ifdef _WIN32
 
@@ -562,6 +563,8 @@ void KailleraServerBrowserDialog::setupUI()
     const QString composerRadius = modern ? "7px" : "2px";
     const QString sidebarRadius = modern ? "10px" : "2px";
     const QString headerIconRadius = modern ? "5px" : "2px";
+    const QColor windowColor = QApplication::palette().window().color();
+    const bool darkTheme = windowColor.value() < 128;
 
     // Style the joined-server UI surfaces and keep list/table selection visually neutral.
     QString style = QString(
@@ -875,6 +878,12 @@ void KailleraServerBrowserDialog::setupUI()
             "}";
     }
 
+    if (darkTheme)
+    {
+        const QString borderColor = blendColors(QColor(Qt::white), windowColor, 20).name(QColor::HexRgb);
+        style.replace("palette(mid)", borderColor);
+    }
+
     setStyleSheet(style);
 
     auto* mainLayout = new QVBoxLayout(this);
@@ -1026,6 +1035,7 @@ void KailleraServerBrowserDialog::setupUI()
     m_userTable->setColumnWidth(0, 130);
     m_userTable->setColumnWidth(1, 64);
     m_userTable->setColumnWidth(2, 64);
+    applyNoAccentStyle(m_userTable);
     m_userTable->horizontalHeader()->setContextMenuPolicy(Qt::CustomContextMenu);
     connect(m_userTable->horizontalHeader(), &QWidget::customContextMenuRequested,
             this, [this](const QPoint& pos) {
@@ -1117,6 +1127,7 @@ QWidget* KailleraServerBrowserDialog::createGameListWidget()
     m_gameTable->setEditTriggers(QAbstractItemView::NoEditTriggers);
     m_gameTable->setSortingEnabled(true);
     m_gameTable->horizontalHeader()->setMinimumSectionSize(16);
+    applyNoAccentStyle(m_gameTable);
     m_gameTable->horizontalHeader()->setContextMenuPolicy(Qt::CustomContextMenu);
     connect(m_gameTable->horizontalHeader(), &QWidget::customContextMenuRequested,
             this, [this](const QPoint& pos) {
@@ -1277,6 +1288,7 @@ QWidget* KailleraServerBrowserDialog::createGameRoomWidget()
     m_roomLobbyTable->setEditTriggers(QAbstractItemView::NoEditTriggers);
     m_roomLobbyTable->setSortingEnabled(true);
     m_roomLobbyTable->horizontalHeader()->setMinimumSectionSize(16);
+    applyNoAccentStyle(m_roomLobbyTable);
     m_roomLobbyTable->horizontalHeader()->setContextMenuPolicy(Qt::CustomContextMenu);
     connect(m_roomLobbyTable->horizontalHeader(), &QWidget::customContextMenuRequested,
             this, [this](const QPoint& pos) {

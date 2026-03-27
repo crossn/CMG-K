@@ -71,7 +71,67 @@
 #include <windows.h>
 #endif
 
+#include <QPainter>
+#include <QProxyStyle>
+
 #include <cstdlib>
+
+#ifdef _WIN32
+class NoAccentProxyStyle final : public QProxyStyle
+{
+public:
+    using QProxyStyle::QProxyStyle;
+
+    void drawPrimitive(PrimitiveElement element, const QStyleOption* option,
+        QPainter* painter, const QWidget* widget) const override
+    {
+        if (element == PE_PanelItemViewItem)
+        {
+            if (const auto* vopt = qstyleoption_cast<const QStyleOptionViewItem*>(option))
+            {
+                // Paint alternating row background
+                if (vopt->features & QStyleOptionViewItem::Alternate)
+                {
+                    painter->fillRect(vopt->rect, vopt->palette.alternateBase());
+                }
+
+                if (vopt->state & State_Selected)
+                {
+                    QColor sel = vopt->palette.highlight().color();
+                    sel.setAlpha(80);
+                    painter->fillRect(vopt->rect, sel);
+                }
+                else if (vopt->state & State_MouseOver)
+                {
+                    QColor hover = vopt->palette.highlight().color();
+                    hover.setAlpha(30);
+                    painter->fillRect(vopt->rect, hover);
+                }
+                return;
+            }
+        }
+        if (element == PE_FrameFocusRect || element == PE_PanelItemViewRow)
+        {
+            return;
+        }
+        QProxyStyle::drawPrimitive(element, option, painter, widget);
+    }
+
+    void drawControl(ControlElement element, const QStyleOption* option,
+        QPainter* painter, const QWidget* widget) const override
+    {
+        if (element == CE_ItemViewItem)
+        {
+            // Strip focus only — keep Selected so text color changes correctly
+            QStyleOptionViewItem opt(*qstyleoption_cast<const QStyleOptionViewItem*>(option));
+            opt.state &= ~State_HasFocus;
+            QProxyStyle::drawControl(element, &opt, painter, widget);
+            return;
+        }
+        QProxyStyle::drawControl(element, option, painter, widget);
+    }
+};
+#endif
 #include <chrono>
 #include <cmath>
 #include <algorithm>
@@ -601,6 +661,9 @@ void MainWindow::configureTheme(QApplication* app)
         QStyle* style = QStyleFactory::create(defaultStyleName);
         if (style != nullptr)
         {
+#ifdef _WIN32
+            style = new NoAccentProxyStyle(style);
+#endif
             app->setStyle(style);
         }
         app->setPalette(defaultPalette);
@@ -608,7 +671,7 @@ void MainWindow::configureTheme(QApplication* app)
 #ifdef _WIN32
     else if (theme == "Windows Vista")
     {
-        app->setStyle(QStyleFactory::create("WindowsVista"));
+        app->setStyle(new NoAccentProxyStyle(QStyleFactory::create("WindowsVista")));
         app->setPalette(app->style()->standardPalette());
     }
 #endif
