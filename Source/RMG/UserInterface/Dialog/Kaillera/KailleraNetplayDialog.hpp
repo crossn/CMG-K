@@ -137,7 +137,6 @@ private:
     // P2P connect controls
     QLineEdit* m_p2pHostEdit = nullptr;
     QPushButton* m_btnP2PJoin = nullptr;
-    QPushButton* m_btnP2PPasteGo = nullptr;
     QTableWidget* m_p2pStoredTable = nullptr;
     QPushButton* m_btnP2PWaitingGames = nullptr;
 

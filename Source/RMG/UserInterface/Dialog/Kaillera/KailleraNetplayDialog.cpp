@@ -1496,7 +1496,7 @@ QWidget* KailleraNetplayDialog::createP2PTab()
     connectBodyLayout->setContentsMargins(0, 0, 0, 0);
     connectBodyLayout->setSpacing(10);
 
-    // Top row: IP/Code field + Connect + Paste & Go
+    // Top row: IP/Code field + Connect + Waiting Games
     auto* addrLayout = new QHBoxLayout();
     auto* addrLabel = new QLabel("IP/Code:", connectBody);
     addrLabel->setObjectName("KailleraFieldLabel");
@@ -1517,16 +1517,12 @@ QWidget* KailleraNetplayDialog::createP2PTab()
     configureLauncherAccentPalette(m_btnP2PJoin);
     connect(m_btnP2PJoin, &QPushButton::clicked, this, &KailleraNetplayDialog::onP2PJoin);
     addrLayout->addWidget(m_btnP2PJoin);
-    m_btnP2PPasteGo = new QPushButton("Paste && Go", connectBody);
-    m_btnP2PPasteGo->setObjectName("KailleraSecondaryButton");
-    configureLauncherButtonMetrics(m_btnP2PPasteGo);
-    connect(m_btnP2PPasteGo, &QPushButton::clicked, this, &KailleraNetplayDialog::onP2PPasteAndGo);
-    addrLayout->addWidget(m_btnP2PPasteGo);
+    m_btnP2PWaitingGames = new QPushButton("Waiting Games", connectBody);
+    m_btnP2PWaitingGames->setObjectName("KailleraSecondaryButton");
+    configureLauncherButtonMetrics(m_btnP2PWaitingGames);
+    connect(m_btnP2PWaitingGames, &QPushButton::clicked, this, &KailleraNetplayDialog::onP2PWaitingGames);
+    addrLayout->addWidget(m_btnP2PWaitingGames);
     connectBodyLayout->addLayout(addrLayout);
-
-    // Stored list + waiting games button
-    auto* storedAreaLayout = new QVBoxLayout();
-    storedAreaLayout->setSpacing(8);
 
     m_p2pStoredTable = new QTableWidget(0, 3, connectBody);
     m_p2pStoredTable->setObjectName("KailleraSurface");
@@ -1550,15 +1546,7 @@ QWidget* KailleraNetplayDialog::createP2PTab()
             "QTableWidget { border: 1px solid palette(mid); }");
     }
     connect(m_p2pStoredTable, &QTableWidget::cellClicked, this, &KailleraNetplayDialog::onP2PStoredClicked);
-    storedAreaLayout->addWidget(m_p2pStoredTable, 1);
-
-    m_btnP2PWaitingGames = new QPushButton("Show waiting games", connectBody);
-    m_btnP2PWaitingGames->setObjectName("KailleraSecondaryButton");
-    configureLauncherButtonMetrics(m_btnP2PWaitingGames);
-    connect(m_btnP2PWaitingGames, &QPushButton::clicked, this, &KailleraNetplayDialog::onP2PWaitingGames);
-    storedAreaLayout->addWidget(m_btnP2PWaitingGames, 0, Qt::AlignLeft);
-
-    connectBodyLayout->addLayout(storedAreaLayout, 1);
+    connectBodyLayout->addWidget(m_p2pStoredTable, 1);
     connectLayout->addWidget(connectBody);
     layout->addWidget(connectPane, 1);
 
