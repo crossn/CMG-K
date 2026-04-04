@@ -1485,6 +1485,11 @@ QWidget* KailleraServerBrowserDialog::createGameRoomWidget()
     btnLagMenu->setIconSize(QSize(14, 14));
     btnLagMenu->setToolTip("More lag tools");
     btnLagMenu->setFixedWidth(24);
+    btnLagMenu->setStyleSheet(
+        "QToolButton::menu-indicator {"
+        "  image: none;"
+        "  width: 0px;"
+        "}");
 
     auto* lagMenu = new QMenu(btnLagMenu);
     QAction* lagResetAction = lagMenu->addAction("Lagreset");
