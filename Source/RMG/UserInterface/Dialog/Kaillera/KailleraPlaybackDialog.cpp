@@ -82,6 +82,7 @@ void KailleraPlaybackDialog::setupUI()
     m_playbackTable->setColumnWidth(3, 60);
     m_playbackTable->setColumnWidth(4, 60);
     applyNoAccentStyle(m_playbackTable);
+    installHeaderDoubleClickSortToggle(m_playbackTable);
     connect(m_playbackTable, &QTableWidget::cellDoubleClicked, this, &KailleraPlaybackDialog::onPlaybackDoubleClicked);
     mainLayout->addWidget(m_playbackTable);
 
