@@ -114,6 +114,14 @@ public:
         {
             return;
         }
+        // Suppress the raised panel/border on toolbar buttons when not hovered/pressed
+        if (element == PE_PanelButtonTool)
+        {
+            if (!(option->state & (State_MouseOver | State_Sunken)))
+            {
+                return;
+            }
+        }
         QProxyStyle::drawPrimitive(element, option, painter, widget);
     }
 
@@ -125,6 +133,17 @@ public:
             // Strip focus only — keep Selected so text color changes correctly
             QStyleOptionViewItem opt(*qstyleoption_cast<const QStyleOptionViewItem*>(option));
             opt.state &= ~State_HasFocus;
+            QProxyStyle::drawControl(element, &opt, painter, widget);
+            return;
+        }
+        // Strip the raised state from toolbar buttons so they appear flat
+        if (element == CE_ToolButtonStyle)
+        {
+            QStyleOptionToolButton opt(*qstyleoption_cast<const QStyleOptionToolButton*>(option));
+            if (!(opt.state & (State_MouseOver | State_Sunken)))
+            {
+                opt.state &= ~State_Raised;
+            }
             QProxyStyle::drawControl(element, &opt, painter, widget);
             return;
         }
@@ -669,18 +688,6 @@ void MainWindow::configureTheme(QApplication* app)
         app->setPalette(defaultPalette);
     }
 
-    if (theme == "Modern")
-    {
-        // Flatten toolbar buttons to avoid them appearing permanently
-        // hovered/bordered on some Windows Qt style backends
-        bool isDark = app->palette().window().color().value() < 128;
-        QString hoverBg = isDark ? "rgba(255, 255, 255, 30)" : "rgba(0, 0, 0, 20)";
-        QString pressBg = isDark ? "rgba(255, 255, 255, 60)" : "rgba(0, 0, 0, 40)";
-        this->setStyleSheet(this->styleSheet() +
-            " QToolBar QToolButton { border: none; background: transparent; border-radius: 4px; }"
-            " QToolBar QToolButton:hover { background: " + hoverBg + "; }"
-            " QToolBar QToolButton:pressed { background: " + pressBg + "; }");
-    }
 #ifdef _WIN32
     else if (theme == "Windows Vista")
     {
