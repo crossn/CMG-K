@@ -648,10 +648,7 @@ void MainWindow::configureTheme(QApplication* app)
     QString fallbackThemeName = defaultFallbackThemeName;
 
     // set theme style
-    QString fallbackStyleSheet = "QTableView { border: none; color: #0096d3; selection-color: #FFFFFF; selection-background-color: #0096d3; }"
-                                 " QToolBar QToolButton { border: none; background: transparent; padding: 4px; }"
-                                 " QToolBar QToolButton:hover { background: rgba(128, 128, 128, 40); border-radius: 4px; }"
-                                 " QToolBar QToolButton:pressed { background: rgba(128, 128, 128, 80); border-radius: 4px; }";
+    QString fallbackStyleSheet = "QTableView { border: none; color: #0096d3; selection-color: #FFFFFF; selection-background-color: #0096d3; }";
     this->setStyleSheet(fallbackStyleSheet);
 
     app->setStyleSheet(defaultStyleSheet);
@@ -670,6 +667,13 @@ void MainWindow::configureTheme(QApplication* app)
             app->setStyle(style);
         }
         app->setPalette(defaultPalette);
+
+        // Flatten toolbar buttons on the native Windows style to avoid
+        // them appearing permanently hovered/bordered in some builds
+        this->setStyleSheet(this->styleSheet() +
+            " QToolBar QToolButton { border: none; background: transparent; }"
+            " QToolBar QToolButton:hover { background: rgba(128, 128, 128, 40); border-radius: 4px; }"
+            " QToolBar QToolButton:pressed { background: rgba(128, 128, 128, 80); border-radius: 4px; }");
     }
 #ifdef _WIN32
     else if (theme == "Windows Vista")
