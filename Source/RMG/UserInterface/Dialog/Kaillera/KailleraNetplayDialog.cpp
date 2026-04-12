@@ -3464,17 +3464,6 @@ void KailleraNetplayDialog::onConnectServer()
     QByteArray usernameBytes = m_usernameEdit->text().toUtf8();
     if (usernameBytes.isEmpty()) usernameBytes = "Player";
 
-    // Stop server pings before connecting — ping threads create k_socket
-    // objects that modify shared static state (fd_set, socket list) without
-    // synchronization.  Running a ping concurrently with the connect thread
-    // can corrupt that state and hang select(), causing "Not Responding".
-    if (m_serverPingPollTimer != nullptr)
-        m_serverPingPollTimer->stop();
-    m_pendingPingHosts.clear();
-    m_pingAllInProgress = false;
-    if (m_activePingFuture.valid())
-        m_activePingFuture.wait();
-
     // Initialize kaillera core for server mode
     if (kaillera_core_initialize(0, APP, usernameBytes.data(), 1))
     {
