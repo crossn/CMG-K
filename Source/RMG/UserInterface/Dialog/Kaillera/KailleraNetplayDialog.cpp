@@ -1404,7 +1404,7 @@ QWidget* KailleraNetplayDialog::createServerTab()
     m_serverTable = new QTableWidget(0, 6, tablePane);
     m_serverTable->setObjectName("KailleraSurface");
     m_serverTable->setProperty("launcherServerTable", true);
-    m_serverTable->setHorizontalHeaderLabels({"*", "Name", "Country", "Players", "Ping", "IP"});
+    m_serverTable->setHorizontalHeaderLabels({"*", "Name", "Location", "Players", "Ping", "IP"});
     m_serverTable->verticalHeader()->setVisible(false);
     m_serverTable->setShowGrid(false);
     m_serverTable->setSelectionBehavior(QAbstractItemView::SelectRows);
@@ -3463,6 +3463,17 @@ void KailleraNetplayDialog::onConnectServer()
     // Get username
     QByteArray usernameBytes = m_usernameEdit->text().toUtf8();
     if (usernameBytes.isEmpty()) usernameBytes = "Player";
+
+    // Stop server pings before connecting — ping threads create k_socket
+    // objects that modify shared static state (fd_set, socket list) without
+    // synchronization.  Running a ping concurrently with the connect thread
+    // can corrupt that state and hang select(), causing "Not Responding".
+    if (m_serverPingPollTimer != nullptr)
+        m_serverPingPollTimer->stop();
+    m_pendingPingHosts.clear();
+    m_pingAllInProgress = false;
+    if (m_activePingFuture.valid())
+        m_activePingFuture.wait();
 
     // Initialize kaillera core for server mode
     if (kaillera_core_initialize(0, APP, usernameBytes.data(), 1))
