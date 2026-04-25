@@ -16,6 +16,7 @@
 #include <QAction>
 #include <QTimer>
 #include <QTabWidget>
+#include <QListWidget>
 #include <QTableWidget>
 #include <QLineEdit>
 #include <QComboBox>
@@ -62,7 +63,6 @@ private slots:
     void onP2PJoin();
     void onP2PPasteAndGo();
     void onP2PWaitingGames();
-    void onP2PStoredClicked(int row, int column);
     void onCopyP2PCode();
     void onConfigureP2PCode();
 
@@ -143,7 +143,7 @@ private:
     // P2P connect controls
     QLineEdit* m_p2pHostEdit = nullptr;
     QPushButton* m_btnP2PJoin = nullptr;
-    QTableWidget* m_p2pStoredTable = nullptr;
+    QListWidget* m_p2pStoredList = nullptr;
     QPushButton* m_btnP2PWaitingGames = nullptr;
 
     struct P2PStoredEntry {
