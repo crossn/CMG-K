@@ -2877,11 +2877,8 @@ void MainWindow::on_Kaillera_GameStarted(QString gameName, int playerNum, int to
         }
     }
 
-    // Launch emulation with Kaillera marker
-    this->emulationThread->SetRomFile(romFile);
-    this->emulationThread->SetDiskFile("");
     this->emulationThread->SetNetplay("KAILLERA", 0, playerNum); // "KAILLERA" is the marker
-    this->emulationThread->start();
+    this->launchEmulationThread(romFile, "", false, -1, true);
 }
 
 void MainWindow::on_Kaillera_ChatReceived(QString nickname, QString message)
