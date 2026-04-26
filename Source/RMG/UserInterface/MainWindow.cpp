@@ -27,6 +27,7 @@
 #include "KailleraUIBridge.hpp"
 #include "Dialog/Kaillera/KailleraPlaybackDialog.hpp"
 #include "n02_client.h"
+#include "kailleraclient.h"
 #endif
 #include "UserInterface/EventFilter.hpp"
 #include "Utilities/QtKeyToSdl3Key.hpp"
@@ -208,6 +209,18 @@ QString NormalizeOsdKailleraChatMessage(QString message)
     message.replace('\n', ' ');
     return message;
 }
+
+#ifdef _WIN32
+std::array<std::string, 4> GetLiveKailleraPortLabelNames()
+{
+    std::array<std::string, 4> playerNames;
+    for (size_t i = 0; i < playerNames.size(); ++i)
+    {
+        playerNames[i] = recording_player_names[i];
+    }
+    return playerNames;
+}
+#endif // _WIN32
 #endif // NETPLAY
 } // namespace
 
@@ -2881,6 +2894,9 @@ void MainWindow::on_Kaillera_GameStarted(QString gameName, int playerNum, int to
     this->emulationThread->SetRomFile(romFile);
     this->emulationThread->SetDiskFile("");
     this->emulationThread->SetNetplay("KAILLERA", 0, playerNum); // "KAILLERA" is the marker
+#ifdef _WIN32
+    OnScreenDisplaySetKailleraPortLabels(totalPlayers, GetLiveKailleraPortLabelNames());
+#endif
     this->emulationThread->start();
 }
 
@@ -2956,6 +2972,7 @@ void MainWindow::on_Kaillera_GameEnded(void)
     CoreMarkKailleraGameInactive();
 
     OnScreenDisplaySetKailleraChatMessage("");
+    OnScreenDisplayClearKailleraPortLabels();
 #ifdef NETPLAY
     this->ui_PendingLocalChatEchoes.clear();
     this->closeNetplayChatPrompt();

@@ -38,6 +38,8 @@ enum class SettingsID
     GUI_OnScreenDisplayDuration,
     GUI_OnScreenDisplayScale,
     GUI_OnScreenDisplayMaxMessages,
+    GUI_OnScreenDisplayChatEnabled,
+    GUI_OnScreenDisplayKailleraPortLabels,
     GUI_AutoStartNetplayOnStartup,
     GUI_Toolbar,
     GUI_ToolbarArea,

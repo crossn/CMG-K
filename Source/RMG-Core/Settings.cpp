@@ -158,6 +158,12 @@ static l_Setting get_setting(SettingsID settingId)
     case SettingsID::GUI_OnScreenDisplayMaxMessages:
         setting = {SETTING_SECTION_GUI, "OnScreenDisplayMaxMessages", 5};
         break;
+    case SettingsID::GUI_OnScreenDisplayChatEnabled:
+        setting = {SETTING_SECTION_GUI, "OnScreenDisplayChatEnabled", true};
+        break;
+    case SettingsID::GUI_OnScreenDisplayKailleraPortLabels:
+        setting = {SETTING_SECTION_GUI, "OnScreenDisplayKailleraPortLabels", false};
+        break;
     case SettingsID::GUI_AutoStartNetplayOnStartup:
         setting = {SETTING_SECTION_GUI, "AutoStartNetplayOnStartup", false};
         break;
