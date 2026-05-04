@@ -62,6 +62,8 @@
 #include <QProxyStyle>
 #include <QStyledItemDelegate>
 #include <QStringList>
+#include <QMainWindow>
+#include <QPlainTextEdit>
 
 #include <chrono>
 #include <cstring>
@@ -3352,16 +3354,50 @@ void KailleraNetplayDialog::onServerRightClicked(QPoint pos)
     }
     else if (chosen == actTraceroute)
     {
-        // Extract IP (strip port)
         const QString ip = entry.host.split(':').first();
-
-        // Launch traceroute
 #ifdef Q_OS_WIN
         const QString traceCmd = QStringLiteral("tracert");
 #else
         const QString traceCmd = QStringLiteral("traceroute");
 #endif
-        QProcess::startDetached(traceCmd, QStringList() << ip);
+
+        auto* dlg = new QDialog(this);
+        dlg->setWindowTitle("Traceroute - " + ip);
+        dlg->setAttribute(Qt::WA_DeleteOnClose);
+        dlg->resize(600, 400);
+
+        auto* layout = new QVBoxLayout(dlg);
+        auto* output = new QPlainTextEdit(dlg);
+        output->setReadOnly(true);
+        QFont monoFont("monospace");
+        monoFont.setStyleHint(QFont::Monospace);
+        output->setFont(monoFont);
+        layout->addWidget(output);
+
+        auto* proc = new QProcess(dlg);
+        proc->setProcessChannelMode(QProcess::MergedChannels);
+        connect(proc, &QProcess::readyReadStandardOutput, dlg, [proc, output]() {
+            output->moveCursor(QTextCursor::End);
+            output->insertPlainText(QString::fromLocal8Bit(proc->readAllStandardOutput()));
+            output->ensureCursorVisible();
+        });
+        connect(proc, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
+                dlg, [output](int exitCode, QProcess::ExitStatus) {
+            output->moveCursor(QTextCursor::End);
+            output->insertPlainText(QString("\n--- Finished (exit code %1) ---\n").arg(exitCode));
+            output->ensureCursorVisible();
+        });
+        connect(proc, &QProcess::errorOccurred, dlg, [output](QProcess::ProcessError error) {
+            if (error == QProcess::FailedToStart) {
+                output->moveCursor(QTextCursor::End);
+                output->insertPlainText("Error: Could not start traceroute. Is it installed?\n");
+                output->ensureCursorVisible();
+            }
+        });
+
+        output->insertPlainText("$ " + traceCmd + " " + ip + "\n\n");
+        proc->start(traceCmd, QStringList() << ip);
+        dlg->show();
     }
 }
 
@@ -3616,8 +3652,19 @@ void KailleraNetplayDialog::onConnectServer()
             // Browser dialog handles disconnect/cleanup on close
 
             // Re-show the netplay dialog, unless the main window
-            // is closing (user clicked X on the emulator window)
-            if (parentWidget() && parentWidget()->isVisible())
+            // is closing (user clicked X on the emulator window).
+            // The dialog has no Qt parent (nullptr) to avoid Linux
+            // window-stacking issues, so check the active windows instead.
+            bool mainWindowAlive = false;
+            for (QWidget* w : QApplication::topLevelWidgets())
+            {
+                if (qobject_cast<QMainWindow*>(w) && w->isVisible())
+                {
+                    mainWindowAlive = true;
+                    break;
+                }
+            }
+            if (mainWindowAlive)
             {
                 show();
                 m_serverPingsSuspended = false;
