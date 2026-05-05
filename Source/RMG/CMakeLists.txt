@@ -151,6 +151,10 @@ target_include_directories(RMG PRIVATE
 
 target_link_libraries(RMG Qt6::Gui Qt6::Widgets)
 
+if (WIN32)
+    target_link_libraries(RMG opengl32 gdi32 user32)
+endif(WIN32)
+
 if (NOT WIN32)
     target_link_libraries(RMG Qt6::DBus)
 endif(NOT WIN32)
@@ -171,4 +175,3 @@ if (NETPLAY)
         )
     endif(WIN32)
 endif(NETPLAY)
-
