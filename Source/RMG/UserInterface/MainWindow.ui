@@ -155,10 +155,18 @@
     </property>
     <addaction name="action_Netplay_BrowseSessions"/>
    </widget>
+   <widget class="QMenu" name="menuRollback">
+    <property name="title">
+     <string>Rollback</string>
+    </property>
+    <addaction name="action_Rollback_SaveState"/>
+    <addaction name="action_Rollback_LoadState"/>
+   </widget>
    <addaction name="menuSystem"/>
    <addaction name="menuSettings"/>
    <addaction name="menuView"/>
    <addaction name="menuNetplay"/>
+   <addaction name="menuRollback"/>
    <addaction name="menuHelp"/>
   </widget>
   <widget class="QStatusBar" name="statusbar"/>
@@ -647,6 +655,22 @@
      </property>
    <property name="text">
     <string>Search</string>
+   </property>
+  </action>
+  <action name="action_Rollback_SaveState">
+   <property name="icon">
+    <iconset theme="save-3-line"/>
+   </property>
+   <property name="text">
+    <string>&amp;Save State</string>
+   </property>
+  </action>
+  <action name="action_Rollback_LoadState">
+   <property name="icon">
+    <iconset theme="folder-open-line"/>
+   </property>
+   <property name="text">
+    <string>&amp;Load State</string>
    </property>
   </action>
  </widget>

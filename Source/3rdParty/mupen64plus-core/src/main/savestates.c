@@ -96,6 +96,10 @@ struct savestate_work {
     struct work_struct work;
 };
 
+/* Memory buffer for rollback save states */
+static char *rollback_save_data = NULL;
+static size_t rollback_save_size = 0;
+
 /* Returns the malloc'd full path of the currently selected savestate. */
 static char *savestates_generate_path(savestates_type type)
 {
@@ -207,7 +211,10 @@ static void savestates_clear_job(void)
 static int savestates_load_m64p(struct device* dev, char *filepath)
 {
     unsigned char header[44];
-    gzFile f;
+    gzFile f = NULL;
+    unsigned char *memory_data = NULL;
+    size_t memory_size = 0;
+    size_t memory_offset = 0;
     unsigned int version;
     int i;
     uint32_t FCR31;
@@ -222,28 +229,54 @@ static int savestates_load_m64p(struct device* dev, char *filepath)
 
     SDL_LockMutex(savestates_lock);
 
-    f = osal_gzopen(filepath, "rb");
-    if(f==NULL)
+    // Check if this is a memory load (for rollback)
+    if (strcmp(filepath, "MEMORY") == 0)
     {
-        main_message(M64MSG_STATUS, OSD_BOTTOM_LEFT, "Could not open state file: %s", filepath);
-        SDL_UnlockMutex(savestates_lock);
-        return 0;
+        if (rollback_save_data == NULL || rollback_save_size == 0)
+        {
+            main_message(M64MSG_STATUS, OSD_BOTTOM_LEFT, "No rollback state available");
+            SDL_UnlockMutex(savestates_lock);
+            return 0;
+        }
+        memory_data = (unsigned char *)rollback_save_data;
+        memory_size = rollback_save_size;
+        // Copy header from memory
+        if (memory_size < 44)
+        {
+            main_message(M64MSG_STATUS, OSD_BOTTOM_LEFT, "Invalid rollback state data");
+            SDL_UnlockMutex(savestates_lock);
+            return 0;
+        }
+        memcpy(header, memory_data, 44);
+        memory_offset = 44;
+        curr = header;
     }
+    else
+    {
+        f = osal_gzopen(filepath, "rb");
+        if(f==NULL)
+        {
+            main_message(M64MSG_STATUS, OSD_BOTTOM_LEFT, "Could not open state file: %s", filepath);
+            SDL_UnlockMutex(savestates_lock);
+            return 0;
+        }
 
-    /* Read and check Mupen64Plus magic number. */
-    if (gzread(f, header, 44) != 44)
-    {
-        main_message(M64MSG_STATUS, OSD_BOTTOM_LEFT, "Could not read header from state file %s", filepath);
-        gzclose(f);
-        SDL_UnlockMutex(savestates_lock);
-        return 0;
+        /* Read and check Mupen64Plus magic number. */
+        if (gzread(f, header, 44) != 44)
+        {
+            main_message(M64MSG_STATUS, OSD_BOTTOM_LEFT, "Could not read header from state file %s", filepath);
+            gzclose(f);
+            SDL_UnlockMutex(savestates_lock);
+            return 0;
+        }
+        curr = header;
     }
-    curr = header;
 
     if(strncmp((char *)curr, savestate_magic, 8)!=0)
     {
         main_message(M64MSG_STATUS, OSD_BOTTOM_LEFT, "State file: %s is not a valid Mupen64plus savestate.", filepath);
-        gzclose(f);
+        if (f != NULL)
+            gzclose(f);
         SDL_UnlockMutex(savestates_lock);
         return 0;
     }
@@ -256,7 +289,8 @@ static int savestates_load_m64p(struct device* dev, char *filepath)
     if((version >> 16) != (savestate_latest_version >> 16))
     {
         main_message(M64MSG_STATUS, OSD_BOTTOM_LEFT, "State version (%08x) isn't compatible. Please update Mupen64Plus.", version);
-        gzclose(f);
+        if (f != NULL)
+            gzclose(f);
         SDL_UnlockMutex(savestates_lock);
         return 0;
     }
@@ -264,7 +298,8 @@ static int savestates_load_m64p(struct device* dev, char *filepath)
     if(memcmp((char *)curr, ROM_SETTINGS.MD5, 32))
     {
         main_message(M64MSG_STATUS, OSD_BOTTOM_LEFT, "State ROM MD5 does not match current ROM.");
-        gzclose(f);
+        if (f != NULL)
+            gzclose(f);
         SDL_UnlockMutex(savestates_lock);
         return 0;
     }
@@ -276,11 +311,44 @@ static int savestates_load_m64p(struct device* dev, char *filepath)
     if (savestateData == NULL)
     {
         main_message(M64MSG_STATUS, OSD_BOTTOM_LEFT, "Insufficient memory to load state.");
-        gzclose(f);
+        if (f != NULL)
+            gzclose(f);
         SDL_UnlockMutex(savestates_lock);
         return 0;
     }
-    if (version == 0x00010000) /* original savestate version */
+    if (memory_data != NULL)
+    {
+        size_t required_size = savestateSize;
+        if (version == 0x00010000)
+            required_size += sizeof(queue);
+        else if (version == 0x00010100)
+            required_size += sizeof(queue) + sizeof(using_tlb_data);
+        else
+            required_size += sizeof(queue) + sizeof(using_tlb_data) + sizeof(data_0001_0200);
+
+        if (memory_size - memory_offset < required_size)
+        {
+            main_message(M64MSG_STATUS, OSD_BOTTOM_LEFT, "Rollback state data is incomplete.");
+            free(savestateData);
+            SDL_UnlockMutex(savestates_lock);
+            return 0;
+        }
+
+        memcpy(savestateData, memory_data + memory_offset, savestateSize);
+        memory_offset += savestateSize;
+        memcpy(queue, memory_data + memory_offset, sizeof(queue));
+        memory_offset += sizeof(queue);
+        if (version >= 0x00010100)
+        {
+            memcpy(using_tlb_data, memory_data + memory_offset, sizeof(using_tlb_data));
+            memory_offset += sizeof(using_tlb_data);
+        }
+        if (version >= 0x00010200)
+        {
+            memcpy(data_0001_0200, memory_data + memory_offset, sizeof(data_0001_0200));
+        }
+    }
+    else if (version == 0x00010000) /* original savestate version */
     {
         if (gzread(f, savestateData, savestateSize) != (int)savestateSize ||
             (gzread(f, queue, sizeof(queue)) % 4) != 0)
@@ -320,7 +388,8 @@ static int savestates_load_m64p(struct device* dev, char *filepath)
         }
     }
 
-    gzclose(f);
+    if (f != NULL)
+        gzclose(f);
     SDL_UnlockMutex(savestates_lock);
 
     // Parse savestate
@@ -1429,7 +1498,12 @@ int savestates_load(void)
     char *filepath = NULL;
     int ret = 0;
 
-    if (fname == NULL) // For slots, autodetect the savestate type
+    if (fname != NULL && strcmp(fname, "MEMORY") == 0)
+    {
+        type = savestates_type_m64p;
+        filepath = strdup(fname);
+    }
+    else if (fname == NULL) // For slots, autodetect the savestate type
     {
         // try M64P type first
         type = savestates_type_m64p;
@@ -1512,6 +1586,25 @@ static void savestates_save_m64p_work(struct work_struct *work)
 
     SDL_LockMutex(savestates_lock);
 
+    // Check if this is a memory save (for rollback)
+    if (strcmp(save->filepath, "MEMORY") == 0)
+    {
+        // Free any existing rollback data
+        if (rollback_save_data != NULL)
+        {
+            free(rollback_save_data);
+        }
+        // Store the data in memory
+        rollback_save_data = save->data;
+        rollback_save_size = save->size;
+        save->data = NULL; // Prevent double free
+        free(save->filepath);
+        free(save);
+        StateChanged(M64CORE_STATE_SAVECOMPLETE, 1);
+        SDL_UnlockMutex(savestates_lock);
+        return;
+    }
+
     // Write the state to a GZIP file
     f = osal_gzopen(save->filepath, "wb");
 
@@ -1520,6 +1613,7 @@ static void savestates_save_m64p_work(struct work_struct *work)
         main_message(M64MSG_STATUS, OSD_BOTTOM_LEFT, "Could not open state file: %s", save->filepath);
         free(save->data);
         StateChanged(M64CORE_STATE_SAVECOMPLETE, 0);
+        SDL_UnlockMutex(savestates_lock);
         return;
     }
 
@@ -1530,6 +1624,7 @@ static void savestates_save_m64p_work(struct work_struct *work)
         gzclose(f);
         free(save->data);
         StateChanged(M64CORE_STATE_SAVECOMPLETE, 0);
+        SDL_UnlockMutex(savestates_lock);
         return;
     }
 
@@ -1946,6 +2041,20 @@ static int savestates_save_m64p(const struct device* dev, char *filepath)
     PUTDATA(curr, uint32_t, dev->sp.first_run);
     PUTDATA(curr, uint32_t, dev->sp.rsp_wait);
 
+    if (strcmp(filepath, "MEMORY") == 0)
+    {
+        SDL_LockMutex(savestates_lock);
+        free(rollback_save_data);
+        rollback_save_data = save->data;
+        rollback_save_size = save->size;
+        SDL_UnlockMutex(savestates_lock);
+
+        free(save->filepath);
+        free(save);
+        StateChanged(M64CORE_STATE_SAVECOMPLETE, 1);
+        return 1;
+    }
+
     init_work(&save->work, savestates_save_m64p_work);
     queue_work(&save->work);
 
@@ -2241,6 +2350,10 @@ void savestates_init(void)
 
 void savestates_deinit(void)
 {
+    free(rollback_save_data);
+    rollback_save_data = NULL;
+    rollback_save_size = 0;
+
     SDL_DestroyMutex(savestates_lock);
     savestates_clear_job();
 }

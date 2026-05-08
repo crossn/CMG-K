@@ -18,7 +18,13 @@
 
 #include "m64p/Api.hpp"
 
-#include <algorithm>
+#include <filesystem>
+
+//
+// Local Variables
+//
+
+static bool l_HasRollbackState = false;
 
 //
 // Local Functions
@@ -299,4 +305,57 @@ CORE_EXPORT bool CoreLoadSaveState(std::filesystem::path file)
     }
 
     return ret == M64ERR_SUCCESS;
+}
+
+CORE_EXPORT bool CoreSaveRollbackState(void)
+{
+    std::string error;
+    m64p_error ret;
+    static char memoryState[] = "MEMORY";
+
+    if (!m64p::Core.IsHooked())
+    {
+        return false;
+    }
+
+    ret = m64p::Core.DoCommand(M64CMD_STATE_SAVE, static_cast<int>(CoreSaveStateType::Mupen64Plus), memoryState);
+    if (ret != M64ERR_SUCCESS)
+    {
+        error = "CoreSaveRollbackState: m64p::Core.DoCommand(M64CMD_STATE_SAVE) Failed: ";
+        error += m64p::Core.ErrorMessage(ret);
+        CoreSetError(error);
+    }
+    else
+    {
+        l_HasRollbackState = true;
+    }
+
+    return ret == M64ERR_SUCCESS;
+}
+
+CORE_EXPORT bool CoreLoadRollbackState(void)
+{
+    std::string error;
+    m64p_error ret;
+    static char memoryState[] = "MEMORY";
+
+    if (!m64p::Core.IsHooked())
+    {
+        return false;
+    }
+
+    ret = m64p::Core.DoCommand(M64CMD_STATE_LOAD, 0, memoryState);
+    if (ret != M64ERR_SUCCESS)
+    {
+        error = "CoreLoadRollbackState: m64p::Core.DoCommand(M64CMD_STATE_LOAD) Failed: ";
+        error += m64p::Core.ErrorMessage(ret);
+        CoreSetError(error);
+    }
+
+    return ret == M64ERR_SUCCESS;
+}
+
+CORE_EXPORT bool CoreHasRollbackState(void)
+{
+    return m64p::Core.IsHooked() && l_HasRollbackState;
 }

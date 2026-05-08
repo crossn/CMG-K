@@ -1274,6 +1274,10 @@ void MainWindow::updateActions(bool inEmulation, bool isPaused)
     keyBinding = QString::fromStdString(CoreSettingsGetStringValue(SettingsID::KeyBinding_Exit));
     this->action_System_Exit->setShortcut(QKeySequence(keyBinding));
 
+    // rollback actions
+    this->action_Rollback_SaveState->setEnabled(inEmulation);
+    this->action_Rollback_LoadState->setEnabled(inEmulation && CoreHasRollbackState());
+
     // configure keybindings for speed factor
     QAction* speedActions[] =
     {
@@ -1532,6 +1536,7 @@ void MainWindow::configureActions(void)
         this->actionSlot_6, this->actionSlot_7, this->actionSlot_8,
         this->actionSlot_9, this->action_System_Cheats,
         this->action_System_GSButton, this->action_System_Exit,
+        this->action_Rollback_SaveState, this->action_Rollback_LoadState,
         // Settings actions
         this->action_Settings_Graphics, this->action_Settings_Audio,
         this->action_Settings_Rsp, this->action_Settings_Input,
@@ -1657,6 +1662,9 @@ void MainWindow::connectActionSignals(void)
     connect(this->action_System_Load, &QAction::triggered, this, &MainWindow::on_Action_System_Load);
     connect(this->action_System_Cheats, &QAction::triggered, this, &MainWindow::on_Action_System_Cheats);
     connect(this->action_System_GSButton, &QAction::triggered, this, &MainWindow::on_Action_System_GSButton);
+
+    connect(this->action_Rollback_SaveState, &QAction::triggered, this, &MainWindow::on_Action_Rollback_SaveState);
+    connect(this->action_Rollback_LoadState, &QAction::triggered, this, &MainWindow::on_Action_Rollback_LoadState);
 
     connect(this->action_Settings_Graphics, &QAction::triggered, this, &MainWindow::on_Action_Settings_Graphics);
     connect(this->action_Settings_Audio, &QAction::triggered, this, &MainWindow::on_Action_Settings_Audio);
@@ -3939,7 +3947,25 @@ void MainWindow::on_Core_StateCallback(CoreStateCallbackType type, int value)
         } break;
         case CoreStateCallbackType::SaveStateLoaded:
         {
-            if (this->ui_LoadSaveStateSlotTimerId != -1 && value == 0)
+            if (this->ui_RollbackLoadPending)
+            {
+                this->ui_RollbackLoadPending = false;
+
+                if (value == 0)
+                {
+                    OnScreenDisplaySetMessage("Failed to load rollback state.");
+                }
+                else
+                {
+                    auto end = std::chrono::steady_clock::now();
+                    auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end - this->ui_RollbackLoadStartTime);
+                    std::string message = "Rollback loaded in " + std::to_string(duration.count()) + " us";
+                    OnScreenDisplaySetMessage(message);
+                }
+
+                this->ui_ManuallyLoadedState = false;
+            }
+            else if (this->ui_LoadSaveStateSlotTimerId != -1 && value == 0)
             {
                 this->ui_LoadSaveStateSlotCounter++;
                 if (this->ui_LoadSaveStateSlotCounter >= 5)
@@ -3991,6 +4017,8 @@ void MainWindow::on_Core_StateCallback(CoreStateCallbackType type, int value)
             }
             this->ui_UpdateSaveStateSlotTimerId = this->startTimer(1000);
 
+            this->action_Rollback_LoadState->setEnabled(CoreHasRollbackState());
+
             this->ui_ManuallySavedState = false;
         } break;
         case CoreStateCallbackType::ScreenshotCaptured:
@@ -4004,6 +4032,30 @@ void MainWindow::on_Core_StateCallback(CoreStateCallbackType type, int value)
                 OnScreenDisplaySetMessage("Captured screenshot.");
             }
         } break;
+    }
+}
+
+void MainWindow::on_Action_Rollback_SaveState(void)
+{
+    if (!CoreSaveRollbackState())
+    {
+        this->showErrorMessage("Save Rollback State Failed", QString::fromStdString(CoreGetError()));
+        return;
+    }
+
+    this->action_Rollback_LoadState->setEnabled(CoreHasRollbackState());
+}
+
+void MainWindow::on_Action_Rollback_LoadState(void)
+{
+    this->ui_RollbackLoadPending = true;
+    this->ui_RollbackLoadStartTime = std::chrono::steady_clock::now();
+
+    if (!CoreLoadRollbackState())
+    {
+        this->ui_RollbackLoadPending = false;
+        this->showErrorMessage("Load Rollback State Failed", QString::fromStdString(CoreGetError()));
+        return;
     }
 }
 
