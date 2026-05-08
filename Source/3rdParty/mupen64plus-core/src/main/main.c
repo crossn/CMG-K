@@ -1147,6 +1147,7 @@ static void apply_speed_limiter(void)
     static unsigned long totalVIs = 0;
     static int resetOnce = 0;
     static int lastSpeedFactor = 100;
+    static double totalElapsedGameTime = 0.0;
     static uint64_t StartFPSTime = 0;
     static const double defaultSpeedFactor = 100.0;
     uint64_t CurrentFPSTime = SDL_GetTicks();
@@ -1161,11 +1162,13 @@ static void apply_speed_limiter(void)
     {
        StartFPSTime = CurrentFPSTime;
        totalVIs = 0;
+       totalElapsedGameTime = 0.0;
        resetOnce = 1;
     }
     else
     {
         ++totalVIs;
+        totalElapsedGameTime += AdjustedLimit;
     }
 
     lastSpeedFactor = l_SpeedFactor;
@@ -1178,7 +1181,6 @@ static void apply_speed_limiter(void)
     if(g_DebuggerActive) DebuggerCallback(DEBUG_UI_VI, 0);
 #endif
 
-    double totalElapsedGameTime = AdjustedLimit*totalVIs;
     double elapsedRealTime = CurrentFPSTime - StartFPSTime;
     double sleepTime = totalElapsedGameTime - elapsedRealTime;
 
@@ -1191,7 +1193,7 @@ static void apply_speed_limiter(void)
     }
 
     if (sleepTime < minSleepNeeded) {
-        totalVIs += (unsigned long)(minSleepNeeded/AdjustedLimit);
+        totalElapsedGameTime = elapsedRealTime + minSleepNeeded;
     }
 
     if(l_MainSpeedLimit && sleepTime > 0 && sleepTime < maxSleepNeeded*SpeedFactorMultiple)

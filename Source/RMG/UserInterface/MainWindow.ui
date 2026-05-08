@@ -167,6 +167,8 @@
     <addaction name="action_Rollback_VerifyDebugReplayWithGraphics"/>
     <addaction name="action_Rollback_StressDebugReplay"/>
     <addaction name="action_Rollback_SynctestDebugReplay"/>
+    <addaction name="separator"/>
+    <addaction name="action_Rollback_ClientInputReplay"/>
    </widget>
    <addaction name="menuSystem"/>
    <addaction name="menuSettings"/>
@@ -717,6 +719,17 @@
    </property>
    <property name="text">
     <string>Rollback Synctest Debug Replay</string>
+   </property>
+  </action>
+  <action name="action_Rollback_ClientInputReplay">
+   <property name="checkable">
+    <bool>true</bool>
+   </property>
+   <property name="icon">
+    <iconset theme="record-circle-line"/>
+   </property>
+   <property name="text">
+    <string>Client Record/Replay 600 Inputs</string>
    </property>
   </action>
  </widget>

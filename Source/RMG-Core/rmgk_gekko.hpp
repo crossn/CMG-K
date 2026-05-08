@@ -25,6 +25,7 @@ class rmgk_gekko
     static bool install_core_input_callback();
     static void clear_core_input_callback();
     static bool synchronize_input(void* values, int size, int players);
+    static bool toggle_client_input_replay();
 };
 
 #endif // RMGK_GEKKO_HPP

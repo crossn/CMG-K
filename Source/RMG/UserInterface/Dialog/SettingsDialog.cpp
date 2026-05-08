@@ -200,7 +200,8 @@ enum class SettingsDialogTab
     Plugin     = 11,
     Directory  = 12,
     N64DD      = 13,
-    Invalid    = 14
+    Rollback   = 14,
+    Invalid    = 15
 };
 
 
@@ -282,7 +283,6 @@ SettingsDialog::SettingsDialog(QWidget *parent, QString file) : QDialog(parent)
     {
         this->loadSettings(i);
     }
-    this->loadRollbackSettings();
 
     // connect hotkey settings to slot
     this->commonHotkeySettings(SettingsDialogAction::ConnectSignals);
@@ -565,6 +565,9 @@ void SettingsDialog::restoreDefaults(int stackedWidgetIndex)
     case SettingsDialogTab::N64DD:
         this->loadDefault64DDSettings();
         break;
+    case SettingsDialogTab::Rollback:
+        this->loadDefaultRollbackSettings();
+        break;
     }
 }
 
@@ -621,6 +624,9 @@ void SettingsDialog::loadSettings(int stackedWidgetIndex)
         break;
     case SettingsDialogTab::N64DD:
         this->load64DDSettings();
+        break;
+    case SettingsDialogTab::Rollback:
+        this->loadRollbackSettings();
         break;
     }
 }
@@ -1886,14 +1892,7 @@ void SettingsDialog::on_buttonBox_clicked(QAbstractButton *button)
 
     if (pushButton == defaultButton)
     {
-        if (this->tabWidget->tabText(this->tabWidget->currentIndex()) == "Rollback")
-        {
-            this->loadDefaultRollbackSettings();
-        }
-        else
-        {
-            this->restoreDefaults(this->currentIndex());
-        }
+        this->restoreDefaults(this->currentIndex());
     }
     else if (pushButton == cancelButton)
     {

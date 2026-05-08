@@ -157,6 +157,7 @@ public:
 #include <RMG-Core/Screenshot.hpp>
 #include <RMG-Core/Emulation.hpp>
 #include <RMG-Core/RollbackNetcode.hpp>
+#include <RMG-Core/rmgk_gekko.hpp>
 #include <RMG-Core/SaveState.hpp>
 #include <RMG-Core/Settings.hpp>
 #include <RMG-Core/Plugins.hpp>
@@ -2001,6 +2002,11 @@ void MainWindow::updateActions(bool inEmulation, bool isPaused)
     this->action_Rollback_VerifyDebugReplayWithGraphics->setEnabled(inEmulation && isPaused && rollbackDebugReplayReady && rollbackDebugReplayIdle);
     this->action_Rollback_StressDebugReplay->setEnabled(inEmulation && isPaused && rollbackDebugReplayReady && rollbackDebugReplayIdle);
     this->action_Rollback_SynctestDebugReplay->setEnabled(inEmulation && isPaused && rollbackDebugReplayReady && rollbackDebugReplayIdle);
+    this->action_Rollback_ClientInputReplay->setEnabled(inEmulation);
+    if (!inEmulation)
+    {
+        this->action_Rollback_ClientInputReplay->setChecked(false);
+    }
 
     // configure keybindings for speed factor
     QAction* speedActions[] =
@@ -2263,7 +2269,7 @@ void MainWindow::configureActions(void)
         this->action_Rollback_SaveState, this->action_Rollback_LoadState,
         this->action_Rollback_StartDebugReplay, this->action_Rollback_VerifyDebugReplay,
         this->action_Rollback_VerifyDebugReplayWithGraphics, this->action_Rollback_StressDebugReplay,
-        this->action_Rollback_SynctestDebugReplay,
+        this->action_Rollback_SynctestDebugReplay, this->action_Rollback_ClientInputReplay,
         // Settings actions
         this->action_Settings_Graphics, this->action_Settings_Audio,
         this->action_Settings_Rsp, this->action_Settings_Input,
@@ -2397,6 +2403,7 @@ void MainWindow::connectActionSignals(void)
     connect(this->action_Rollback_VerifyDebugReplayWithGraphics, &QAction::triggered, this, &MainWindow::on_Action_Rollback_VerifyDebugReplayWithGraphics);
     connect(this->action_Rollback_StressDebugReplay, &QAction::triggered, this, &MainWindow::on_Action_Rollback_StressDebugReplay);
     connect(this->action_Rollback_SynctestDebugReplay, &QAction::triggered, this, &MainWindow::on_Action_Rollback_SynctestDebugReplay);
+    connect(this->action_Rollback_ClientInputReplay, &QAction::triggered, this, &MainWindow::on_Action_Rollback_ClientInputReplay);
 
     connect(this->action_Settings_Graphics, &QAction::triggered, this, &MainWindow::on_Action_Settings_Graphics);
     connect(this->action_Settings_Audio, &QAction::triggered, this, &MainWindow::on_Action_Settings_Audio);
@@ -5266,6 +5273,25 @@ void MainWindow::on_Action_Rollback_SynctestDebugReplay(void)
     }
 
     this->updateActions(true, true);
+}
+
+void MainWindow::on_Action_Rollback_ClientInputReplay(bool checked)
+{
+    if (!rmgk_gekko::toggle_client_input_replay())
+    {
+        this->action_Rollback_ClientInputReplay->setChecked(false);
+        OnScreenDisplaySetMessage("Client input replay only works on the rollback client while netplay is active.");
+        return;
+    }
+
+    if (checked)
+    {
+        OnScreenDisplaySetMessage("Client input replay: recording 600 frames, then looping them.");
+    }
+    else
+    {
+        OnScreenDisplaySetMessage("Client input replay disabled.");
+    }
 }
 
 void MainWindow::startVerifyDebugReplay(bool withGraphics)
