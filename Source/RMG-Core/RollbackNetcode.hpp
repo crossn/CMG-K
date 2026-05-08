@@ -18,9 +18,12 @@ struct CoreRollbackState
     int frame = 0;
 };
 
+using CoreRollbackInputCallback = int (*)(void* values, int size, int players);
+
 bool CoreRollbackSaveGameState(CoreRollbackState& state, int frame);
 bool CoreRollbackLoadGameState(const CoreRollbackState& state);
 void CoreRollbackFreeGameState(CoreRollbackState& state);
 bool CoreRollbackAdvanceFrame(void);
+bool CoreRollbackSetInputCallback(CoreRollbackInputCallback callback);
 
 #endif // CORE_ROLLBACK_NETCODE_HPP

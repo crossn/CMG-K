@@ -377,6 +377,9 @@ EXPORT m64p_error CALL CoreDoCommand(m64p_command Command, int ParamInt, void *P
                 return M64ERR_INPUT_ASSERT;
             savestates_free_rollback_buffer(ParamPtr);
             return M64ERR_SUCCESS;
+        case M64CMD_ROLLBACK_SET_INPUT_CALLBACK:
+            pif_set_rollback_input_callback((m64p_rollback_input_callback)ParamPtr);
+            return M64ERR_SUCCESS;
         case M64CMD_FRAME_OUTPUT_SET:
             main_set_frame_output(
                 (ParamInt & M64FRAME_OUTPUT_VIDEO) != 0,

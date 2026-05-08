@@ -25,6 +25,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "api/m64p_types.h"
 #include "cic.h"
 
 #include "osal/preproc.h"
@@ -88,8 +89,9 @@ void write_pif_mem(void* opaque, uint32_t address, uint32_t value, uint32_t mask
 
 void process_pif_ram(struct pif* pif);
 void update_pif_ram(struct pif* pif);
+void pif_begin_rollback_input_frame(void);
+void pif_set_rollback_input_callback(m64p_rollback_input_callback callback);
 
 void hw2_int_handler(void* opaque);
 
 #endif
-

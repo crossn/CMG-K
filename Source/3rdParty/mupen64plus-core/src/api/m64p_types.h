@@ -61,6 +61,7 @@ typedef void (*m64p_frame_callback)(unsigned int FrameIndex);
 typedef void (*m64p_input_callback)(void);
 typedef void (*m64p_audio_callback)(void);
 typedef void (*m64p_vi_callback)(void);
+typedef int (*m64p_rollback_input_callback)(void* values, int size, int players);
 
 typedef enum {
   M64TYPE_INT = 1,
@@ -176,6 +177,7 @@ typedef enum {
   M64CMD_ROLLBACK_SAVE_STATE,
   M64CMD_ROLLBACK_LOAD_STATE,
   M64CMD_ROLLBACK_FREE_STATE,
+  M64CMD_ROLLBACK_SET_INPUT_CALLBACK,
   M64CMD_FRAME_OUTPUT_SET
 } m64p_command;
 

@@ -1025,6 +1025,8 @@ static void video_plugin_render_callback(int bScreenRedrawn)
 
 void new_frame(void)
 {
+    pif_begin_rollback_input_frame();
+
     if (g_FrameCallback != NULL)
         (*g_FrameCallback)(l_CurrentFrame);
 

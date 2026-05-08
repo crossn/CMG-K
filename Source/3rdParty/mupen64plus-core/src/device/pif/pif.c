@@ -63,6 +63,82 @@ void print_pif(struct pif* pif)
 }
 #endif
 
+enum { ROLLBACK_INPUT_PLAYERS = 4 };
+
+static m64p_rollback_input_callback l_rollback_input_callback = NULL;
+static uint32_t l_rollback_input_values[ROLLBACK_INPUT_PLAYERS];
+static int l_rollback_input_valid = 0;
+
+void pif_begin_rollback_input_frame(void)
+{
+    l_rollback_input_valid = 0;
+}
+
+void pif_set_rollback_input_callback(m64p_rollback_input_callback callback)
+{
+    l_rollback_input_callback = callback;
+    l_rollback_input_valid = 0;
+}
+
+static void rollback_sync_input(struct pif* pif)
+{
+    uint32_t input_values[ROLLBACK_INPUT_PLAYERS] = { 0 };
+    size_t k;
+
+    if (l_rollback_input_callback == NULL) {
+        return;
+    }
+
+    if (l_rollback_input_valid) {
+        for (k = 0; k < ROLLBACK_INPUT_PLAYERS && k < PIF_CHANNELS_COUNT; ++k) {
+            struct pif_channel* channel = &pif->channels[k];
+
+            if (channel->tx != NULL
+            && channel->rx != NULL
+            && channel->tx_buf != NULL
+            && channel->rx_buf != NULL
+            && channel->tx_buf[0] == JCMD_CONTROLLER_READ
+            && ((*channel->rx & 0x80) == 0)) {
+                memcpy(channel->rx_buf, &l_rollback_input_values[k], sizeof(l_rollback_input_values[k]));
+            }
+        }
+        return;
+    }
+
+    for (k = 0; k < ROLLBACK_INPUT_PLAYERS && k < PIF_CHANNELS_COUNT; ++k) {
+        struct pif_channel* channel = &pif->channels[k];
+
+        if (channel->tx != NULL
+        && channel->rx != NULL
+        && channel->tx_buf != NULL
+        && channel->rx_buf != NULL
+        && channel->tx_buf[0] == JCMD_CONTROLLER_READ
+        && ((*channel->rx & 0x80) == 0)) {
+            memcpy(&input_values[k], channel->rx_buf, sizeof(input_values[k]));
+        }
+    }
+
+    if (!l_rollback_input_callback(input_values, sizeof(input_values[0]), ROLLBACK_INPUT_PLAYERS)) {
+        return;
+    }
+
+    memcpy(l_rollback_input_values, input_values, sizeof(l_rollback_input_values));
+    l_rollback_input_valid = 1;
+
+    for (k = 0; k < ROLLBACK_INPUT_PLAYERS && k < PIF_CHANNELS_COUNT; ++k) {
+        struct pif_channel* channel = &pif->channels[k];
+
+        if (channel->tx != NULL
+        && channel->rx != NULL
+        && channel->tx_buf != NULL
+        && channel->rx_buf != NULL
+        && channel->tx_buf[0] == JCMD_CONTROLLER_READ
+        && ((*channel->rx & 0x80) == 0)) {
+            memcpy(channel->rx_buf, &input_values[k], sizeof(input_values[k]));
+        }
+    }
+}
+
 static void process_channel(struct pif_channel* channel)
 {
     /* don't process channel if it has been disabled */
@@ -383,6 +459,7 @@ void update_pif_ram(struct pif* pif)
     }
 
     netplay_update_input(pif);
+    rollback_sync_input(pif);
     call_pif_sync_callback(pif);
 
 #ifdef DEBUG_PIF
@@ -397,4 +474,3 @@ void hw2_int_handler(void* opaque)
 
     raise_maskable_interrupt(pif->r4300, CP0_CAUSE_IP4);
 }
-

@@ -161,6 +161,10 @@
     </property>
     <addaction name="action_Rollback_SaveGgpoState"/>
     <addaction name="action_Rollback_LoadGgpoState"/>
+    <addaction name="separator"/>
+    <addaction name="action_Rollback_StartDebugReplay"/>
+    <addaction name="action_Rollback_VerifyDebugReplay"/>
+    <addaction name="action_Rollback_VerifyDebugReplayWithGraphics"/>
    </widget>
    <addaction name="menuSystem"/>
    <addaction name="menuSettings"/>
@@ -671,6 +675,30 @@
    </property>
    <property name="text">
     <string>&amp;Load GGPO State</string>
+   </property>
+  </action>
+  <action name="action_Rollback_StartDebugReplay">
+   <property name="icon">
+    <iconset theme="record-circle-line"/>
+   </property>
+   <property name="text">
+    <string>Start Recording Debug Replay</string>
+   </property>
+  </action>
+  <action name="action_Rollback_VerifyDebugReplay">
+   <property name="icon">
+    <iconset theme="check-double-line"/>
+   </property>
+   <property name="text">
+    <string>Verify Debug Replay</string>
+   </property>
+  </action>
+  <action name="action_Rollback_VerifyDebugReplayWithGraphics">
+   <property name="icon">
+    <iconset theme="movie-line"/>
+   </property>
+   <property name="text">
+    <string>Verify Debug Replay (with Graphics)</string>
    </property>
   </action>
  </widget>

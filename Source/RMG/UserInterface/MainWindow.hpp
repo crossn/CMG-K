@@ -27,9 +27,7 @@
 #endif // NETPLAY
 #include "Dialog/LogDialog.hpp"
 
-#ifdef _WIN32
 #include <string>
-#endif
 #ifdef UPDATER
 #include <QNetworkReply>
 #endif // UPDATER
@@ -59,6 +57,9 @@ class MainWindow : public QMainWindow, private Ui::MainWindow
     void OpenROM(QString file, QString disk, bool fullscreen, bool quitAfterEmulation, int stateSlot);
 
   private:
+    void setDebugReplayStatusMessage(const std::string& message);
+    void startVerifyDebugReplay(bool withGraphics);
+
     Thread::EmulationThread *emulationThread = nullptr;
 
     CoreCallbacks* coreCallBacks = nullptr;
@@ -242,6 +243,9 @@ class MainWindow : public QMainWindow, private Ui::MainWindow
 
     void on_Action_Rollback_SaveGgpoState(void);
     void on_Action_Rollback_LoadGgpoState(void);
+    void on_Action_Rollback_StartDebugReplay(void);
+    void on_Action_Rollback_VerifyDebugReplay(void);
+    void on_Action_Rollback_VerifyDebugReplayWithGraphics(void);
 
     void on_Action_Settings_Graphics(void);
     void on_Action_Settings_Audio(void);
