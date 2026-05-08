@@ -75,6 +75,8 @@ enum { DD_DISK_ID_OFFSET = 0x43670 };
 
 static const char* savestate_magic = "M64+SAVE";
 static const int savestate_latest_version = 0x00020000;  /* 2.0 */
+static const int rollback_state_header_magic = 'GGPO';
+static const int rollback_state_header_size = 6 * sizeof(int);
 static const unsigned char pj64_magic[4] = { 0xC8, 0xA6, 0xD8, 0x23 };
 
 static savestates_job job = savestates_job_nothing;
@@ -106,6 +108,12 @@ static size_t rollback_save_size[ROLLBACK_SAVE_STATES_COUNT] = { 0 };
 static unsigned int rollback_save_head = 0;
 static unsigned int rollback_save_count = 0;
 static int rollback_save_pending = 0;
+static unsigned char *rollback_load_buffer = NULL;
+static size_t rollback_load_buffer_size = 0;
+static unsigned char **rollback_save_buffer = NULL;
+static int *rollback_save_buffer_len = NULL;
+static int *rollback_save_buffer_checksum = NULL;
+static int rollback_save_buffer_frame = 0;
 
 /* Returns the malloc'd full path of the currently selected savestate. */
 static char *savestates_generate_path(savestates_type type)
@@ -243,8 +251,44 @@ static int savestates_load_m64p(struct device* dev, char *filepath)
 
     SDL_LockMutex(savestates_lock);
 
-    // Check if this is a memory load (for rollback)
-    if (strcmp(filepath, "MEMORY") == 0)
+    // Check if this is a GGPO-style rollback buffer load.
+    if (strcmp(filepath, "GGPO") == 0)
+    {
+        int *rollback_header;
+
+        if (rollback_load_buffer == NULL || rollback_load_buffer_size < (size_t)(rollback_state_header_size + 44))
+        {
+            main_message(M64MSG_STATUS, OSD_BOTTOM_LEFT, "Invalid rollback state buffer");
+            SDL_UnlockMutex(savestates_lock);
+            return 0;
+        }
+
+        rollback_header = (int *)rollback_load_buffer;
+        if (rollback_header[0] == rollback_state_header_magic)
+        {
+            int header_size = rollback_header[1];
+            if (header_size < rollback_state_header_size || (size_t)(header_size + 44) > rollback_load_buffer_size)
+            {
+                main_message(M64MSG_STATUS, OSD_BOTTOM_LEFT, "Invalid rollback state header");
+                SDL_UnlockMutex(savestates_lock);
+                return 0;
+            }
+
+            memory_data = rollback_load_buffer + header_size;
+            memory_size = rollback_load_buffer_size - header_size;
+        }
+        else
+        {
+            memory_data = rollback_load_buffer;
+            memory_size = rollback_load_buffer_size;
+        }
+
+        memcpy(header, memory_data, 44);
+        memory_offset = 44;
+        rollback_load_start = SDL_GetPerformanceCounter();
+    }
+    // Check if this is a memory load (for rollback debug ring)
+    else if (strcmp(filepath, "MEMORY") == 0)
     {
         unsigned int rollback_load_index;
         if (rollback_save_count <= ROLLBACK_LOAD_FRAMES_AGO)
@@ -1675,11 +1719,13 @@ static int savestates_save_m64p(const struct device* dev, char *filepath)
     unsigned char outbuf[4];
     int i;
     int memory_save;
+    int rollback_buffer_save;
 
     char queue[1024];
 
     struct savestate_work *save;
     char *curr;
+    size_t allocation_size;
 
     /* OK to cast away const qualifier */
     const uint32_t* cp0_regs = r4300_cp0_regs((struct cp0*)&dev->r4300.cp0);
@@ -1693,6 +1739,7 @@ static int savestates_save_m64p(const struct device* dev, char *filepath)
 
     save->filepath = strdup(filepath);
     memory_save = strcmp(filepath, "MEMORY") == 0;
+    rollback_buffer_save = strcmp(filepath, "GGPO") == 0;
 
     if(autoinc_save_slot)
         savestates_inc_slot();
@@ -1701,7 +1748,14 @@ static int savestates_save_m64p(const struct device* dev, char *filepath)
 
     // Allocate memory for the save state data
     save->size = 16788288 + sizeof(queue) + 4 + 4096;
-    if (memory_save)
+    allocation_size = save->size;
+    if (rollback_buffer_save)
+    {
+        allocation_size += rollback_state_header_size;
+        save->data = malloc(allocation_size);
+        curr = save->data + rollback_state_header_size;
+    }
+    else if (memory_save)
     {
         if (rollback_save_data[rollback_save_head] == NULL)
         {
@@ -1722,7 +1776,7 @@ static int savestates_save_m64p(const struct device* dev, char *filepath)
         return 0;
     }
 
-    memset(save->data, 0, save->size);
+    memset(save->data, 0, allocation_size);
 
     // Write the save state data to memory
     PUTARRAY(savestate_magic, curr, unsigned char, 8);
@@ -2086,6 +2140,29 @@ static int savestates_save_m64p(const struct device* dev, char *filepath)
     PUTDATA(curr, uint32_t, dev->sp.first_run);
     PUTDATA(curr, uint32_t, dev->sp.rsp_wait);
 
+    if (rollback_buffer_save)
+    {
+        int *rollback_header = (int *)save->data;
+
+        rollback_header[0] = rollback_state_header_magic;
+        rollback_header[1] = rollback_state_header_size;
+        rollback_header[2] = savestate_latest_version;
+        rollback_header[3] = rollback_save_buffer_frame;
+        rollback_header[4] = 0;
+        rollback_header[5] = 0;
+
+        if (rollback_save_buffer_checksum != NULL)
+            *rollback_save_buffer_checksum = 0;
+        if (rollback_save_buffer_len != NULL)
+            *rollback_save_buffer_len = (int)(save->size + rollback_state_header_size);
+        if (rollback_save_buffer != NULL)
+            *rollback_save_buffer = (unsigned char *)save->data;
+
+        free(save->filepath);
+        free(save);
+        return 1;
+    }
+
     if (memory_save)
     {
         SDL_LockMutex(savestates_lock);
@@ -2393,6 +2470,55 @@ int savestates_save_rollback(void)
 
     rollback_save_pending = 0;
     return savestates_save_m64p(dev, "MEMORY");
+}
+
+int savestates_save_rollback_buffer(unsigned char **buffer, int *len, int *checksum, int frame)
+{
+    const struct device* dev = &g_dev;
+    int result;
+
+    if (buffer == NULL || len == NULL)
+        return 0;
+
+    *buffer = NULL;
+    *len = 0;
+    if (checksum != NULL)
+        *checksum = 0;
+
+    rollback_save_buffer = buffer;
+    rollback_save_buffer_len = len;
+    rollback_save_buffer_checksum = checksum;
+    rollback_save_buffer_frame = frame;
+
+    result = savestates_save_m64p(dev, "GGPO");
+
+    rollback_save_buffer = NULL;
+    rollback_save_buffer_len = NULL;
+    rollback_save_buffer_checksum = NULL;
+    rollback_save_buffer_frame = 0;
+
+    return result;
+}
+
+int savestates_load_rollback_buffer(unsigned char *buffer, int len)
+{
+    int result;
+
+    if (buffer == NULL || len <= 0)
+        return 0;
+
+    rollback_load_buffer = buffer;
+    rollback_load_buffer_size = (size_t)len;
+    result = savestates_load_m64p(&g_dev, "GGPO");
+    rollback_load_buffer = NULL;
+    rollback_load_buffer_size = 0;
+
+    return result;
+}
+
+void savestates_free_rollback_buffer(void *buffer)
+{
+    free(buffer);
 }
 
 void savestates_init(void)

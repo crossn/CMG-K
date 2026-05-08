@@ -33,6 +33,7 @@ set(RMG_CORE_SOURCES
     RomHeader.cpp
     Emulation.cpp
     SaveState.cpp
+    RollbackNetcode.cpp
     Callback.cpp
     Settings.cpp
     Archive.cpp

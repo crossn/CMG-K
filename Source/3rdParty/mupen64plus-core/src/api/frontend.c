@@ -354,6 +354,29 @@ EXPORT m64p_error CALL CoreDoCommand(m64p_command Command, int ParamInt, void *P
                 return M64ERR_INVALID_STATE;
             main_run_frames(ParamInt > 1 ? ParamInt : 1, ParamPtr != NULL ? *(int*)ParamPtr : M64FRAME_OUTPUT_ALL);
             return M64ERR_SUCCESS;
+        case M64CMD_ROLLBACK_SAVE_STATE:
+            if (!g_EmulatorRunning)
+                return M64ERR_INVALID_STATE;
+            if (ParamPtr == NULL)
+                return M64ERR_INPUT_ASSERT;
+            return savestates_save_rollback_buffer(
+                &((m64p_rollback_state*)ParamPtr)->buffer,
+                &((m64p_rollback_state*)ParamPtr)->len,
+                &((m64p_rollback_state*)ParamPtr)->checksum,
+                ((m64p_rollback_state*)ParamPtr)->frame) ? M64ERR_SUCCESS : M64ERR_INTERNAL;
+        case M64CMD_ROLLBACK_LOAD_STATE:
+            if (!g_EmulatorRunning)
+                return M64ERR_INVALID_STATE;
+            if (ParamPtr == NULL)
+                return M64ERR_INPUT_ASSERT;
+            return savestates_load_rollback_buffer(
+                ((m64p_rollback_state*)ParamPtr)->buffer,
+                ((m64p_rollback_state*)ParamPtr)->len) ? M64ERR_SUCCESS : M64ERR_INTERNAL;
+        case M64CMD_ROLLBACK_FREE_STATE:
+            if (ParamPtr == NULL)
+                return M64ERR_INPUT_ASSERT;
+            savestates_free_rollback_buffer(ParamPtr);
+            return M64ERR_SUCCESS;
         case M64CMD_FRAME_OUTPUT_SET:
             main_set_frame_output(
                 (ParamInt & M64FRAME_OUTPUT_VIDEO) != 0,

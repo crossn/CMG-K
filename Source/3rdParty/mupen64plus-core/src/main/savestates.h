@@ -49,6 +49,9 @@ void savestates_deinit(void);
 int savestates_load(void);
 int savestates_save(void);
 int savestates_save_rollback(void);
+int savestates_save_rollback_buffer(unsigned char **buffer, int *len, int *checksum, int frame);
+int savestates_load_rollback_buffer(unsigned char *buffer, int len);
+void savestates_free_rollback_buffer(void *buffer);
 
 void savestates_select_slot(unsigned int s);
 unsigned int savestates_get_slot(void);

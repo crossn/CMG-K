@@ -14,6 +14,8 @@
 #include "EventFilter.hpp"
 #include "Callbacks.hpp"
 
+#include <RMG-Core/RollbackNetcode.hpp>
+
 #include "Widget/RomBrowser/RomBrowserWidget.hpp"
 #include "Widget/Render/DummyWidget.hpp"
 #include "Widget/Render/OGLWidget.hpp"
@@ -100,11 +102,7 @@ class MainWindow : public QMainWindow, private Ui::MainWindow
     bool ui_ManuallyPaused = true;
     bool ui_ManuallySavedState  = false;
     bool ui_ManuallyLoadedState = false;
-    bool ui_RollbackLoadPending = false;
-    int  ui_RollbackSkipPhase = 0;
-    bool ui_RollbackSkipWasRunning = false;
-    int  ui_RollbackSkipFrames = 0;
-    std::chrono::steady_clock::time_point ui_RollbackSkipStartTime;
+    CoreRollbackState ui_RollbackDebugState;
 
     bool ui_ForceClose = false;
 
@@ -242,9 +240,8 @@ class MainWindow : public QMainWindow, private Ui::MainWindow
     void on_Action_System_GSButton(void);
     void on_Action_System_Exit(void);
 
-    void on_Action_Rollback_SaveState(void);
-    void on_Action_Rollback_LoadState(void);
-    void on_Action_Rollback_Skip120Frames(void);
+    void on_Action_Rollback_SaveGgpoState(void);
+    void on_Action_Rollback_LoadGgpoState(void);
 
     void on_Action_Settings_Graphics(void);
     void on_Action_Settings_Audio(void);

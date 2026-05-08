@@ -159,9 +159,8 @@
     <property name="title">
      <string>Rollback</string>
     </property>
-    <addaction name="action_Rollback_SaveState"/>
-    <addaction name="action_Rollback_LoadState"/>
-    <addaction name="action_Rollback_Skip120Frames"/>
+    <addaction name="action_Rollback_SaveGgpoState"/>
+    <addaction name="action_Rollback_LoadGgpoState"/>
    </widget>
    <addaction name="menuSystem"/>
    <addaction name="menuSettings"/>
@@ -658,28 +657,20 @@
     <string>Search</string>
    </property>
   </action>
-  <action name="action_Rollback_SaveState">
+  <action name="action_Rollback_SaveGgpoState">
    <property name="icon">
     <iconset theme="save-3-line"/>
    </property>
    <property name="text">
-    <string>&amp;Save State</string>
+    <string>&amp;Save GGPO State</string>
    </property>
   </action>
-  <action name="action_Rollback_LoadState">
+  <action name="action_Rollback_LoadGgpoState">
    <property name="icon">
     <iconset theme="folder-open-line"/>
    </property>
    <property name="text">
-    <string>&amp;Load State</string>
-   </property>
-  </action>
-  <action name="action_Rollback_Skip120Frames">
-   <property name="icon">
-    <iconset theme="skip-forward-line"/>
-   </property>
-   <property name="text">
-    <string>Skip &amp;120 Frames</string>
+    <string>&amp;Load GGPO State</string>
    </property>
   </action>
  </widget>

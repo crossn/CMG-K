@@ -173,6 +173,9 @@ typedef enum {
   M64CMD_DISK_OPEN,
   M64CMD_DISK_CLOSE,
   M64CMD_RUN_FRAMES,
+  M64CMD_ROLLBACK_SAVE_STATE,
+  M64CMD_ROLLBACK_LOAD_STATE,
+  M64CMD_ROLLBACK_FREE_STATE,
   M64CMD_FRAME_OUTPUT_SET
 } m64p_command;
 
@@ -184,6 +187,13 @@ typedef enum {
   M64FRAME_OUTPUT_ALL    = M64FRAME_OUTPUT_VIDEO | M64FRAME_OUTPUT_AUDIO | M64FRAME_OUTPUT_PACING | M64FRAME_OUTPUT_INPUT,
   M64FRAME_OUTPUT_NONE   = 0
 } m64p_frame_output_flags;
+
+typedef struct {
+  unsigned char* buffer;
+  int            len;
+  int            checksum;
+  int            frame;
+} m64p_rollback_state;
 
 typedef struct {
   uint32_t address;
