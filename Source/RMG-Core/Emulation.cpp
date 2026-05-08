@@ -541,6 +541,7 @@ CORE_EXPORT bool CoreStartEmulation(std::filesystem::path n64rom, std::filesyste
             }
             else
             {
+                CoreSettingsSetValue(SettingsID::Core_CPU_Emulator, 1);
                 rmgk_ggpo::SessionCallbacks callbacks = {};
                 netplay_ret = rmgk_ggpo::start_p2p_session(callbacks, nullptr, "rmgk-ggpo",
                     2, static_cast<int>(sizeof(uint32_t)), player, static_cast<unsigned short>(port),

@@ -30,5 +30,6 @@ bool CoreRollbackSampleInput(void* values, int size, int players);
 bool CoreRollbackSetInputCallback(CoreRollbackInputCallback callback);
 bool CoreRollbackSetDeterministic(bool enabled);
 bool CoreRollbackExecute(m64p_rollback_execute_callbacks& callbacks);
+bool CoreRollbackRunFrame(int flags);
 
 #endif // CORE_ROLLBACK_NETCODE_HPP

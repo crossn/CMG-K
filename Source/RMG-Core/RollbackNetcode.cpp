@@ -175,3 +175,25 @@ CORE_EXPORT bool CoreRollbackExecute(m64p_rollback_execute_callbacks& callbacks)
 
     return true;
 }
+
+CORE_EXPORT bool CoreRollbackRunFrame(int flags)
+{
+    std::string error;
+    m64p_error ret;
+
+    if (!m64p::Core.IsHooked())
+    {
+        return false;
+    }
+
+    ret = m64p::Core.DoCommand(M64CMD_ROLLBACK_RUN_FRAME, flags, nullptr);
+    if (ret != M64ERR_SUCCESS)
+    {
+        error = "CoreRollbackRunFrame DoCommand(M64CMD_ROLLBACK_RUN_FRAME) Failed: ";
+        error += m64p::Core.ErrorMessage(ret);
+        CoreSetError(error);
+        return false;
+    }
+
+    return true;
+}

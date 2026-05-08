@@ -80,6 +80,7 @@ void main_toggle_pause(void);
 void main_advance_one(void);
 void main_advance_frames(int frames);
 void main_run_frames(int frames, int output_flags);
+int main_rollback_run_frame(int output_flags);
 void main_set_rollback_execute_callbacks(m64p_rollback_execute_callbacks* callbacks);
 
 void main_speedup(int percent);

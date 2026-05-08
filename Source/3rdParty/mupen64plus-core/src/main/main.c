@@ -138,6 +138,7 @@ static int   l_FrameRunPacing = 1;
 static int   l_FrameRunInput = 1;
 static m64p_rollback_execute_callbacks l_RollbackExecuteCallbacks;
 static int   l_RollbackExecuteActive = 0;
+static int   l_RollbackSingleStepActive = 0;
 
 static osd_message_t *l_msgVol = NULL;
 static osd_message_t *l_msgFF = NULL;
@@ -676,6 +677,31 @@ void main_set_rollback_execute_callbacks(m64p_rollback_execute_callbacks* callba
          l_RollbackExecuteCallbacks.end_frame != NULL);
 }
 
+int main_rollback_run_frame(int output_flags)
+{
+    int old_video = l_FrameOutputVideo;
+    int old_audio = l_FrameOutputAudio;
+    int old_pacing = l_FrameOutputPacing;
+    int old_input = l_FrameOutputInput;
+
+    main_set_frame_output(
+        (output_flags & M64FRAME_OUTPUT_VIDEO) != 0,
+        (output_flags & M64FRAME_OUTPUT_AUDIO) != 0,
+        (output_flags & M64FRAME_OUTPUT_PACING) != 0,
+        (output_flags & M64FRAME_OUTPUT_INPUT) != 0);
+
+    l_RollbackSingleStepActive = 1;
+    if (!run_r4300_current(&g_dev.r4300)) {
+        l_RollbackSingleStepActive = 0;
+        main_set_frame_output(old_video, old_audio, old_pacing, old_input);
+        return 0;
+    }
+    l_RollbackSingleStepActive = 0;
+
+    main_set_frame_output(old_video, old_audio, old_pacing, old_input);
+    return 1;
+}
+
 int main_frame_video_enabled(void)
 {
     return l_FrameOutputVideo;
@@ -1048,6 +1074,11 @@ void new_frame(void)
 
     /* advance the current frame */
     l_CurrentFrame++;
+
+    if (l_RollbackSingleStepActive) {
+        stop_device(&g_dev);
+        return;
+    }
 
     if (l_RollbackExecuteActive) {
         if (!l_RollbackExecuteCallbacks.end_frame(l_RollbackExecuteCallbacks.user_data)) {

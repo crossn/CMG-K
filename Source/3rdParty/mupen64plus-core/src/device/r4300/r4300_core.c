@@ -215,6 +215,19 @@ void run_r4300(struct r4300_core* r4300)
 #endif
 }
 
+int run_r4300_current(struct r4300_core* r4300)
+{
+    *r4300_stop(r4300) = 0;
+
+    if (r4300->emumode != EMUMODE_INTERPRETER || *r4300_pc_struct(r4300) == NULL)
+    {
+        return 0;
+    }
+
+    run_cached_interpreter(r4300);
+    return 1;
+}
+
 int64_t* r4300_regs(struct r4300_core* r4300)
 {
 #ifndef NEW_DYNAREC

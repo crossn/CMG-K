@@ -218,6 +218,7 @@ void init_r4300(struct r4300_core* r4300, struct memory* mem, struct mi_controll
 void poweron_r4300(struct r4300_core* r4300);
 
 void run_r4300(struct r4300_core* r4300);
+int run_r4300_current(struct r4300_core* r4300);
 
 int64_t* r4300_regs(struct r4300_core* r4300);
 int64_t* r4300_mult_hi(struct r4300_core* r4300);

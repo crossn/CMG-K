@@ -97,6 +97,11 @@ const char* ggpo_event_name(GGPOEventCode code)
 
 bool run_core_frame_blocking(int frameOutputFlags)
 {
+    if (CoreRollbackRunFrame(frameOutputFlags))
+    {
+        return true;
+    }
+
     const int frameBefore = CoreGetCurrentFrameCount();
     if (!CoreRunFrames(1, frameOutputFlags))
     {
@@ -318,8 +323,19 @@ bool __cdecl rmgk_ggpo_advance_frame_callback(int flags)
 
     if (g_GgpoCoreExecuteActive)
     {
-        write_ggpo_input_log("rollback_callback result=fail reason=core_execute_sync_step_missing");
-        return false;
+        g_GgpoInAdvanceCallback = true;
+        const bool advanced = prepare_rollback_frame_input() && CoreRollbackRunFrame(flags);
+        g_GgpoInAdvanceCallback = false;
+        if (!advanced)
+        {
+            write_ggpo_input_log("rollback_callback result=fail reason=internal_run_frame_failed");
+            return false;
+        }
+
+        const bool frameAdvanced = GGPO_SUCCEEDED(ggpo_advance_frame(g_GgpoSession));
+        g_GgpoHasLatchedInput = false;
+        write_ggpo_input_log(std::string("rollback_callback result=") + (frameAdvanced ? "ok" : "fail"));
+        return frameAdvanced;
     }
 
     g_GgpoInAdvanceCallback = true;
