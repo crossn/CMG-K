@@ -1259,8 +1259,8 @@ void KailleraP2PDialog::onGameStarted(QString game, int player, int maxPlayers)
         if (m_travTimer) m_travTimer->stop();
         if (m_isHost && m_travHostEnabled)
             travSendHostClose();
-        p2p_core_cleanup();
         m_detachedForRollback = true;
+        p2p_core_cleanup();
 
         emit rollbackSessionReady(game, QString::fromUtf8(peerIp), localPort, peerPort, player, frameDelay);
         accept();
@@ -1274,6 +1274,13 @@ void KailleraP2PDialog::onGameStarted(QString game, int player, int maxPlayers)
 
 void KailleraP2PDialog::onGameEnded()
 {
+    if (m_rollbackMode)
+    {
+        m_ready = false;
+        if (m_btnReady) m_btnReady->setChecked(false);
+        return;
+    }
+
     CoreMarkKailleraGameInactive();
     CoreStopEmulation();
     m_ready = false;

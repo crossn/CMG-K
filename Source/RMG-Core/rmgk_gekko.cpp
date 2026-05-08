@@ -56,6 +56,7 @@ int g_GekkoLocalHandle = -1;
 int g_GekkoRemoteHandle = -1;
 std::vector<unsigned char> g_GekkoLatchedInput;
 bool g_GekkoHasLatchedInput = false;
+std::atomic_bool g_GekkoExecuting{false};
 std::atomic_bool g_GekkoStopRequested{false};
 std::vector<PendingGekkoSave> g_GekkoPendingSaves;
 std::mutex g_GekkoLogMutex;
@@ -739,6 +740,7 @@ CORE_EXPORT void rmgk_gekko::close_session()
     g_GekkoRemoteHandle = -1;
     g_GekkoLatchedInput.clear();
     g_GekkoHasLatchedInput = false;
+    g_GekkoExecuting.store(false, std::memory_order_relaxed);
     g_GekkoPendingSaves.clear();
 #endif
 }
@@ -746,7 +748,10 @@ CORE_EXPORT void rmgk_gekko::close_session()
 CORE_EXPORT void rmgk_gekko::request_stop()
 {
 #ifdef RMGK_HAVE_GEKKONET
-    g_GekkoStopRequested.store(true, std::memory_order_relaxed);
+    if (g_GekkoExecuting.load(std::memory_order_relaxed))
+    {
+        g_GekkoStopRequested.store(true, std::memory_order_relaxed);
+    }
 #endif
 }
 
@@ -763,7 +768,10 @@ CORE_EXPORT bool rmgk_gekko::execute()
     m64p_rollback_execute_callbacks callbacks = {};
     callbacks.begin_frame = rollback_execute_begin_frame;
     callbacks.end_frame = rollback_execute_end_frame;
-    return CoreRollbackExecute(callbacks);
+    g_GekkoExecuting.store(true, std::memory_order_relaxed);
+    bool result = CoreRollbackExecute(callbacks);
+    g_GekkoExecuting.store(false, std::memory_order_relaxed);
+    return result;
 #endif
 }
 

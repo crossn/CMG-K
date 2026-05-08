@@ -118,6 +118,12 @@ static int rollback_save_buffer_frame = 0;
 static unsigned char *rollback_save_prealloc_data = NULL;
 static int rollback_save_prealloc_capacity = 0;
 
+static uint64_t rollback_perf_us(uint64_t start, uint64_t end)
+{
+    uint64_t frequency = SDL_GetPerformanceFrequency();
+    return ((end - start) * 1000000) / frequency;
+}
+
 /* Returns the malloc'd full path of the currently selected savestate. */
 static char *savestates_generate_path(savestates_type type)
 {
@@ -242,6 +248,20 @@ static int savestates_load_m64p(struct device* dev, char *filepath)
     int i;
     uint32_t FCR31;
     uint64_t rollback_load_start = 0;
+    uint64_t rollback_parse_start = 0;
+    uint64_t rollback_fixed_end = 0;
+    uint64_t rollback_rdram_start = 0;
+    uint64_t rollback_rdram_end = 0;
+    uint64_t rollback_sp_pif_end = 0;
+    uint64_t rollback_tlb_start = 0;
+    uint64_t rollback_tlb_end = 0;
+    uint64_t rollback_cpu_end = 0;
+    uint64_t rollback_extra_end = 0;
+    uint64_t rollback_finalize_end = 0;
+    int rollback_tlb_lut_skipped = 0;
+    unsigned char *rollback_lut_r_data = NULL;
+    unsigned char *rollback_lut_w_data = NULL;
+    struct tlb_entry rollback_old_tlb_entries[32];
 
     size_t savestateSize;
     unsigned char *savestateData, *curr;
@@ -480,6 +500,9 @@ static int savestates_load_m64p(struct device* dev, char *filepath)
     SDL_UnlockMutex(savestates_lock);
 
     // Parse savestate
+    if (memory_data != NULL)
+        rollback_parse_start = SDL_GetPerformanceCounter();
+
     dev->rdram.regs[0][RDRAM_CONFIG_REG]       = GETDATA(curr, uint32_t);
     dev->rdram.regs[0][RDRAM_DEVICE_ID_REG]    = GETDATA(curr, uint32_t);
     dev->rdram.regs[0][RDRAM_DELAY_REG]        = GETDATA(curr, uint32_t);
@@ -594,17 +617,46 @@ static int savestates_load_m64p(struct device* dev, char *filepath)
     dev->dp.dps_regs[DPS_BUFTEST_ADDR_REG] = GETDATA(curr, uint32_t);
     dev->dp.dps_regs[DPS_BUFTEST_DATA_REG] = GETDATA(curr, uint32_t);
 
+    if (memory_data != NULL)
+    {
+        rollback_fixed_end = SDL_GetPerformanceCounter();
+        rollback_rdram_start = rollback_fixed_end;
+    }
     COPYARRAY(dev->rdram.dram, curr, uint32_t, RDRAM_MAX_SIZE/4);
+    if (memory_data != NULL)
+        rollback_rdram_end = SDL_GetPerformanceCounter();
     COPYARRAY(dev->sp.mem, curr, uint32_t, SP_MEM_SIZE/4);
     COPYARRAY(dev->pif.ram, curr, uint8_t, PIF_RAM_SIZE);
+    if (memory_data != NULL)
+        rollback_sp_pif_end = SDL_GetPerformanceCounter();
 
     dev->cart.use_flashram = GETDATA(curr, int32_t);
     curr += 4+8+4+4; /* Here there used to be flashram state */
     /* by default, reset flashram state here and load it later if available */
     poweron_flashram(&dev->cart.flashram);
 
+#if defined(M64P_BIG_ENDIAN)
     COPYARRAY(dev->r4300.cp0.tlb.LUT_r, curr, uint32_t, 0x100000);
     COPYARRAY(dev->r4300.cp0.tlb.LUT_w, curr, uint32_t, 0x100000);
+    if (memory_data != NULL)
+        rollback_tlb_end = SDL_GetPerformanceCounter();
+#else
+    if (memory_data != NULL)
+    {
+        memcpy(rollback_old_tlb_entries, dev->r4300.cp0.tlb.entries, sizeof(rollback_old_tlb_entries));
+        rollback_lut_r_data = curr;
+        curr += 0x100000 * sizeof(uint32_t);
+        rollback_lut_w_data = curr;
+        curr += 0x100000 * sizeof(uint32_t);
+    }
+    else
+    {
+        COPYARRAY(dev->r4300.cp0.tlb.LUT_r, curr, uint32_t, 0x100000);
+        COPYARRAY(dev->r4300.cp0.tlb.LUT_w, curr, uint32_t, 0x100000);
+        if (memory_data != NULL)
+            rollback_tlb_end = SDL_GetPerformanceCounter();
+    }
+#endif
 
     *r4300_llbit(&dev->r4300) = GETDATA(curr, uint32_t);
     COPYARRAY(r4300_regs(&dev->r4300), curr, int64_t, 32);
@@ -645,12 +697,28 @@ static int savestates_load_m64p(struct device* dev, char *filepath)
         dev->r4300.cp0.tlb.entries[i].end_odd = GETDATA(curr, uint32_t);
         dev->r4300.cp0.tlb.entries[i].phys_odd = GETDATA(curr, uint32_t);
     }
+    if (memory_data != NULL)
+    {
+        rollback_tlb_start = SDL_GetPerformanceCounter();
+        if (memcmp(rollback_old_tlb_entries, dev->r4300.cp0.tlb.entries, sizeof(rollback_old_tlb_entries)) == 0)
+        {
+            rollback_tlb_lut_skipped = 1;
+        }
+        else
+        {
+            memcpy(dev->r4300.cp0.tlb.LUT_r, rollback_lut_r_data, 0x100000 * sizeof(uint32_t));
+            memcpy(dev->r4300.cp0.tlb.LUT_w, rollback_lut_w_data, 0x100000 * sizeof(uint32_t));
+        }
+        rollback_tlb_end = SDL_GetPerformanceCounter();
+    }
 
     savestates_load_set_pc(&dev->r4300, GETDATA(curr, uint32_t));
 
     *r4300_cp0_next_interrupt(&dev->r4300.cp0) = GETDATA(curr, uint32_t);
     curr += 4; /* here there used to be next_vi */
     dev->vi.field = GETDATA(curr, uint32_t);
+    if (memory_data != NULL)
+        rollback_cpu_end = SDL_GetPerformanceCounter();
 
     // assert(savestateData+savestateSize == curr)
 
@@ -1123,6 +1191,8 @@ static int savestates_load_m64p(struct device* dev, char *filepath)
             poweron_dd(&dev->dd);
         }
     }
+    if (memory_data != NULL)
+        rollback_extra_end = SDL_GetPerformanceCounter();
 
     /* Zilmar-Spec plugin expect a call with control_id = -1 when RAM processing is done */
     if (input.controllerCommand) {
@@ -1135,15 +1205,32 @@ static int savestates_load_m64p(struct device* dev, char *filepath)
     dev->r4300.cp0.interrupt_unsafe_state = 0;
 
     *r4300_cp0_last_addr(&dev->r4300.cp0) = *r4300_pc(&dev->r4300);
+    if (memory_data != NULL)
+        rollback_finalize_end = SDL_GetPerformanceCounter();
 
     if (free_savestate_data)
         free(savestateData);
     if (memory_data != NULL)
     {
         uint64_t rollback_load_end = SDL_GetPerformanceCounter();
-        uint64_t rollback_load_frequency = SDL_GetPerformanceFrequency();
-        uint64_t rollback_load_us = ((rollback_load_end - rollback_load_start) * 1000000) / rollback_load_frequency;
-        main_message(M64MSG_STATUS, OSD_BOTTOM_LEFT, "Rollback core load in %" PRIu64 " us", rollback_load_us);
+        uint64_t rollback_total_us = rollback_perf_us(rollback_load_start, rollback_load_end);
+        uint64_t rollback_read_us = rollback_perf_us(rollback_load_start, rollback_parse_start);
+        uint64_t rollback_fixed_us = rollback_perf_us(rollback_parse_start, rollback_fixed_end);
+        uint64_t rollback_rdram_us = rollback_perf_us(rollback_rdram_start, rollback_rdram_end);
+        uint64_t rollback_sp_pif_us = rollback_perf_us(rollback_rdram_end, rollback_sp_pif_end);
+        uint64_t rollback_tlb_us = rollback_perf_us(rollback_tlb_start, rollback_tlb_end);
+        uint64_t rollback_cpu_us = rollback_perf_us(rollback_tlb_end, rollback_cpu_end);
+        uint64_t rollback_extra_us = rollback_perf_us(rollback_cpu_end, rollback_extra_end);
+        uint64_t rollback_finalize_us = rollback_perf_us(rollback_extra_end, rollback_finalize_end);
+        uint64_t rollback_free_us = rollback_perf_us(rollback_finalize_end, rollback_load_end);
+
+        DebugMessage(M64MSG_INFO,
+            "Rollback load timing: total=%" PRIu64 "us read=%" PRIu64 "us fixed=%" PRIu64 "us rdram=%" PRIu64 "us sp_pif=%" PRIu64 "us tlb=%" PRIu64 "us tlb_skipped=%d cpu=%" PRIu64 "us extra=%" PRIu64 "us finalize=%" PRIu64 "us free=%" PRIu64 "us",
+            rollback_total_us, rollback_read_us, rollback_fixed_us, rollback_rdram_us, rollback_sp_pif_us,
+            rollback_tlb_us, rollback_tlb_lut_skipped, rollback_cpu_us, rollback_extra_us, rollback_finalize_us, rollback_free_us);
+        main_message(M64MSG_STATUS, OSD_BOTTOM_LEFT,
+            "Rollback load %" PRIu64 " us (RDRAM %" PRIu64 ", TLB %" PRIu64 "%s, extra %" PRIu64 ")",
+            rollback_total_us, rollback_rdram_us, rollback_tlb_us, rollback_tlb_lut_skipped ? " skip" : "", rollback_extra_us);
     }
     else
     {

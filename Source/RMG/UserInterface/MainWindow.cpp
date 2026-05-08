@@ -3751,6 +3751,11 @@ void MainWindow::on_Kaillera_PlayerDropped(QString nickname, int playerNum)
 
 void MainWindow::on_Kaillera_GameEnded(void)
 {
+    if (this->ui_RollbackNetplayRoomActive || this->ui_RollbackNetplayLaunchActive)
+    {
+        return;
+    }
+
     // Mark game as inactive to re-enable UI buttons
     CoreMarkKailleraGameInactive();
 
