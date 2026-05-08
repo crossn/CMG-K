@@ -101,6 +101,10 @@ class MainWindow : public QMainWindow, private Ui::MainWindow
     bool ui_ManuallySavedState  = false;
     bool ui_ManuallyLoadedState = false;
     bool ui_RollbackLoadPending = false;
+    int  ui_RollbackSkipPhase = 0;
+    bool ui_RollbackSkipWasRunning = false;
+    int  ui_RollbackSkipFrames = 0;
+    std::chrono::steady_clock::time_point ui_RollbackSkipStartTime;
 
     bool ui_ForceClose = false;
 
@@ -240,6 +244,7 @@ class MainWindow : public QMainWindow, private Ui::MainWindow
 
     void on_Action_Rollback_SaveState(void);
     void on_Action_Rollback_LoadState(void);
+    void on_Action_Rollback_Skip120Frames(void);
 
     void on_Action_Settings_Graphics(void);
     void on_Action_Settings_Audio(void);

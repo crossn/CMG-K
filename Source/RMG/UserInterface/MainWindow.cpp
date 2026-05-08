@@ -1277,6 +1277,7 @@ void MainWindow::updateActions(bool inEmulation, bool isPaused)
     // rollback actions
     this->action_Rollback_SaveState->setEnabled(inEmulation);
     this->action_Rollback_LoadState->setEnabled(inEmulation);
+    this->action_Rollback_Skip120Frames->setEnabled(inEmulation && this->ui_RollbackSkipPhase == 0);
 
     // configure keybindings for speed factor
     QAction* speedActions[] =
@@ -1537,6 +1538,7 @@ void MainWindow::configureActions(void)
         this->actionSlot_9, this->action_System_Cheats,
         this->action_System_GSButton, this->action_System_Exit,
         this->action_Rollback_SaveState, this->action_Rollback_LoadState,
+        this->action_Rollback_Skip120Frames,
         // Settings actions
         this->action_Settings_Graphics, this->action_Settings_Audio,
         this->action_Settings_Rsp, this->action_Settings_Input,
@@ -1665,6 +1667,7 @@ void MainWindow::connectActionSignals(void)
 
     connect(this->action_Rollback_SaveState, &QAction::triggered, this, &MainWindow::on_Action_Rollback_SaveState);
     connect(this->action_Rollback_LoadState, &QAction::triggered, this, &MainWindow::on_Action_Rollback_LoadState);
+    connect(this->action_Rollback_Skip120Frames, &QAction::triggered, this, &MainWindow::on_Action_Rollback_Skip120Frames);
 
     connect(this->action_Settings_Graphics, &QAction::triggered, this, &MainWindow::on_Action_Settings_Graphics);
     connect(this->action_Settings_Audio, &QAction::triggered, this, &MainWindow::on_Action_Settings_Audio);
@@ -3896,6 +3899,41 @@ void MainWindow::on_Core_StateCallback(CoreStateCallbackType type, int value)
             {
                 OnScreenDisplayResume();
             }
+
+            if (value == static_cast<int>(CoreEmulationState::Paused) && this->ui_RollbackSkipPhase != 0)
+            {
+                if (this->ui_RollbackSkipPhase == 1)
+                {
+                    this->ui_RollbackSkipPhase = 2;
+                    CoreSetFrameOutput(CoreFrameOutput_All);
+
+                    if (!CoreAdvanceFrames(1))
+                    {
+                        this->ui_RollbackSkipPhase = 0;
+                        this->action_Rollback_Skip120Frames->setEnabled(true);
+                        CoreSetFrameOutput(CoreFrameOutput_All);
+                        this->showErrorMessage("Rollback Skip Frames Failed", QString::fromStdString(CoreGetError()));
+                    }
+                }
+                else
+                {
+                    const auto elapsed = std::chrono::steady_clock::now() - this->ui_RollbackSkipStartTime;
+                    const auto elapsedUs = std::chrono::duration_cast<std::chrono::microseconds>(elapsed).count();
+                    const double elapsedMs = static_cast<double>(elapsedUs) / 1000.0;
+                    const int skippedFrames = this->ui_RollbackSkipFrames;
+
+                    this->ui_RollbackSkipPhase = 0;
+                    this->action_Rollback_Skip120Frames->setEnabled(true);
+                    CoreSetFrameOutput(CoreFrameOutput_All);
+                    OnScreenDisplaySetMessage("Skipped " + std::to_string(skippedFrames) +
+                        " frames in " + QString::number(elapsedMs, 'f', 3).toStdString() + " ms");
+
+                    if (this->ui_RollbackSkipWasRunning)
+                    {
+                        CoreResumeEmulation();
+                    }
+                }
+            }
         } break;
         case CoreStateCallbackType::SaveStateSlot:
         {
@@ -4051,6 +4089,45 @@ void MainWindow::on_Action_Rollback_LoadState(void)
     {
         this->ui_RollbackLoadPending = false;
         this->showErrorMessage("Load Rollback State Failed", QString::fromStdString(CoreGetError()));
+        return;
+    }
+}
+
+void MainWindow::on_Action_Rollback_Skip120Frames(void)
+{
+    constexpr int TargetFrames = 200;
+    constexpr int HiddenFrames = TargetFrames - 1;
+
+    if (this->ui_RollbackSkipPhase != 0)
+    {
+        return;
+    }
+
+    if (!CoreIsEmulationRunning() && !CoreIsEmulationPaused())
+    {
+        return;
+    }
+
+    this->ui_RollbackSkipWasRunning = CoreIsEmulationRunning();
+    this->ui_RollbackSkipPhase = 1;
+    this->ui_RollbackSkipFrames = TargetFrames;
+    this->ui_RollbackSkipStartTime = std::chrono::steady_clock::now();
+    this->action_Rollback_Skip120Frames->setEnabled(false);
+
+    if (!CoreSetFrameOutput(CoreFrameOutput_None))
+    {
+        this->ui_RollbackSkipPhase = 0;
+        this->action_Rollback_Skip120Frames->setEnabled(true);
+        this->showErrorMessage("Rollback Skip Frames Failed", QString::fromStdString(CoreGetError()));
+        return;
+    }
+
+    if (!CoreAdvanceFrames(HiddenFrames))
+    {
+        this->ui_RollbackSkipPhase = 0;
+        this->action_Rollback_Skip120Frames->setEnabled(true);
+        CoreSetFrameOutput(CoreFrameOutput_All);
+        this->showErrorMessage("Rollback Skip Frames Failed", QString::fromStdString(CoreGetError()));
         return;
     }
 }

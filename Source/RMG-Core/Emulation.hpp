@@ -34,6 +34,9 @@ bool CoreResumeEmulation(void);
 // advances emulation by one frame (must be paused)
 bool CoreAdvanceFrame(void);
 
+// advances emulation by several frames
+bool CoreAdvanceFrames(int frames);
+
 enum CoreFrameOutputFlags
 {
     CoreFrameOutput_None   = 0,

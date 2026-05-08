@@ -347,7 +347,7 @@ EXPORT m64p_error CALL CoreDoCommand(m64p_command Command, int ParamInt, void *P
         case M64CMD_ADVANCE_FRAME:
             if (!g_EmulatorRunning)
                 return M64ERR_INVALID_STATE;
-            main_advance_one();
+            main_advance_frames(ParamInt > 1 ? ParamInt : 1);
             return M64ERR_SUCCESS;
         case M64CMD_FRAME_OUTPUT_SET:
             main_set_frame_output(

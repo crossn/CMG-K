@@ -161,6 +161,7 @@
     </property>
     <addaction name="action_Rollback_SaveState"/>
     <addaction name="action_Rollback_LoadState"/>
+    <addaction name="action_Rollback_Skip120Frames"/>
    </widget>
    <addaction name="menuSystem"/>
    <addaction name="menuSettings"/>
@@ -671,6 +672,14 @@
    </property>
    <property name="text">
     <string>&amp;Load State</string>
+   </property>
+  </action>
+  <action name="action_Rollback_Skip120Frames">
+   <property name="icon">
+    <iconset theme="skip-forward-line"/>
+   </property>
+   <property name="text">
+    <string>Skip &amp;120 Frames</string>
    </property>
   </action>
  </widget>

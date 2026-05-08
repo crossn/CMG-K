@@ -682,6 +682,11 @@ CORE_EXPORT bool CoreResumeEmulation(void)
 
 CORE_EXPORT bool CoreAdvanceFrame(void)
 {
+    return CoreAdvanceFrames(1);
+}
+
+CORE_EXPORT bool CoreAdvanceFrames(int frames)
+{
     std::string error;
     m64p_error ret;
 
@@ -700,10 +705,15 @@ CORE_EXPORT bool CoreAdvanceFrame(void)
         return false;
     }
 
-    ret = m64p::Core.DoCommand(M64CMD_ADVANCE_FRAME, 0, nullptr);
+    if (frames < 1)
+    {
+        frames = 1;
+    }
+
+    ret = m64p::Core.DoCommand(M64CMD_ADVANCE_FRAME, frames, nullptr);
     if (ret != M64ERR_SUCCESS)
     {
-        error = "CoreAdvanceFrame DoCommand(M64CMD_ADVANCE_FRAME) Failed: ";
+        error = "CoreAdvanceFrames DoCommand(M64CMD_ADVANCE_FRAME) Failed: ";
         error += m64p::Core.ErrorMessage(ret);
         CoreSetError(error);
     }

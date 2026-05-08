@@ -78,6 +78,7 @@ m64p_error main_run(void);
 void main_stop(void);
 void main_toggle_pause(void);
 void main_advance_one(void);
+void main_advance_frames(int frames);
 
 void main_speedup(int percent);
 void main_speeddown(int percent);

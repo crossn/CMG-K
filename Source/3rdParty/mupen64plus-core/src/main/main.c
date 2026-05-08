@@ -615,7 +615,15 @@ void main_toggle_pause(void)
 
 void main_advance_one(void)
 {
+    main_advance_frames(1);
+}
+
+void main_advance_frames(int frames)
+{
     l_FrameAdvance = 1;
+    if (frames > 1)
+        l_FrameAdvance = frames;
+
     g_rom_pause = 0;
     StateChanged(M64CORE_EMU_STATE, M64EMU_RUNNING);
 }
@@ -999,10 +1007,12 @@ void new_frame(void)
     /* advance the current frame */
     l_CurrentFrame++;
 
-    if (l_FrameAdvance) {
-        g_rom_pause = 1;
-        l_FrameAdvance = 0;
-        StateChanged(M64CORE_EMU_STATE, M64EMU_PAUSED);
+    if (l_FrameAdvance > 0) {
+        l_FrameAdvance--;
+        if (l_FrameAdvance == 0) {
+            g_rom_pause = 1;
+            StateChanged(M64CORE_EMU_STATE, M64EMU_PAUSED);
+        }
     }
 }
 
