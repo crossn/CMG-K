@@ -42,11 +42,13 @@ typedef enum _savestates_type
 
 savestates_job savestates_get_job(void);
 void savestates_set_job(savestates_job j, savestates_type t, const char *fn);
+void savestates_request_rollback_save(void);
 void savestates_init(void);
 void savestates_deinit(void);
 
 int savestates_load(void);
 int savestates_save(void);
+int savestates_save_rollback(void);
 
 void savestates_select_slot(unsigned int s);
 unsigned int savestates_get_slot(void);
@@ -54,4 +56,3 @@ void savestates_set_autoinc_slot(int b);
 void savestates_inc_slot(void);
 
 #endif /* __SAVESTAVES_H__ */
-

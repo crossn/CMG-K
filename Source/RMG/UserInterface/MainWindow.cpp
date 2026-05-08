@@ -1276,7 +1276,7 @@ void MainWindow::updateActions(bool inEmulation, bool isPaused)
 
     // rollback actions
     this->action_Rollback_SaveState->setEnabled(inEmulation);
-    this->action_Rollback_LoadState->setEnabled(inEmulation && CoreHasRollbackState());
+    this->action_Rollback_LoadState->setEnabled(inEmulation);
 
     // configure keybindings for speed factor
     QAction* speedActions[] =

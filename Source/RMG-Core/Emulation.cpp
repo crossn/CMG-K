@@ -13,6 +13,7 @@
 #include "Emulation.hpp"
 #include "RomHeader.hpp"
 #include "Settings.hpp"
+#include "SaveState.hpp"
 #include "Library.hpp"
 #include "Netplay.hpp"
 #include "Kaillera.hpp"
@@ -87,6 +88,7 @@ static bool s_SyncedThisFrame = false;
 static void FrameCallback(unsigned int frameIndex)
 {
     s_CurrentFrame = frameIndex;
+    CoreSaveRollbackState();
 #ifdef NETPLAY
     // Reset sync flag at the start of each new frame
     // This ensures we sync exactly once per frame regardless of PIF polling timing

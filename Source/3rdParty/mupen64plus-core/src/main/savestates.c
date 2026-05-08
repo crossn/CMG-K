@@ -84,6 +84,9 @@ static char *fname = NULL;
 static unsigned int slot = 0;
 static int autoinc_save_slot = 0;
 
+enum { ROLLBACK_SAVE_STATES_COUNT = 120 };
+enum { ROLLBACK_LOAD_FRAMES_AGO = 30 };
+
 #ifdef USE_SDL3
 static SDL_Mutex *savestates_lock;
 #else
@@ -98,8 +101,11 @@ struct savestate_work {
 };
 
 /* Memory buffer for rollback save states */
-static char *rollback_save_data = NULL;
-static size_t rollback_save_size = 0;
+static char *rollback_save_data[ROLLBACK_SAVE_STATES_COUNT] = { NULL };
+static size_t rollback_save_size[ROLLBACK_SAVE_STATES_COUNT] = { 0 };
+static unsigned int rollback_save_head = 0;
+static unsigned int rollback_save_count = 0;
+static int rollback_save_pending = 0;
 
 /* Returns the malloc'd full path of the currently selected savestate. */
 static char *savestates_generate_path(savestates_type type)
@@ -189,6 +195,11 @@ void savestates_set_job(savestates_job j, savestates_type t, const char *fn)
         fname = strdup(fn);
 }
 
+void savestates_request_rollback_save(void)
+{
+    rollback_save_pending = 1;
+}
+
 static void savestates_clear_job(void)
 {
     savestates_set_job(savestates_job_nothing, savestates_type_unknown, NULL);
@@ -235,14 +246,25 @@ static int savestates_load_m64p(struct device* dev, char *filepath)
     // Check if this is a memory load (for rollback)
     if (strcmp(filepath, "MEMORY") == 0)
     {
-        if (rollback_save_data == NULL || rollback_save_size == 0)
+        unsigned int rollback_load_index;
+        if (rollback_save_count <= ROLLBACK_LOAD_FRAMES_AGO)
         {
-            main_message(M64MSG_STATUS, OSD_BOTTOM_LEFT, "No rollback state available");
+            main_message(M64MSG_STATUS, OSD_BOTTOM_LEFT, "No rollback state available 30 frames ago");
             SDL_UnlockMutex(savestates_lock);
             return 0;
         }
-        memory_data = (unsigned char *)rollback_save_data;
-        memory_size = rollback_save_size;
+
+        rollback_load_index = (rollback_save_head + ROLLBACK_SAVE_STATES_COUNT - 1 - ROLLBACK_LOAD_FRAMES_AGO) % ROLLBACK_SAVE_STATES_COUNT;
+        memory_data = (unsigned char *)rollback_save_data[rollback_load_index];
+        memory_size = rollback_save_size[rollback_load_index];
+
+        if (memory_data == NULL || memory_size == 0)
+        {
+            main_message(M64MSG_STATUS, OSD_BOTTOM_LEFT, "Rollback state ring buffer is missing data");
+            SDL_UnlockMutex(savestates_lock);
+            return 0;
+        }
+
         // Copy header from memory
         if (memory_size < 44)
         {
@@ -1615,25 +1637,6 @@ static void savestates_save_m64p_work(struct work_struct *work)
 
     SDL_LockMutex(savestates_lock);
 
-    // Check if this is a memory save (for rollback)
-    if (strcmp(save->filepath, "MEMORY") == 0)
-    {
-        // Free any existing rollback data
-        if (rollback_save_data != NULL)
-        {
-            free(rollback_save_data);
-        }
-        // Store the data in memory
-        rollback_save_data = save->data;
-        rollback_save_size = save->size;
-        save->data = NULL; // Prevent double free
-        free(save->filepath);
-        free(save);
-        StateChanged(M64CORE_STATE_SAVECOMPLETE, 1);
-        SDL_UnlockMutex(savestates_lock);
-        return;
-    }
-
     // Write the state to a GZIP file
     f = osal_gzopen(save->filepath, "wb");
 
@@ -1671,6 +1674,7 @@ static int savestates_save_m64p(const struct device* dev, char *filepath)
 {
     unsigned char outbuf[4];
     int i;
+    int memory_save;
 
     char queue[1024];
 
@@ -1688,6 +1692,7 @@ static int savestates_save_m64p(const struct device* dev, char *filepath)
     }
 
     save->filepath = strdup(filepath);
+    memory_save = strcmp(filepath, "MEMORY") == 0;
 
     if(autoinc_save_slot)
         savestates_inc_slot();
@@ -1696,7 +1701,18 @@ static int savestates_save_m64p(const struct device* dev, char *filepath)
 
     // Allocate memory for the save state data
     save->size = 16788288 + sizeof(queue) + 4 + 4096;
-    save->data = curr = malloc(save->size);
+    if (memory_save)
+    {
+        if (rollback_save_data[rollback_save_head] == NULL)
+        {
+            rollback_save_data[rollback_save_head] = malloc(save->size);
+        }
+        save->data = curr = rollback_save_data[rollback_save_head];
+    }
+    else
+    {
+        save->data = curr = malloc(save->size);
+    }
     if (save->data == NULL)
     {
         free(save->filepath);
@@ -2070,17 +2086,17 @@ static int savestates_save_m64p(const struct device* dev, char *filepath)
     PUTDATA(curr, uint32_t, dev->sp.first_run);
     PUTDATA(curr, uint32_t, dev->sp.rsp_wait);
 
-    if (strcmp(filepath, "MEMORY") == 0)
+    if (memory_save)
     {
         SDL_LockMutex(savestates_lock);
-        free(rollback_save_data);
-        rollback_save_data = save->data;
-        rollback_save_size = save->size;
+        rollback_save_size[rollback_save_head] = save->size;
+        rollback_save_head = (rollback_save_head + 1) % ROLLBACK_SAVE_STATES_COUNT;
+        if (rollback_save_count < ROLLBACK_SAVE_STATES_COUNT)
+            rollback_save_count++;
         SDL_UnlockMutex(savestates_lock);
 
         free(save->filepath);
         free(save);
-        StateChanged(M64CORE_STATE_SAVECOMPLETE, 1);
         return 1;
     }
 
@@ -2368,6 +2384,17 @@ int savestates_save(void)
     return ret;
 }
 
+int savestates_save_rollback(void)
+{
+    const struct device* dev = &g_dev;
+
+    if (!rollback_save_pending)
+        return 0;
+
+    rollback_save_pending = 0;
+    return savestates_save_m64p(dev, "MEMORY");
+}
+
 void savestates_init(void)
 {
     savestates_lock = SDL_CreateMutex();
@@ -2379,9 +2406,16 @@ void savestates_init(void)
 
 void savestates_deinit(void)
 {
-    free(rollback_save_data);
-    rollback_save_data = NULL;
-    rollback_save_size = 0;
+    unsigned int i;
+    for (i = 0; i < ROLLBACK_SAVE_STATES_COUNT; i++)
+    {
+        free(rollback_save_data[i]);
+        rollback_save_data[i] = NULL;
+        rollback_save_size[i] = 0;
+    }
+    rollback_save_head = 0;
+    rollback_save_count = 0;
+    rollback_save_pending = 0;
 
     SDL_DestroyMutex(savestates_lock);
     savestates_clear_job();

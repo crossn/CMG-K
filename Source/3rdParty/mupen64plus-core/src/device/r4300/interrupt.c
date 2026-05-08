@@ -678,6 +678,10 @@ void gen_interrupt(struct r4300_core* r4300)
             savestates_save();
             return;
         }
+
+        if (savestates_save_rollback())
+        {
+            return;
+        }
     }
 }
-
