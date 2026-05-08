@@ -171,8 +171,18 @@ typedef enum {
   M64CMD_PIF_OPEN,
   M64CMD_ROM_SET_SETTINGS,
   M64CMD_DISK_OPEN,
-  M64CMD_DISK_CLOSE
+  M64CMD_DISK_CLOSE,
+  M64CMD_FRAME_OUTPUT_SET
 } m64p_command;
+
+typedef enum {
+  M64FRAME_OUTPUT_VIDEO  = 1 << 0,
+  M64FRAME_OUTPUT_AUDIO  = 1 << 1,
+  M64FRAME_OUTPUT_PACING = 1 << 2,
+  M64FRAME_OUTPUT_INPUT  = 1 << 3,
+  M64FRAME_OUTPUT_ALL    = M64FRAME_OUTPUT_VIDEO | M64FRAME_OUTPUT_AUDIO | M64FRAME_OUTPUT_PACING | M64FRAME_OUTPUT_INPUT,
+  M64FRAME_OUTPUT_NONE   = 0
+} m64p_frame_output_flags;
 
 typedef struct {
   uint32_t address;
@@ -459,4 +469,3 @@ typedef struct {
 } m64p_video_extension_functions;
 
 #endif /* define M64P_TYPES_H */
-

@@ -61,6 +61,11 @@ const char* get_savestatefilename(void);
 
 void new_frame(void);
 void new_vi(void);
+void main_set_frame_output(int video, int audio, int pacing, int frontend_input);
+int main_frame_video_enabled(void);
+int main_frame_audio_enabled(void);
+int main_frame_pacing_enabled(void);
+int main_frame_frontend_input_enabled(void);
 
 void main_switch_next_pak(int control_id);
 void main_switch_plugin_pak(int control_id);
@@ -105,4 +110,3 @@ m64p_error open_pif(const unsigned char* pifimage, unsigned int size);
 m64p_error close_pif(void);
 
 #endif /* __MAIN_H__ */
-

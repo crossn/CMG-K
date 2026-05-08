@@ -70,7 +70,6 @@ extern "C" {
 // Frame counter for Kaillera sync (updated via frame callback)
 static int s_CurrentFrame = 0;
 
-
 #ifdef NETPLAY
 // Maximum players supported by Kaillera
 #define MAX_PLAYERS 8
@@ -705,6 +704,27 @@ CORE_EXPORT bool CoreAdvanceFrame(void)
     if (ret != M64ERR_SUCCESS)
     {
         error = "CoreAdvanceFrame DoCommand(M64CMD_ADVANCE_FRAME) Failed: ";
+        error += m64p::Core.ErrorMessage(ret);
+        CoreSetError(error);
+    }
+
+    return ret == M64ERR_SUCCESS;
+}
+
+CORE_EXPORT bool CoreSetFrameOutput(int flags)
+{
+    std::string error;
+    m64p_error ret;
+
+    if (!m64p::Core.IsHooked())
+    {
+        return false;
+    }
+
+    ret = m64p::Core.DoCommand(M64CMD_FRAME_OUTPUT_SET, flags, nullptr);
+    if (ret != M64ERR_SUCCESS)
+    {
+        error = "CoreSetFrameOutput DoCommand(M64CMD_FRAME_OUTPUT_SET) Failed: ";
         error += m64p::Core.ErrorMessage(ret);
         CoreSetError(error);
     }

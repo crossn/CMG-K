@@ -127,6 +127,10 @@ static int   l_TakeScreenshot = 0;       // Tell OSD Rendering callback to take 
 static int   l_SpeedFactor = 100;        // percentage of nominal game speed at which emulator is running
 static int   l_FrameAdvance = 0;         // variable to check if we pause on next frame
 static int   l_MainSpeedLimit = 1;       // insert delay during vi_interrupt to keep speed at real-time
+static int   l_FrameOutputVideo = 1;      // allow video plugin screen updates
+static int   l_FrameOutputAudio = 1;      // allow audio samples to be pushed
+static int   l_FrameOutputPacing = 1;     // allow VI speed limiting and pause loop
+static int   l_FrameOutputInput = 1;      // allow frontend hotkey/input polling during VI
 
 static osd_message_t *l_msgVol = NULL;
 static osd_message_t *l_msgFF = NULL;
@@ -616,6 +620,34 @@ void main_advance_one(void)
     StateChanged(M64CORE_EMU_STATE, M64EMU_RUNNING);
 }
 
+void main_set_frame_output(int video, int audio, int pacing, int frontend_input)
+{
+    l_FrameOutputVideo = video ? 1 : 0;
+    l_FrameOutputAudio = audio ? 1 : 0;
+    l_FrameOutputPacing = pacing ? 1 : 0;
+    l_FrameOutputInput = frontend_input ? 1 : 0;
+}
+
+int main_frame_video_enabled(void)
+{
+    return l_FrameOutputVideo;
+}
+
+int main_frame_audio_enabled(void)
+{
+    return l_FrameOutputAudio;
+}
+
+int main_frame_pacing_enabled(void)
+{
+    return l_FrameOutputPacing;
+}
+
+int main_frame_frontend_input_enabled(void)
+{
+    return l_FrameOutputInput;
+}
+
 static void main_draw_volume_osd(void)
 {
     char msgString[64];
@@ -1085,10 +1117,14 @@ void new_vi(void)
 
     gs_apply_cheats(&g_cheat_ctx);
 
-    apply_speed_limiter();
-    main_check_inputs();
+    if (main_frame_pacing_enabled())
+        apply_speed_limiter();
 
-    pause_loop();
+    if (main_frame_frontend_input_enabled())
+        main_check_inputs();
+
+    if (main_frame_pacing_enabled())
+        pause_loop();
 
     netplay_check_sync(&g_dev.r4300.cp0);
 }
@@ -2069,6 +2105,7 @@ void main_stop(void)
         return;
 
     DebugMessage(M64MSG_STATUS, "Stopping emulation.");
+    main_set_frame_output(1, 1, 1, 1);
     if(l_msgPause)
     {
         osd_delete_message(l_msgPause);

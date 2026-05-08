@@ -349,6 +349,13 @@ EXPORT m64p_error CALL CoreDoCommand(m64p_command Command, int ParamInt, void *P
                 return M64ERR_INVALID_STATE;
             main_advance_one();
             return M64ERR_SUCCESS;
+        case M64CMD_FRAME_OUTPUT_SET:
+            main_set_frame_output(
+                (ParamInt & M64FRAME_OUTPUT_VIDEO) != 0,
+                (ParamInt & M64FRAME_OUTPUT_AUDIO) != 0,
+                (ParamInt & M64FRAME_OUTPUT_PACING) != 0,
+                (ParamInt & M64FRAME_OUTPUT_INPUT) != 0);
+            return M64ERR_SUCCESS;
         case M64CMD_SET_MEDIA_LOADER:
             if (ParamInt != sizeof(m64p_media_loader) || ParamPtr == NULL)
                 return M64ERR_INPUT_INVALID;
@@ -461,5 +468,3 @@ EXPORT m64p_error CALL CoreGetRomSettings(m64p_rom_settings *RomSettings, int Ro
 
     return M64ERR_SUCCESS;
 }
-
-

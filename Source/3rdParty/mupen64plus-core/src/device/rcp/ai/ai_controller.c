@@ -30,6 +30,7 @@
 #include "device/rcp/ri/ri_controller.h"
 #include "device/rcp/vi/vi_controller.h"
 #include "device/rdram/rdram.h"
+#include "main/main.h"
 
 
 #define AI_STATUS_BUSY UINT32_C(0x40000000)
@@ -176,7 +177,8 @@ void read_ai_regs(void* opaque, uint32_t address, uint32_t* value)
         {
             unsigned int diff = ai->fifo[0].length - ai->last_read;
             unsigned char *p = (unsigned char*)&ai->ri->rdram->dram[ai->fifo[0].address/4];
-            ai->iaout->push_samples(ai->aout, p + diff, ai->last_read - *value);
+            if (main_frame_audio_enabled())
+                ai->iaout->push_samples(ai->aout, p + diff, ai->last_read - *value);
             ai->last_read = *value;
         }
     }
@@ -230,11 +232,11 @@ void ai_end_of_dma_event(void* opaque)
     {
         unsigned int diff = ai->fifo[0].length - ai->last_read;
         unsigned char *p = (unsigned char*)&ai->ri->rdram->dram[ai->fifo[0].address/4];
-        ai->iaout->push_samples(ai->aout, p + diff, ai->last_read);
+        if (main_frame_audio_enabled())
+            ai->iaout->push_samples(ai->aout, p + diff, ai->last_read);
         ai->last_read = 0;
     }
 
     fifo_pop(ai);
     raise_rcp_interrupt(ai->mi, MI_INTR_AI);
 }
-

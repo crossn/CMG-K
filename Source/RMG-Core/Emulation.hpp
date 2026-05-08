@@ -34,6 +34,19 @@ bool CoreResumeEmulation(void);
 // advances emulation by one frame (must be paused)
 bool CoreAdvanceFrame(void);
 
+enum CoreFrameOutputFlags
+{
+    CoreFrameOutput_None   = 0,
+    CoreFrameOutput_Video  = 1 << 0,
+    CoreFrameOutput_Audio  = 1 << 1,
+    CoreFrameOutput_Pacing = 1 << 2,
+    CoreFrameOutput_Input  = 1 << 3,
+    CoreFrameOutput_All    = CoreFrameOutput_Video | CoreFrameOutput_Audio | CoreFrameOutput_Pacing | CoreFrameOutput_Input
+};
+
+// configures frame side effects used by normal, hidden, and rollback frames
+bool CoreSetFrameOutput(int flags);
+
 // resets emulation
 bool CoreResetEmulation(bool hard);
 
