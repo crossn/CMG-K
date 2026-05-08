@@ -31,3 +31,4 @@ ucrt64.exe - Shortcut.lnk
 # GGPO local build directories
 ggpo-master/
 Source/3rdParty/ggpo/build*/
+bsnes-netplay-master

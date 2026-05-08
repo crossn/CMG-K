@@ -82,6 +82,11 @@ void main_advance_frames(int frames);
 void main_run_frames(int frames, int output_flags);
 int main_rollback_run_frame(int output_flags);
 void main_set_rollback_execute_callbacks(m64p_rollback_execute_callbacks* callbacks);
+int main_rollback_execute_active(void);
+int main_rollback_execute_begin_frame(void);
+int main_rollback_execute_end_frame(void);
+void main_rollback_visible_frame_begin(void);
+int main_rollback_visible_frame_completed(void);
 
 void main_speedup(int percent);
 void main_speeddown(int percent);

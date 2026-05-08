@@ -139,6 +139,8 @@ static int   l_FrameRunInput = 1;
 static m64p_rollback_execute_callbacks l_RollbackExecuteCallbacks;
 static int   l_RollbackExecuteActive = 0;
 static int   l_RollbackSingleStepActive = 0;
+static int   l_RollbackVisibleStepActive = 0;
+static int   l_RollbackVisibleStepCompleted = 0;
 
 static osd_message_t *l_msgVol = NULL;
 static osd_message_t *l_msgFF = NULL;
@@ -668,6 +670,8 @@ void main_set_rollback_execute_callbacks(m64p_rollback_execute_callbacks* callba
     if (callbacks == NULL) {
         memset(&l_RollbackExecuteCallbacks, 0, sizeof(l_RollbackExecuteCallbacks));
         l_RollbackExecuteActive = 0;
+        l_RollbackVisibleStepActive = 0;
+        l_RollbackVisibleStepCompleted = 0;
         return;
     }
 
@@ -675,6 +679,35 @@ void main_set_rollback_execute_callbacks(m64p_rollback_execute_callbacks* callba
     l_RollbackExecuteActive =
         (l_RollbackExecuteCallbacks.begin_frame != NULL &&
          l_RollbackExecuteCallbacks.end_frame != NULL);
+}
+
+int main_rollback_execute_active(void)
+{
+    return l_RollbackExecuteActive;
+}
+
+int main_rollback_execute_begin_frame(void)
+{
+    return l_RollbackExecuteCallbacks.begin_frame(l_RollbackExecuteCallbacks.user_data);
+}
+
+int main_rollback_execute_end_frame(void)
+{
+    return l_RollbackExecuteCallbacks.end_frame(l_RollbackExecuteCallbacks.user_data);
+}
+
+void main_rollback_visible_frame_begin(void)
+{
+    l_RollbackVisibleStepActive = 1;
+    l_RollbackVisibleStepCompleted = 0;
+}
+
+int main_rollback_visible_frame_completed(void)
+{
+    int completed = l_RollbackVisibleStepCompleted;
+    l_RollbackVisibleStepActive = 0;
+    l_RollbackVisibleStepCompleted = 0;
+    return completed;
 }
 
 int main_rollback_run_frame(int output_flags)
@@ -1069,26 +1102,21 @@ void new_frame(void)
 {
     pif_begin_rollback_input_frame();
 
+    if (l_RollbackSingleStepActive) {
+        stop_device(&g_dev);
+        return;
+    }
+
     if (g_FrameCallback != NULL)
         (*g_FrameCallback)(l_CurrentFrame);
 
     /* advance the current frame */
     l_CurrentFrame++;
 
-    if (l_RollbackSingleStepActive) {
+    if (l_RollbackVisibleStepActive) {
+        l_RollbackVisibleStepCompleted = 1;
         stop_device(&g_dev);
         return;
-    }
-
-    if (l_RollbackExecuteActive) {
-        if (!l_RollbackExecuteCallbacks.end_frame(l_RollbackExecuteCallbacks.user_data)) {
-            main_stop();
-            return;
-        }
-        if (!l_RollbackExecuteCallbacks.begin_frame(l_RollbackExecuteCallbacks.user_data)) {
-            main_stop();
-            return;
-        }
     }
 
     if (l_FrameAdvance > 0) {
@@ -2118,11 +2146,6 @@ m64p_error main_run(void)
 
     poweron_device(&g_dev);
     pif_bootrom_hle_execute(&g_dev.r4300);
-    if (l_RollbackExecuteActive) {
-        if (!l_RollbackExecuteCallbacks.begin_frame(l_RollbackExecuteCallbacks.user_data)) {
-            main_stop();
-        }
-    }
     run_device(&g_dev);
 
     /* now begin to shut down */

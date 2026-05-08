@@ -196,7 +196,33 @@ void run_r4300(struct r4300_core* r4300)
 
         r4300->cp0.last_addr = *r4300_pc(r4300);
 
-        run_cached_interpreter(r4300);
+        if (main_rollback_execute_active())
+        {
+            while (g_EmulatorRunning)
+            {
+                if (!main_rollback_execute_begin_frame()) {
+                    main_stop();
+                    break;
+                }
+
+                main_rollback_visible_frame_begin();
+                *r4300_stop(r4300) = 0;
+                run_cached_interpreter(r4300);
+
+                if (!main_rollback_visible_frame_completed()) {
+                    break;
+                }
+
+                if (!main_rollback_execute_end_frame()) {
+                    main_stop();
+                    break;
+                }
+            }
+        }
+        else
+        {
+            run_cached_interpreter(r4300);
+        }
 
         free_blocks(&r4300->cached_interp);
     }

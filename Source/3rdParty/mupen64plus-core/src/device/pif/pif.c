@@ -85,6 +85,42 @@ static void rollback_write_controller_input(uint8_t* rx_buf, uint32_t value)
     rx_buf[3] = (uint8_t)(value & 0xff);
 }
 
+static int rollback_channel_has_command(const struct pif_channel* channel)
+{
+    return channel->tx != NULL
+        && channel->rx != NULL
+        && channel->tx_buf != NULL
+        && channel->rx_buf != NULL;
+}
+
+static void rollback_force_controller_present(struct pif_channel* channel)
+{
+    if (!rollback_channel_has_command(channel)) {
+        return;
+    }
+
+    switch (channel->tx_buf[0])
+    {
+    case JCMD_STATUS:
+    case JCMD_RESET:
+        *channel->rx &= (uint8_t)~0xc0;
+        channel->rx_buf[0] = 0x00;
+        channel->rx_buf[1] = 0x05;
+        channel->rx_buf[2] = 0x00;
+        break;
+    case JCMD_PAK_READ:
+        *channel->rx &= (uint8_t)~0xc0;
+        channel->rx_buf[32] = 0xff;
+        break;
+    case JCMD_PAK_WRITE:
+        *channel->rx &= (uint8_t)~0xc0;
+        channel->rx_buf[0] = 0xff;
+        break;
+    default:
+        break;
+    }
+}
+
 void pif_begin_rollback_input_frame(void)
 {
     l_rollback_input_valid = 0;
@@ -106,16 +142,17 @@ static void rollback_sync_input(struct pif* pif)
         return;
     }
 
+    for (k = 0; k < ROLLBACK_INPUT_PLAYERS && k < PIF_CHANNELS_COUNT; ++k) {
+        rollback_force_controller_present(&pif->channels[k]);
+    }
+
     if (l_rollback_input_valid) {
         for (k = 0; k < ROLLBACK_INPUT_PLAYERS && k < PIF_CHANNELS_COUNT; ++k) {
             struct pif_channel* channel = &pif->channels[k];
 
-            if (channel->tx != NULL
-            && channel->rx != NULL
-            && channel->tx_buf != NULL
-            && channel->rx_buf != NULL
-            && channel->tx_buf[0] == JCMD_CONTROLLER_READ
-            && ((*channel->rx & 0x80) == 0)) {
+            if (rollback_channel_has_command(channel)
+            && channel->tx_buf[0] == JCMD_CONTROLLER_READ) {
+                *channel->rx &= (uint8_t)~0xc0;
                 rollback_write_controller_input(channel->rx_buf, l_rollback_input_values[k]);
             }
         }
@@ -125,10 +162,7 @@ static void rollback_sync_input(struct pif* pif)
     for (k = 0; k < ROLLBACK_INPUT_PLAYERS && k < PIF_CHANNELS_COUNT; ++k) {
         struct pif_channel* channel = &pif->channels[k];
 
-        if (channel->tx != NULL
-        && channel->rx != NULL
-        && channel->tx_buf != NULL
-        && channel->rx_buf != NULL
+        if (rollback_channel_has_command(channel)
         && channel->tx_buf[0] == JCMD_CONTROLLER_READ
         && ((*channel->rx & 0x80) == 0)) {
             has_controller_read = 1;
@@ -150,12 +184,9 @@ static void rollback_sync_input(struct pif* pif)
     for (k = 0; k < ROLLBACK_INPUT_PLAYERS && k < PIF_CHANNELS_COUNT; ++k) {
         struct pif_channel* channel = &pif->channels[k];
 
-        if (channel->tx != NULL
-        && channel->rx != NULL
-        && channel->tx_buf != NULL
-        && channel->rx_buf != NULL
-        && channel->tx_buf[0] == JCMD_CONTROLLER_READ
-        && ((*channel->rx & 0x80) == 0)) {
+        if (rollback_channel_has_command(channel)
+        && channel->tx_buf[0] == JCMD_CONTROLLER_READ) {
+            *channel->rx &= (uint8_t)~0xc0;
             rollback_write_controller_input(channel->rx_buf, input_values[k]);
         }
     }

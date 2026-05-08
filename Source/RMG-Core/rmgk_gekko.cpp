@@ -19,6 +19,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <cstring>
 #include <fstream>
 #include <iomanip>
@@ -32,6 +33,8 @@ namespace
 {
 constexpr unsigned int kGekkoStateCapacity = 24u * 1024u * 1024u;
 constexpr int kGekkoMaxLoggedFrames = 600;
+constexpr float kGekkoPacingFramesAheadThreshold = 0.5f;
+constexpr int kGekkoPacingExtraUs = 267;
 
 #ifdef RMGK_HAVE_GEKKONET
 struct PendingGekkoSave
@@ -47,6 +50,7 @@ int g_GekkoPlayers = 0;
 int g_GekkoInputSize = 0;
 int g_GekkoLocalPlayer = 0;
 int g_GekkoLocalHandle = -1;
+int g_GekkoRemoteHandle = -1;
 std::vector<unsigned char> g_GekkoLatchedInput;
 bool g_GekkoHasLatchedInput = false;
 std::vector<PendingGekkoSave> g_GekkoPendingSaves;
@@ -56,6 +60,7 @@ uint32_t g_GekkoLastSubmittedInput = 0xffffffffu;
 std::vector<unsigned char> g_GekkoLastLatchedInput;
 int g_GekkoWaitingLoops = 0;
 int g_GekkoLocalInputLogRepeats = 0;
+int g_GekkoPacingLogFrames = 0;
 #endif
 
 int rmgk_gekko_core_input_callback(void* values, int size, int players)
@@ -82,6 +87,7 @@ void reset_gekko_log()
     g_GekkoLastLatchedInput.clear();
     g_GekkoWaitingLoops = 0;
     g_GekkoLocalInputLogRepeats = 0;
+    g_GekkoPacingLogFrames = 0;
 }
 
 void write_gekko_log(const std::string& message)
@@ -333,6 +339,41 @@ bool process_pending_saves()
     return true;
 }
 
+void apply_gekko_frame_pacing()
+{
+    const float framesAhead = gekko_frames_ahead(g_GekkoSession);
+    int sleepUs = 0;
+
+    if (framesAhead > kGekkoPacingFramesAheadThreshold)
+    {
+        sleepUs = static_cast<int>(std::lround(kGekkoPacingExtraUs * std::max(1.0f, framesAhead)));
+        sleepUs = std::clamp(sleepUs, kGekkoPacingExtraUs, 2000);
+        std::this_thread::sleep_for(std::chrono::microseconds(sleepUs));
+    }
+
+    g_GekkoPacingLogFrames++;
+    if (sleepUs > 0 || g_GekkoPacingLogFrames <= 10 || (g_GekkoPacingLogFrames % 60) == 0)
+    {
+        std::ostringstream stream;
+        stream << "pacing frames_ahead=" << std::fixed << std::setprecision(2) << framesAhead
+               << " sleep_us=" << sleepUs;
+
+        if (g_GekkoRemoteHandle >= 0)
+        {
+            GekkoNetworkStats stats = {};
+            gekko_network_stats(g_GekkoSession, g_GekkoRemoteHandle, &stats);
+            stream << " remote_handle=" << g_GekkoRemoteHandle
+                   << " ping_ms=" << stats.last_ping
+                   << " avg_ping_ms=" << std::setprecision(1) << stats.avg_ping
+                   << " jitter_ms=" << stats.jitter
+                   << " kb_sent=" << stats.kb_sent
+                   << " kb_recv=" << stats.kb_received;
+        }
+
+        write_gekko_log(stream.str());
+    }
+}
+
 int rollback_execute_begin_frame(void* userData)
 {
     (void)userData;
@@ -465,6 +506,7 @@ int rollback_execute_begin_frame(void* userData)
 
         if (hasRealAdvance)
         {
+            write_gekko_log("begin_frame result=real_frame");
             return 1;
         }
 
@@ -481,6 +523,7 @@ int rollback_execute_end_frame(void* userData)
         write_gekko_log("end_frame result=fail reason=save");
         return 0;
     }
+    apply_gekko_frame_pacing();
     g_GekkoHasLatchedInput = false;
     write_gekko_log("end_frame result=ok");
     return 1;
@@ -536,6 +579,7 @@ CORE_EXPORT bool rmgk_gekko::start_p2p_session(const char* gameName, int players
     g_GekkoPlayers = players;
     g_GekkoInputSize = inputSize;
     g_GekkoLocalHandle = -1;
+    g_GekkoRemoteHandle = -1;
     g_GekkoLatchedInput.assign(static_cast<size_t>(players * inputSize), 0);
     g_GekkoHasLatchedInput = false;
     g_GekkoPendingSaves.clear();
@@ -584,6 +628,10 @@ CORE_EXPORT bool rmgk_gekko::start_p2p_session(const char* gameName, int players
                 close_session();
                 return false;
             }
+            if (g_GekkoRemoteHandle < 0)
+            {
+                g_GekkoRemoteHandle = handle;
+            }
             std::ostringstream stream;
             stream << "gekko_add_actor result=ok player=" << player
                    << " type=remote handle=" << handle
@@ -624,6 +672,7 @@ CORE_EXPORT void rmgk_gekko::close_session()
     g_GekkoInputSize = 0;
     g_GekkoLocalPlayer = 0;
     g_GekkoLocalHandle = -1;
+    g_GekkoRemoteHandle = -1;
     g_GekkoLatchedInput.clear();
     g_GekkoHasLatchedInput = false;
     g_GekkoPendingSaves.clear();
