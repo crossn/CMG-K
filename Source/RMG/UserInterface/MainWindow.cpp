@@ -2619,47 +2619,8 @@ void MainWindow::timerEvent(QTimerEvent *event)
 #ifdef NETPLAY
     else if (timerId == this->ui_RollbackLivePumpTimerId)
     {
-        if (!this->ui_RollbackLivePumpPending && !this->ui_RollbackLivePumpActive)
-        {
-            this->killTimer(timerId);
-            this->ui_RollbackLivePumpTimerId = 0;
-            return;
-        }
-
-        if (!rmgk_ggpo::is_real_session_running())
-        {
-            return;
-        }
-
-        if (CoreIsEmulationRunning())
-        {
-            CorePauseEmulation();
-            return;
-        }
-
-        if (!CoreIsEmulationPaused())
-        {
-            return;
-        }
-
-        if (this->ui_RollbackLivePumpPending)
-        {
-            this->ui_RollbackLivePumpPending = false;
-            this->ui_RollbackLivePumpActive = true;
-            OnScreenDisplaySetMessage("GGPO rollback frame pump active");
-        }
-
-        if (!rmgk_ggpo::advance_frame(CoreFrameOutput_All))
-        {
-            const std::string error = CoreGetError();
-            this->ui_RollbackLivePumpActive = false;
-            this->ui_RollbackLivePumpPending = false;
-            this->killTimer(timerId);
-            this->ui_RollbackLivePumpTimerId = 0;
-            rmgk_ggpo::close_session();
-            CoreStopEmulation();
-            this->showErrorMessage("GGPO Rollback Frame Pump Failed", QString::fromStdString(error));
-        }
+        this->killTimer(timerId);
+        this->ui_RollbackLivePumpTimerId = 0;
     }
 #endif // NETPLAY
 }
@@ -3646,13 +3607,6 @@ void MainWindow::on_Rollback_SessionRequested(QString gameName, QString remoteAd
     {
         this->killTimer(this->ui_CheckVideoSizeTimerId);
         this->ui_CheckVideoSizeTimerId = 0;
-    }
-
-    this->ui_RollbackLivePumpPending = true;
-    this->ui_RollbackLivePumpActive = false;
-    if (this->ui_RollbackLivePumpTimerId == 0)
-    {
-        this->ui_RollbackLivePumpTimerId = this->startTimer(0);
     }
 
     this->emulationThread->SetGgpoNetplay(remoteAddress, localPort, remotePort, localPlayer, frameDelay);

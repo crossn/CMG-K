@@ -10,6 +10,8 @@
 #ifndef CORE_ROLLBACK_NETCODE_HPP
 #define CORE_ROLLBACK_NETCODE_HPP
 
+#include "m64p/api/m64p_types.h"
+
 struct CoreRollbackState
 {
     unsigned char* buffer = nullptr;
@@ -27,5 +29,6 @@ bool CoreRollbackAdvanceFrame(void);
 bool CoreRollbackSampleInput(void* values, int size, int players);
 bool CoreRollbackSetInputCallback(CoreRollbackInputCallback callback);
 bool CoreRollbackSetDeterministic(bool enabled);
+bool CoreRollbackExecute(m64p_rollback_execute_callbacks& callbacks);
 
 #endif // CORE_ROLLBACK_NETCODE_HPP

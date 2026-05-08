@@ -306,6 +306,16 @@ EXPORT m64p_error CALL CoreDoCommand(m64p_command Command, int ParamInt, void *P
             /* the main_run() function will not return until the player has quit the game */
             rval = main_run();
             return rval;
+        case M64CMD_ROLLBACK_EXECUTE:
+            if (g_EmulatorRunning || (!l_ROMOpen && !l_DiskOpen))
+                return M64ERR_INVALID_STATE;
+            if (ParamPtr == NULL)
+                return M64ERR_INPUT_ASSERT;
+            main_set_rollback_execute_callbacks((m64p_rollback_execute_callbacks*)ParamPtr);
+            plugin_check();
+            rval = main_run();
+            main_set_rollback_execute_callbacks(NULL);
+            return rval;
         case M64CMD_STOP:
             if (!g_EmulatorRunning)
                 return M64ERR_INVALID_STATE;

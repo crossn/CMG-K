@@ -606,11 +606,32 @@ CORE_EXPORT bool CoreStartEmulation(std::filesystem::path n64rom, std::filesyste
         }
 #endif
 
-        m64p_ret = m64p::Core.DoCommand(M64CMD_EXECUTE, 0, nullptr);
+        bool ggpoExecute = false;
+#ifdef NETPLAY
+        ggpoExecute = address.rfind("GGPO|", 0) == 0;
+#endif
+
+        if (ggpoExecute)
+        {
+            m64p_ret = rmgk_ggpo::execute() ? M64ERR_SUCCESS : M64ERR_SYSTEM_FAIL;
+        }
+        else
+        {
+            m64p_ret = m64p::Core.DoCommand(M64CMD_EXECUTE, 0, nullptr);
+        }
         if (m64p_ret != M64ERR_SUCCESS)
         {
-            error = "CoreStartEmulation m64p::Core.DoCommand(M64CMD_EXECUTE) Failed: ";
-            error += m64p::Core.ErrorMessage(m64p_ret);
+            error = ggpoExecute ?
+                "CoreStartEmulation rmgk_ggpo::execute Failed: " :
+                "CoreStartEmulation m64p::Core.DoCommand(M64CMD_EXECUTE) Failed: ";
+            if (!CoreGetError().empty())
+            {
+                error += CoreGetError();
+            }
+            else
+            {
+                error += m64p::Core.ErrorMessage(m64p_ret);
+            }
         }
     }
 

@@ -67,6 +67,11 @@ typedef struct {
   int size;
   int players;
 } m64p_rollback_input_sample;
+typedef struct {
+  void *user_data;
+  int (*begin_frame)(void *user_data);
+  int (*end_frame)(void *user_data);
+} m64p_rollback_execute_callbacks;
 
 typedef enum {
   M64TYPE_INT = 1,
@@ -185,6 +190,7 @@ typedef enum {
   M64CMD_ROLLBACK_SET_INPUT_CALLBACK,
   M64CMD_ROLLBACK_SET_DETERMINISTIC,
   M64CMD_ROLLBACK_SAMPLE_INPUT,
+  M64CMD_ROLLBACK_EXECUTE,
   M64CMD_FRAME_OUTPUT_SET
 } m64p_command;
 

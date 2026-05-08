@@ -136,6 +136,8 @@ static int   l_FrameRunVideo = 1;
 static int   l_FrameRunAudio = 1;
 static int   l_FrameRunPacing = 1;
 static int   l_FrameRunInput = 1;
+static m64p_rollback_execute_callbacks l_RollbackExecuteCallbacks;
+static int   l_RollbackExecuteActive = 0;
 
 static osd_message_t *l_msgVol = NULL;
 static osd_message_t *l_msgFF = NULL;
@@ -660,6 +662,20 @@ void main_run_frames(int frames, int output_flags)
     StateChanged(M64CORE_EMU_STATE, M64EMU_RUNNING);
 }
 
+void main_set_rollback_execute_callbacks(m64p_rollback_execute_callbacks* callbacks)
+{
+    if (callbacks == NULL) {
+        memset(&l_RollbackExecuteCallbacks, 0, sizeof(l_RollbackExecuteCallbacks));
+        l_RollbackExecuteActive = 0;
+        return;
+    }
+
+    l_RollbackExecuteCallbacks = *callbacks;
+    l_RollbackExecuteActive =
+        (l_RollbackExecuteCallbacks.begin_frame != NULL &&
+         l_RollbackExecuteCallbacks.end_frame != NULL);
+}
+
 int main_frame_video_enabled(void)
 {
     return l_FrameOutputVideo;
@@ -1032,6 +1048,17 @@ void new_frame(void)
 
     /* advance the current frame */
     l_CurrentFrame++;
+
+    if (l_RollbackExecuteActive) {
+        if (!l_RollbackExecuteCallbacks.end_frame(l_RollbackExecuteCallbacks.user_data)) {
+            main_stop();
+            return;
+        }
+        if (!l_RollbackExecuteCallbacks.begin_frame(l_RollbackExecuteCallbacks.user_data)) {
+            main_stop();
+            return;
+        }
+    }
 
     if (l_FrameAdvance > 0) {
         l_FrameAdvance--;
@@ -2060,6 +2087,11 @@ m64p_error main_run(void)
 
     poweron_device(&g_dev);
     pif_bootrom_hle_execute(&g_dev.r4300);
+    if (l_RollbackExecuteActive) {
+        if (!l_RollbackExecuteCallbacks.begin_frame(l_RollbackExecuteCallbacks.user_data)) {
+            main_stop();
+        }
+    }
     run_device(&g_dev);
 
     /* now begin to shut down */
