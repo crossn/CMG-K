@@ -22,7 +22,7 @@
 #include "Error.hpp"
 #include "File.hpp"
 #include "Rom.hpp"
-#include "rmgk_ggpo.hpp"
+#include "rmgk_gekko.hpp"
 
 #include "m64p/Api.hpp"
 
@@ -64,9 +64,9 @@ extern "C" {
     typedef void (*pif_sync_callback_t)(struct pif*);
 }
 
-static bool parse_ggpo_address(const std::string& address, std::string& remoteAddress, int& remotePort, int& frameDelay)
+static bool parse_gekko_address(const std::string& address, std::string& remoteAddress, int& remotePort, int& frameDelay)
 {
-    constexpr const char* prefix = "GGPO|";
+    constexpr const char* prefix = "GEKKO|";
     if (address.rfind(prefix, 0) != 0)
     {
         return false;
@@ -417,7 +417,7 @@ CORE_EXPORT bool CoreStartEmulation(std::filesystem::path n64rom, std::filesyste
 
 #ifdef NETPLAY
     // Apply RSP plugin override and reload plugins BEFORE ROM open
-    if (netplay && (address == "KAILLERA" || address.rfind("GGPO|", 0) == 0))
+    if (netplay && (address == "KAILLERA" || address.rfind("GEKKO|", 0) == 0))
     {
         apply_kaillera_rsp_override();
         CoreApplyPluginSettings();  // Force reload with HLE RSP
@@ -498,7 +498,7 @@ CORE_EXPORT bool CoreStartEmulation(std::filesystem::path n64rom, std::filesyste
 #ifdef NETPLAY
     // Apply deterministic settings AFTER all overlays for Kaillera netplay
     // This ensures user/game-specific settings don't override critical sync settings
-    if (netplay && (address == "KAILLERA" || address.rfind("GGPO|", 0) == 0))
+    if (netplay && (address == "KAILLERA" || address.rfind("GEKKO|", 0) == 0))
     {
         apply_kaillera_deterministic_settings();
     }
@@ -523,18 +523,18 @@ CORE_EXPORT bool CoreStartEmulation(std::filesystem::path n64rom, std::filesyste
                 netplay_ret = true;
             }
         }
-        else if (address.rfind("GGPO|", 0) == 0)
+        else if (address.rfind("GEKKO|", 0) == 0)
         {
             std::string remoteAddress;
             int remotePort = 0;
             int frameDelay = 0;
-            if (!parse_ggpo_address(address, remoteAddress, remotePort, frameDelay))
+            if (!parse_gekko_address(address, remoteAddress, remotePort, frameDelay))
             {
-                CoreSetError("CoreStartEmulation: invalid GGPO session parameters");
+                CoreSetError("CoreStartEmulation: invalid GekkoNet session parameters");
                 m64p_ret = M64ERR_INPUT_INVALID;
                 netplay_ret = false;
             }
-            else if (!rmgk_ggpo::set_deterministic(true))
+            else if (!rmgk_gekko::set_deterministic(true))
             {
                 m64p_ret = M64ERR_SYSTEM_FAIL;
                 netplay_ret = false;
@@ -542,15 +542,14 @@ CORE_EXPORT bool CoreStartEmulation(std::filesystem::path n64rom, std::filesyste
             else
             {
                 CoreSettingsSetValue(SettingsID::Core_CPU_Emulator, 1);
-                rmgk_ggpo::SessionCallbacks callbacks = {};
-                netplay_ret = rmgk_ggpo::start_p2p_session(callbacks, nullptr, "rmgk-ggpo",
+                netplay_ret = rmgk_gekko::start_p2p_session("rmgk-gekko",
                     2, static_cast<int>(sizeof(uint32_t)), player, static_cast<unsigned short>(port),
                     remoteAddress.c_str(), static_cast<unsigned short>(remotePort), frameDelay);
                 if (!netplay_ret)
                 {
                     if (CoreGetError().empty())
                     {
-                        CoreSetError("CoreStartEmulation: GGPO session initialization failed");
+                        CoreSetError("CoreStartEmulation: GekkoNet session initialization failed");
                     }
                     m64p_ret = M64ERR_SYSTEM_FAIL;
                 }
@@ -607,14 +606,14 @@ CORE_EXPORT bool CoreStartEmulation(std::filesystem::path n64rom, std::filesyste
         }
 #endif
 
-        bool ggpoExecute = false;
+        bool rollbackExecute = false;
 #ifdef NETPLAY
-        ggpoExecute = address.rfind("GGPO|", 0) == 0;
+        rollbackExecute = address.rfind("GEKKO|", 0) == 0;
 #endif
 
-        if (ggpoExecute)
+        if (rollbackExecute)
         {
-            m64p_ret = rmgk_ggpo::execute() ? M64ERR_SUCCESS : M64ERR_SYSTEM_FAIL;
+            m64p_ret = rmgk_gekko::execute() ? M64ERR_SUCCESS : M64ERR_SYSTEM_FAIL;
         }
         else
         {
@@ -622,8 +621,8 @@ CORE_EXPORT bool CoreStartEmulation(std::filesystem::path n64rom, std::filesyste
         }
         if (m64p_ret != M64ERR_SUCCESS)
         {
-            error = ggpoExecute ?
-                "CoreStartEmulation rmgk_ggpo::execute Failed: " :
+            error = rollbackExecute ?
+                "CoreStartEmulation rollback execute Failed: " :
                 "CoreStartEmulation m64p::Core.DoCommand(M64CMD_EXECUTE) Failed: ";
             if (!CoreGetError().empty())
             {
@@ -645,9 +644,9 @@ CORE_EXPORT bool CoreStartEmulation(std::filesystem::path n64rom, std::filesyste
             // Don't shutdown Kaillera here - keep connection alive for restart
             // Kaillera will be shutdown when user leaves the server dialog
         }
-        else if (address.rfind("GGPO|", 0) == 0)
+        else if (address.rfind("GEKKO|", 0) == 0)
         {
-            rmgk_ggpo::close_session();
+            rmgk_gekko::close_session();
         }
         else
         {

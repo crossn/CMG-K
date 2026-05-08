@@ -1221,7 +1221,7 @@ void KailleraP2PDialog::onGameStarted(QString game, int player, int maxPlayers)
         const int frameDelay = (m_frameDelayCombo != nullptr) ? m_frameDelayCombo->currentIndex() : 0;
         if (!p2p_core_get_peer_endpoint(peerIp, sizeof(peerIp), &peerPort))
         {
-            m_chat->append("<span style='color:red;'>" + timestamp() + "Could not get GGPO peer endpoint.</span>");
+            m_chat->append("<span style='color:red;'>" + timestamp() + "Could not get rollback peer endpoint.</span>");
             return;
         }
 

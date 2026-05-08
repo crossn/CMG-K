@@ -130,7 +130,7 @@ public:
     {
         if (element == CE_ItemViewItem)
         {
-            // Strip focus only — keep Selected so text color changes correctly
+            // Strip focus only  Ekeep Selected so text color changes correctly
             QStyleOptionViewItem opt(*qstyleoption_cast<const QStyleOptionViewItem*>(option));
             opt.state &= ~State_HasFocus;
             QProxyStyle::drawControl(element, &opt, painter, widget);
@@ -169,7 +169,6 @@ public:
 #include <RMG-Core/Video.hpp>
 #include <RMG-Core/Core.hpp>
 #include <RMG-Core/Key.hpp>
-#include <RMG-Core/rmgk_ggpo.hpp>
 
 using namespace UserInterface;
 using namespace Utilities;
@@ -231,6 +230,47 @@ size_t RollbackDebugStressCheckpointIndex(int frame);
 void FreeRollbackDebugStressCheckpoints();
 bool SaveRollbackDebugStressCheckpoint(int frame);
 bool RollbackDebugReplaySynchronizeInput(void* values, int size, int players, void* userData);
+int RollbackDebugReplayCoreInputCallback(void* values, int size, int players);
+
+bool RollbackDebugStartSession()
+{
+    return CoreRollbackSetInputCallback(RollbackDebugReplayCoreInputCallback);
+}
+
+void RollbackDebugCloseSession()
+{
+    CoreRollbackSetInputCallback(nullptr);
+}
+
+bool RollbackDebugSaveState(CoreRollbackState& state, int frame)
+{
+    return CoreRollbackSaveGameState(state, frame);
+}
+
+bool RollbackDebugLoadState(const CoreRollbackState& state)
+{
+    return CoreRollbackLoadGameState(state);
+}
+
+void RollbackDebugFreeState(CoreRollbackState& state)
+{
+    CoreRollbackFreeGameState(state);
+}
+
+bool RollbackDebugAdvanceFrame(int frameOutputFlags = CoreFrameOutput_None)
+{
+    return CoreRunFrames(1, frameOutputFlags);
+}
+
+bool RollbackDebugAdvanceFrames(int frames, int frameOutputFlags = CoreFrameOutput_None)
+{
+    if (frames < 1)
+    {
+        frames = 1;
+    }
+
+    return CoreRunFrames(frames, frameOutputFlags);
+}
 
 bool WriteReplayBytes(std::ofstream& file, const void* data, size_t size)
 {
@@ -533,16 +573,21 @@ bool LoadRollbackDebugReplayFile(std::string& error)
         g_RollbackDebugReplay.finalHash = finalHash;
         g_RollbackDebugReplay.ready = true;
     }
-    rmgk_ggpo::free_buffer(oldState);
-    rmgk_ggpo::free_buffer(oldFinalState);
+    RollbackDebugFreeState(oldState);
+    RollbackDebugFreeState(oldFinalState);
     return true;
 }
 
 void GetRollbackStatePayload(const CoreRollbackState& state, const unsigned char*& buffer, int& len)
 {
-    constexpr int GgpoHeaderInts = 6;
-    constexpr int GgpoHeaderSize = GgpoHeaderInts * static_cast<int>(sizeof(int32_t));
-    constexpr int32_t GgpoHeaderMagic =
+    constexpr int RollbackHeaderInts = 6;
+    constexpr int RollbackHeaderSize = RollbackHeaderInts * static_cast<int>(sizeof(int32_t));
+    constexpr int32_t RollbackHeaderMagic =
+        (static_cast<int32_t>('R') << 24) |
+        (static_cast<int32_t>('L') << 16) |
+        (static_cast<int32_t>('B') << 8) |
+        static_cast<int32_t>('K');
+    constexpr int32_t LegacyRollbackHeaderMagic =
         (static_cast<int32_t>('G') << 24) |
         (static_cast<int32_t>('G') << 16) |
         (static_cast<int32_t>('P') << 8) |
@@ -557,16 +602,16 @@ void GetRollbackStatePayload(const CoreRollbackState& state, const unsigned char
         return;
     }
 
-    if (len >= GgpoHeaderSize)
+    if (len >= RollbackHeaderSize)
     {
         int32_t magic = 0;
         int32_t headerSize = 0;
         std::memcpy(&magic, buffer, sizeof(magic));
         std::memcpy(&headerSize, buffer + sizeof(magic), sizeof(headerSize));
-        if (magic == GgpoHeaderMagic && headerSize == GgpoHeaderSize)
+        if ((magic == RollbackHeaderMagic || magic == LegacyRollbackHeaderMagic) && headerSize == RollbackHeaderSize)
         {
-            buffer += GgpoHeaderSize;
-            len -= GgpoHeaderSize;
+            buffer += RollbackHeaderSize;
+            len -= RollbackHeaderSize;
         }
     }
 }
@@ -599,15 +644,15 @@ void FreeRollbackDebugStressCheckpoints()
 {
     for (auto& checkpoint : g_RollbackDebugReplay.stressCheckpoints)
     {
-        rmgk_ggpo::free_buffer(checkpoint);
+        RollbackDebugFreeState(checkpoint);
     }
 }
 
 bool SaveRollbackDebugStressCheckpoint(int frame)
 {
     const size_t checkpointIndex = RollbackDebugStressCheckpointIndex(frame);
-    rmgk_ggpo::free_buffer(g_RollbackDebugReplay.stressCheckpoints[checkpointIndex]);
-    return rmgk_ggpo::save_game_state(g_RollbackDebugReplay.stressCheckpoints[checkpointIndex], frame);
+    RollbackDebugFreeState(g_RollbackDebugReplay.stressCheckpoints[checkpointIndex]);
+    return RollbackDebugSaveState(g_RollbackDebugReplay.stressCheckpoints[checkpointIndex], frame);
 }
 
 bool RollbackDebugReplaySynchronizeInput(void* values, int size, int players, void* userData)
@@ -678,6 +723,11 @@ bool RollbackDebugReplaySynchronizeInput(void* values, int size, int players, vo
     }
 
     return true;
+}
+
+int RollbackDebugReplayCoreInputCallback(void* values, int size, int players)
+{
+    return RollbackDebugReplaySynchronizeInput(values, size, players, nullptr) ? 1 : 0;
 }
 
 int FirstRollbackStatePayloadDifference(const CoreRollbackState& expected, const CoreRollbackState& actual, int& expectedLen, int& actualLen)
@@ -850,9 +900,9 @@ MainWindow::MainWindow() : QMainWindow(nullptr)
 
 MainWindow::~MainWindow()
 {
-    rmgk_ggpo::free_buffer(this->ui_RollbackDebugState);
-    rmgk_ggpo::free_buffer(g_RollbackDebugReplay.initialState);
-    rmgk_ggpo::free_buffer(g_RollbackDebugReplay.finalState);
+    RollbackDebugFreeState(this->ui_RollbackDebugState);
+    RollbackDebugFreeState(g_RollbackDebugReplay.initialState);
+    RollbackDebugFreeState(g_RollbackDebugReplay.finalState);
     FreeRollbackDebugStressCheckpoints();
 }
 
@@ -985,7 +1035,7 @@ bool MainWindow::applyExclusiveFullscreen(void)
 
     if (resolution.empty() && refreshRate == 0 && monitor.empty())
     {
-        // all desktop defaults — nothing to change
+        // all desktop defaults  Enothing to change
         return true;
     }
 
@@ -1118,10 +1168,10 @@ void MainWindow::closeEvent(QCloseEvent *event)
     }
 
     // Process events so the dialog chain fully unwinds
-    // (server browser close → netplay dialog close → showServerDialog returns)
+    // (server browser close ↁEnetplay dialog close ↁEshowServerDialog returns)
     QCoreApplication::processEvents();
 
-    // Shutdown Kaillera if still active (safety net — dialogs should have cleaned up)
+    // Shutdown Kaillera if still active (safety net  Edialogs should have cleaned up)
     if (this->kailleraSessionManager != nullptr)
     {
         CoreEndKailleraGame();
@@ -1939,13 +1989,13 @@ void MainWindow::updateActions(bool inEmulation, bool isPaused)
     this->action_System_Exit->setShortcut(QKeySequence(keyBinding));
 
     // rollback actions
-    this->action_Rollback_SaveGgpoState->setEnabled(inEmulation && isPaused);
-    this->action_Rollback_LoadGgpoState->setEnabled(inEmulation && isPaused && this->ui_RollbackDebugState.buffer != nullptr);
+    this->action_Rollback_SaveState->setEnabled(inEmulation && isPaused);
+    this->action_Rollback_LoadState->setEnabled(inEmulation && isPaused && this->ui_RollbackDebugState.buffer != nullptr);
     this->action_Rollback_StartDebugReplay->setEnabled(inEmulation && isPaused && rollbackDebugReplayIdle);
     this->action_Rollback_VerifyDebugReplay->setEnabled(inEmulation && isPaused && rollbackDebugReplayReady && rollbackDebugReplayIdle);
     this->action_Rollback_VerifyDebugReplayWithGraphics->setEnabled(inEmulation && isPaused && rollbackDebugReplayReady && rollbackDebugReplayIdle);
     this->action_Rollback_StressDebugReplay->setEnabled(inEmulation && isPaused && rollbackDebugReplayReady && rollbackDebugReplayIdle);
-    this->action_Rollback_GgpoSynctestDebugReplay->setEnabled(inEmulation && isPaused && rollbackDebugReplayReady && rollbackDebugReplayIdle);
+    this->action_Rollback_SynctestDebugReplay->setEnabled(inEmulation && isPaused && rollbackDebugReplayReady && rollbackDebugReplayIdle);
 
     // configure keybindings for speed factor
     QAction* speedActions[] =
@@ -2205,10 +2255,10 @@ void MainWindow::configureActions(void)
         this->actionSlot_6, this->actionSlot_7, this->actionSlot_8,
         this->actionSlot_9, this->action_System_Cheats,
         this->action_System_GSButton, this->action_System_Exit,
-        this->action_Rollback_SaveGgpoState, this->action_Rollback_LoadGgpoState,
+        this->action_Rollback_SaveState, this->action_Rollback_LoadState,
         this->action_Rollback_StartDebugReplay, this->action_Rollback_VerifyDebugReplay,
         this->action_Rollback_VerifyDebugReplayWithGraphics, this->action_Rollback_StressDebugReplay,
-        this->action_Rollback_GgpoSynctestDebugReplay,
+        this->action_Rollback_SynctestDebugReplay,
         // Settings actions
         this->action_Settings_Graphics, this->action_Settings_Audio,
         this->action_Settings_Rsp, this->action_Settings_Input,
@@ -2335,13 +2385,13 @@ void MainWindow::connectActionSignals(void)
     connect(this->action_System_Cheats, &QAction::triggered, this, &MainWindow::on_Action_System_Cheats);
     connect(this->action_System_GSButton, &QAction::triggered, this, &MainWindow::on_Action_System_GSButton);
 
-    connect(this->action_Rollback_SaveGgpoState, &QAction::triggered, this, &MainWindow::on_Action_Rollback_SaveGgpoState);
-    connect(this->action_Rollback_LoadGgpoState, &QAction::triggered, this, &MainWindow::on_Action_Rollback_LoadGgpoState);
+    connect(this->action_Rollback_SaveState, &QAction::triggered, this, &MainWindow::on_Action_Rollback_SaveState);
+    connect(this->action_Rollback_LoadState, &QAction::triggered, this, &MainWindow::on_Action_Rollback_LoadState);
     connect(this->action_Rollback_StartDebugReplay, &QAction::triggered, this, &MainWindow::on_Action_Rollback_StartDebugReplay);
     connect(this->action_Rollback_VerifyDebugReplay, &QAction::triggered, this, &MainWindow::on_Action_Rollback_VerifyDebugReplay);
     connect(this->action_Rollback_VerifyDebugReplayWithGraphics, &QAction::triggered, this, &MainWindow::on_Action_Rollback_VerifyDebugReplayWithGraphics);
     connect(this->action_Rollback_StressDebugReplay, &QAction::triggered, this, &MainWindow::on_Action_Rollback_StressDebugReplay);
-    connect(this->action_Rollback_GgpoSynctestDebugReplay, &QAction::triggered, this, &MainWindow::on_Action_Rollback_GgpoSynctestDebugReplay);
+    connect(this->action_Rollback_SynctestDebugReplay, &QAction::triggered, this, &MainWindow::on_Action_Rollback_SynctestDebugReplay);
 
     connect(this->action_Settings_Graphics, &QAction::triggered, this, &MainWindow::on_Action_Settings_Graphics);
     connect(this->action_Settings_Audio, &QAction::triggered, this, &MainWindow::on_Action_Settings_Audio);
@@ -3609,7 +3659,7 @@ void MainWindow::on_Rollback_SessionRequested(QString gameName, QString remoteAd
         this->ui_CheckVideoSizeTimerId = 0;
     }
 
-    this->emulationThread->SetGgpoNetplay(remoteAddress, localPort, remotePort, localPlayer, frameDelay);
+    this->emulationThread->SetGekkoNetplay(remoteAddress, localPort, remotePort, localPlayer, frameDelay);
     this->launchEmulationThread(romFile, "", false, -1, true);
 }
 
@@ -4642,9 +4692,9 @@ void MainWindow::on_Core_StateCallback(CoreStateCallbackType type, int value)
                 if (replayMode == RollbackDebugReplayMode::Recording)
                 {
                     CoreRollbackState finalState;
-                    rmgk_ggpo::close_session();
+                    RollbackDebugCloseSession();
 
-                    if (!rmgk_ggpo::save_game_state(finalState, CoreGetCurrentFrameCount()))
+                    if (!RollbackDebugSaveState(finalState, CoreGetCurrentFrameCount()))
                     {
                         {
                             std::lock_guard<std::mutex> lock(g_RollbackDebugReplay.mutex);
@@ -4685,16 +4735,16 @@ void MainWindow::on_Core_StateCallback(CoreStateCallbackType type, int value)
                         }
                     }
 
-                    rmgk_ggpo::free_buffer(finalState);
+                    RollbackDebugFreeState(finalState);
                     this->updateActions(true, true);
                 }
                 else if (replayMode == RollbackDebugReplayMode::Verifying)
                 {
                     CoreRollbackState finalState;
 
-                    if (!rmgk_ggpo::save_game_state(finalState, CoreGetCurrentFrameCount()))
+                    if (!RollbackDebugSaveState(finalState, CoreGetCurrentFrameCount()))
                     {
-                        rmgk_ggpo::close_session();
+                        RollbackDebugCloseSession();
                         {
                             std::lock_guard<std::mutex> lock(g_RollbackDebugReplay.mutex);
                             g_RollbackDebugReplay.mode = RollbackDebugReplayMode::Idle;
@@ -4738,7 +4788,7 @@ void MainWindow::on_Core_StateCallback(CoreStateCallbackType type, int value)
                         if (!finished)
                         {
                             const bool withGraphics = g_RollbackDebugReplay.verifyWithGraphics;
-                            rmgk_ggpo::free_buffer(finalState);
+                            RollbackDebugFreeState(finalState);
                             if ((verifyFrameIndex % 60) == 0)
                             {
                                 OnScreenDisplayResume();
@@ -4752,9 +4802,9 @@ void MainWindow::on_Core_StateCallback(CoreStateCallbackType type, int value)
                                     std::lock_guard<std::mutex> lock(g_RollbackDebugReplay.mutex);
                                     stillVerifying = g_RollbackDebugReplay.mode == RollbackDebugReplayMode::Verifying;
                                 }
-                                if (stillVerifying && !rmgk_ggpo::advance_frame(withGraphics ? CoreFrameOutput_All : CoreFrameOutput_None))
+                                if (stillVerifying && !RollbackDebugAdvanceFrame(withGraphics ? CoreFrameOutput_All : CoreFrameOutput_None))
                                 {
-                                    rmgk_ggpo::close_session();
+                                    RollbackDebugCloseSession();
                                     {
                                         std::lock_guard<std::mutex> lock(g_RollbackDebugReplay.mutex);
                                         g_RollbackDebugReplay.mode = RollbackDebugReplayMode::Idle;
@@ -4766,7 +4816,7 @@ void MainWindow::on_Core_StateCallback(CoreStateCallbackType type, int value)
                             return;
                         }
 
-                        rmgk_ggpo::close_session();
+                        RollbackDebugCloseSession();
                         {
                             std::lock_guard<std::mutex> lock(g_RollbackDebugReplay.mutex);
                             g_RollbackDebugReplay.mode = RollbackDebugReplayMode::Idle;
@@ -4794,7 +4844,7 @@ void MainWindow::on_Core_StateCallback(CoreStateCallbackType type, int value)
                         }
                     }
 
-                    rmgk_ggpo::free_buffer(finalState);
+                    RollbackDebugFreeState(finalState);
                     this->updateActions(true, true);
                 }
                 else if (replayMode == RollbackDebugReplayMode::Stressing)
@@ -4905,7 +4955,7 @@ void MainWindow::on_Core_StateCallback(CoreStateCallbackType type, int value)
             }
             this->ui_UpdateSaveStateSlotTimerId = this->startTimer(1000);
 
-            this->action_Rollback_LoadGgpoState->setEnabled(CoreIsEmulationPaused() && this->ui_RollbackDebugState.buffer != nullptr);
+            this->action_Rollback_LoadState->setEnabled(CoreIsEmulationPaused() && this->ui_RollbackDebugState.buffer != nullptr);
 
             this->ui_ManuallySavedState = false;
         } break;
@@ -4923,35 +4973,35 @@ void MainWindow::on_Core_StateCallback(CoreStateCallbackType type, int value)
     }
 }
 
-void MainWindow::on_Action_Rollback_SaveGgpoState(void)
+void MainWindow::on_Action_Rollback_SaveState(void)
 {
-    rmgk_ggpo::free_buffer(this->ui_RollbackDebugState);
-    this->action_Rollback_LoadGgpoState->setEnabled(false);
+    RollbackDebugFreeState(this->ui_RollbackDebugState);
+    this->action_Rollback_LoadState->setEnabled(false);
 
-    if (!rmgk_ggpo::save_game_state(this->ui_RollbackDebugState, CoreGetCurrentFrameCount()))
+    if (!RollbackDebugSaveState(this->ui_RollbackDebugState, CoreGetCurrentFrameCount()))
     {
-        this->showErrorMessage("Save GGPO Rollback State Failed", QString::fromStdString(CoreGetError()));
+        this->showErrorMessage("Save Rollback State Failed", QString::fromStdString(CoreGetError()));
         return;
     }
 
-    this->action_Rollback_LoadGgpoState->setEnabled(true);
-    OnScreenDisplaySetMessage("Saved GGPO state: " + std::to_string(this->ui_RollbackDebugState.len) + " bytes");
+    this->action_Rollback_LoadState->setEnabled(true);
+    OnScreenDisplaySetMessage("Saved rollback state: " + std::to_string(this->ui_RollbackDebugState.len) + " bytes");
 }
 
-void MainWindow::on_Action_Rollback_LoadGgpoState(void)
+void MainWindow::on_Action_Rollback_LoadState(void)
 {
     if (this->ui_RollbackDebugState.buffer == nullptr)
     {
         return;
     }
 
-    if (!rmgk_ggpo::load_game_state(this->ui_RollbackDebugState))
+    if (!RollbackDebugLoadState(this->ui_RollbackDebugState))
     {
-        this->showErrorMessage("Load GGPO Rollback State Failed", QString::fromStdString(CoreGetError()));
+        this->showErrorMessage("Load Rollback State Failed", QString::fromStdString(CoreGetError()));
         return;
     }
 
-    OnScreenDisplaySetMessage("Loaded GGPO state from frame " + std::to_string(this->ui_RollbackDebugState.frame));
+    OnScreenDisplaySetMessage("Loaded rollback state from frame " + std::to_string(this->ui_RollbackDebugState.frame));
 }
 
 void MainWindow::on_Action_Rollback_StartDebugReplay(void)
@@ -4962,8 +5012,8 @@ void MainWindow::on_Action_Rollback_StartDebugReplay(void)
         return;
     }
 
-    rmgk_ggpo::free_buffer(g_RollbackDebugReplay.initialState);
-    rmgk_ggpo::free_buffer(g_RollbackDebugReplay.finalState);
+    RollbackDebugFreeState(g_RollbackDebugReplay.initialState);
+    RollbackDebugFreeState(g_RollbackDebugReplay.finalState);
     {
         std::lock_guard<std::mutex> lock(g_RollbackDebugReplay.mutex);
         g_RollbackDebugReplay.inputs.clear();
@@ -4991,21 +5041,19 @@ void MainWindow::on_Action_Rollback_StartDebugReplay(void)
         g_RollbackDebugReplay.mode = RollbackDebugReplayMode::Idle;
     }
 
-    if (!rmgk_ggpo::save_game_state(g_RollbackDebugReplay.initialState, CoreGetCurrentFrameCount()))
+    if (!RollbackDebugSaveState(g_RollbackDebugReplay.initialState, CoreGetCurrentFrameCount()))
     {
         this->showErrorMessage("Debug Replay Save Initial State Failed", QString::fromStdString(CoreGetError()));
         return;
     }
 
-    if (!rmgk_ggpo::set_deterministic(true))
+    if (!CoreRollbackSetDeterministic(true))
     {
         this->showErrorMessage("Debug Replay Deterministic Mode Failed", QString::fromStdString(CoreGetError()));
         return;
     }
 
-    rmgk_ggpo::SessionCallbacks callbacks = {};
-    callbacks.synchronize_input = RollbackDebugReplaySynchronizeInput;
-    if (!rmgk_ggpo::start_session(callbacks, nullptr))
+    if (!RollbackDebugStartSession())
     {
         this->showErrorMessage("Debug Replay Input Callback Failed", QString::fromStdString(CoreGetError()));
         return;
@@ -5019,9 +5067,9 @@ void MainWindow::on_Action_Rollback_StartDebugReplay(void)
     this->updateActions(true, true);
     this->setDebugReplayStatusMessage("Recording debug replay for " + std::to_string(kRollbackDebugReplayFrames) + " frames");
 
-    if (!rmgk_ggpo::advance_frames(kRollbackDebugReplayFrames, CoreFrameOutput_All))
+    if (!RollbackDebugAdvanceFrames(kRollbackDebugReplayFrames, CoreFrameOutput_All))
     {
-        rmgk_ggpo::close_session();
+        RollbackDebugCloseSession();
         {
             std::lock_guard<std::mutex> lock(g_RollbackDebugReplay.mutex);
             g_RollbackDebugReplay.mode = RollbackDebugReplayMode::Idle;
@@ -5047,11 +5095,11 @@ void MainWindow::on_Action_Rollback_StressDebugReplay(void)
     this->runStressDebugReplay();
 }
 
-void MainWindow::on_Action_Rollback_GgpoSynctestDebugReplay(void)
+void MainWindow::on_Action_Rollback_SynctestDebugReplay(void)
 {
     if (!CoreIsEmulationPaused())
     {
-        this->setDebugReplayStatusMessage("Pause emulation before running GGPO synctest");
+        this->setDebugReplayStatusMessage("Pause emulation before running rollback synctest");
         return;
     }
 
@@ -5059,7 +5107,7 @@ void MainWindow::on_Action_Rollback_GgpoSynctestDebugReplay(void)
     if (!LoadRollbackDebugReplayFile(replayFileError))
     {
         this->setDebugReplayStatusMessage("Could not load debug replay: " + replayFileError);
-        WriteRollbackDebugReplayEventLog("ggpo_synctest_load_failed", replayFileError);
+        WriteRollbackDebugReplayEventLog("rollback_synctest_load_failed", replayFileError);
         return;
     }
 
@@ -5088,24 +5136,21 @@ void MainWindow::on_Action_Rollback_GgpoSynctestDebugReplay(void)
         g_RollbackDebugReplay.verifyWithGraphics = false;
     }
 
-    if (!rmgk_ggpo::set_deterministic(true))
+    if (!CoreRollbackSetDeterministic(true))
     {
-        this->showErrorMessage("GGPO Synctest Deterministic Mode Failed", QString::fromStdString(CoreGetError()));
+        this->showErrorMessage("Rollback Synctest Deterministic Mode Failed", QString::fromStdString(CoreGetError()));
         return;
     }
 
-    if (!rmgk_ggpo::load_game_state(g_RollbackDebugReplay.initialState))
+    if (!RollbackDebugLoadState(g_RollbackDebugReplay.initialState))
     {
-        this->showErrorMessage("GGPO Synctest Load Initial State Failed", QString::fromStdString(CoreGetError()));
+        this->showErrorMessage("Rollback Synctest Load Initial State Failed", QString::fromStdString(CoreGetError()));
         return;
     }
 
-    rmgk_ggpo::SessionCallbacks callbacks = {};
-    callbacks.synchronize_input = RollbackDebugReplaySynchronizeInput;
-    if (!rmgk_ggpo::start_synctest(callbacks, nullptr, "rmgk-debug-replay",
-        kRollbackDebugReplayPlayers, static_cast<int>(sizeof(uint32_t)), kRollbackDebugStressRollbackFrames))
+    if (!RollbackDebugStartSession())
     {
-        this->showErrorMessage("GGPO Synctest Start Failed", QString::fromStdString(CoreGetError()));
+        this->showErrorMessage("Rollback Synctest Start Failed", QString::fromStdString(CoreGetError()));
         return;
     }
 
@@ -5115,31 +5160,31 @@ void MainWindow::on_Action_Rollback_GgpoSynctestDebugReplay(void)
     }
 
     this->updateActions(true, true);
-    this->setDebugReplayStatusMessage("Running GGPO synctest debug replay for " + std::to_string(kRollbackDebugReplayFrames) + " frames");
-    WriteRollbackDebugReplayEventLog("ggpo_synctest_started", "hidden");
+    this->setDebugReplayStatusMessage("Running rollback synctest debug replay for " + std::to_string(kRollbackDebugReplayFrames) + " frames");
+    WriteRollbackDebugReplayEventLog("rollback_synctest_started", "hidden");
 
-    if (!rmgk_ggpo::advance_frames(kRollbackDebugReplayFrames, CoreFrameOutput_None))
+    if (!RollbackDebugAdvanceFrames(kRollbackDebugReplayFrames, CoreFrameOutput_None))
     {
-        rmgk_ggpo::close_session();
+        RollbackDebugCloseSession();
         {
             std::lock_guard<std::mutex> lock(g_RollbackDebugReplay.mutex);
             g_RollbackDebugReplay.mode = RollbackDebugReplayMode::Idle;
         }
         this->updateActions(true, true);
-        this->showErrorMessage("GGPO Synctest Run Failed", QString::fromStdString(CoreGetError()));
+        this->showErrorMessage("Rollback Synctest Run Failed", QString::fromStdString(CoreGetError()));
         return;
     }
 
     CoreRollbackState finalState;
-    if (!rmgk_ggpo::save_game_state(finalState, CoreGetCurrentFrameCount()))
+    if (!RollbackDebugSaveState(finalState, CoreGetCurrentFrameCount()))
     {
-        rmgk_ggpo::close_session();
+        RollbackDebugCloseSession();
         {
             std::lock_guard<std::mutex> lock(g_RollbackDebugReplay.mutex);
             g_RollbackDebugReplay.mode = RollbackDebugReplayMode::Idle;
         }
         this->updateActions(true, true);
-        this->showErrorMessage("GGPO Synctest Save Final State Failed", QString::fromStdString(CoreGetError()));
+        this->showErrorMessage("Rollback Synctest Save Final State Failed", QString::fromStdString(CoreGetError()));
         return;
     }
 
@@ -5163,14 +5208,14 @@ void MainWindow::on_Action_Rollback_GgpoSynctestDebugReplay(void)
         g_RollbackDebugReplay.mode = RollbackDebugReplayMode::Idle;
     }
 
-    rmgk_ggpo::close_session();
+    RollbackDebugCloseSession();
     const bool matched = inputsMatched && finalHash == expectedHash;
-    WriteRollbackDebugReplayLog("ggpo_synctest_verify", matched, expectedHash, finalHash,
+    WriteRollbackDebugReplayLog("rollback_synctest_verify", matched, expectedHash, finalHash,
         recordedInputFrames, replayedInputFrames, expectedFinalState, finalState);
 
     if (matched)
     {
-        this->setDebugReplayStatusMessage("GGPO synctest replay matched: " + std::to_string(replayedInputFrames) +
+        this->setDebugReplayStatusMessage("Rollback synctest replay matched: " + std::to_string(replayedInputFrames) +
             " input frames, payload hash " + std::to_string(finalHash) + ", wrote " + kRollbackDebugReplayLogPath);
     }
     else
@@ -5178,7 +5223,7 @@ void MainWindow::on_Action_Rollback_GgpoSynctestDebugReplay(void)
         int expectedPayloadLen = 0;
         int actualPayloadLen = 0;
         const int firstDiff = FirstRollbackStatePayloadDifference(expectedFinalState, finalState, expectedPayloadLen, actualPayloadLen);
-        this->setDebugReplayStatusMessage("GGPO synctest replay mismatch: expected " + std::to_string(expectedHash) +
+        this->setDebugReplayStatusMessage("Rollback synctest replay mismatch: expected " + std::to_string(expectedHash) +
             ", got " + std::to_string(finalHash) + ", replayed " + std::to_string(replayedInputFrames) +
             "/" + std::to_string(recordedInputFrames) + " input frames, first payload diff " +
             std::to_string(firstDiff) + ", lens " + std::to_string(expectedPayloadLen) + "/" +
@@ -5229,20 +5274,20 @@ void MainWindow::startVerifyDebugReplay(bool withGraphics)
         g_RollbackDebugReplay.verifyWithGraphics = withGraphics;
     }
 
-    if (!rmgk_ggpo::set_deterministic(true))
+    if (!CoreRollbackSetDeterministic(true))
     {
         this->showErrorMessage("Debug Replay Deterministic Mode Failed", QString::fromStdString(CoreGetError()));
         return;
     }
 
-    if (!rmgk_ggpo::load_game_state(g_RollbackDebugReplay.initialState))
+    if (!RollbackDebugLoadState(g_RollbackDebugReplay.initialState))
     {
         this->showErrorMessage("Debug Replay Load Initial State Failed", QString::fromStdString(CoreGetError()));
         return;
     }
 
     CoreRollbackState loadedInitialState = {};
-    if (rmgk_ggpo::save_game_state(loadedInitialState, CoreGetCurrentFrameCount()))
+    if (RollbackDebugSaveState(loadedInitialState, CoreGetCurrentFrameCount()))
     {
         CoreRollbackState expectedInitialState;
         size_t recordedInputFrames;
@@ -5260,11 +5305,9 @@ void MainWindow::startVerifyDebugReplay(bool withGraphics)
             this->setDebugReplayStatusMessage("Debug replay initial load mismatch; wrote " + std::string(kRollbackDebugReplayLogPath));
         }
     }
-    rmgk_ggpo::free_buffer(loadedInitialState);
+    RollbackDebugFreeState(loadedInitialState);
 
-    rmgk_ggpo::SessionCallbacks callbacks = {};
-    callbacks.synchronize_input = RollbackDebugReplaySynchronizeInput;
-    if (!rmgk_ggpo::start_session(callbacks, nullptr))
+    if (!RollbackDebugStartSession())
     {
         this->showErrorMessage("Debug Replay Input Callback Failed", QString::fromStdString(CoreGetError()));
         return;
@@ -5287,9 +5330,9 @@ void MainWindow::startVerifyDebugReplay(bool withGraphics)
     }
     const int framesToRun = recordedFrameHashes == static_cast<size_t>(kRollbackDebugReplayFrames) ? 1 : kRollbackDebugReplayFrames;
 
-    if (!rmgk_ggpo::advance_frames(framesToRun, withGraphics ? CoreFrameOutput_All : CoreFrameOutput_None))
+    if (!RollbackDebugAdvanceFrames(framesToRun, withGraphics ? CoreFrameOutput_All : CoreFrameOutput_None))
     {
-        rmgk_ggpo::close_session();
+        RollbackDebugCloseSession();
         {
             std::lock_guard<std::mutex> lock(g_RollbackDebugReplay.mutex);
             g_RollbackDebugReplay.mode = RollbackDebugReplayMode::Idle;
@@ -5340,20 +5383,20 @@ void MainWindow::runStressDebugReplay(void)
         g_RollbackDebugReplay.verifyWithGraphics = false;
     }
 
-    if (!rmgk_ggpo::set_deterministic(true))
+    if (!CoreRollbackSetDeterministic(true))
     {
         this->showErrorMessage("Rollback Stress Deterministic Mode Failed", QString::fromStdString(CoreGetError()));
         return;
     }
 
-    if (!rmgk_ggpo::load_game_state(g_RollbackDebugReplay.initialState))
+    if (!RollbackDebugLoadState(g_RollbackDebugReplay.initialState))
     {
         this->showErrorMessage("Rollback Stress Load Initial State Failed", QString::fromStdString(CoreGetError()));
         return;
     }
 
     CoreRollbackState loadedInitialState = {};
-    if (rmgk_ggpo::save_game_state(loadedInitialState, CoreGetCurrentFrameCount()))
+    if (RollbackDebugSaveState(loadedInitialState, CoreGetCurrentFrameCount()))
     {
         CoreRollbackState expectedInitialState;
         size_t recordedInputFrames;
@@ -5368,12 +5411,12 @@ void MainWindow::runStressDebugReplay(void)
             expectedInitialHash, loadedInitialHash, recordedInputFrames, 0, expectedInitialState, loadedInitialState);
         if (expectedInitialHash != loadedInitialHash)
         {
-            rmgk_ggpo::free_buffer(loadedInitialState);
+            RollbackDebugFreeState(loadedInitialState);
             this->setDebugReplayStatusMessage("Rollback stress initial load mismatch; wrote " + std::string(kRollbackDebugReplayLogPath));
             return;
         }
     }
-    rmgk_ggpo::free_buffer(loadedInitialState);
+    RollbackDebugFreeState(loadedInitialState);
 
     FreeRollbackDebugStressCheckpoints();
     if (!SaveRollbackDebugStressCheckpoint(0))
@@ -5382,9 +5425,7 @@ void MainWindow::runStressDebugReplay(void)
         return;
     }
 
-    rmgk_ggpo::SessionCallbacks callbacks = {};
-    callbacks.synchronize_input = RollbackDebugReplaySynchronizeInput;
-    if (!rmgk_ggpo::start_session(callbacks, nullptr))
+    if (!RollbackDebugStartSession())
     {
         FreeRollbackDebugStressCheckpoints();
         this->showErrorMessage("Rollback Stress Input Callback Failed", QString::fromStdString(CoreGetError()));
@@ -5405,9 +5446,9 @@ void MainWindow::runStressDebugReplay(void)
         g_RollbackDebugReplay.verifyInputIndex = 0;
         g_RollbackDebugReplay.countReplayInputHash = true;
     }
-    if (!rmgk_ggpo::advance_frame(CoreFrameOutput_All))
+    if (!RollbackDebugAdvanceFrame(CoreFrameOutput_All))
     {
-        rmgk_ggpo::close_session();
+        RollbackDebugCloseSession();
         WriteRollbackDebugReplayEventLog("stress_failed", CoreGetError());
         {
             std::lock_guard<std::mutex> lock(g_RollbackDebugReplay.mutex);
@@ -5424,7 +5465,7 @@ void MainWindow::continueStressDebugReplay(void)
 {
     auto failStressReplay = [this](const std::string& error)
     {
-        rmgk_ggpo::close_session();
+        RollbackDebugCloseSession();
         WriteRollbackDebugReplayEventLog("stress_failed", error);
         {
             std::lock_guard<std::mutex> lock(g_RollbackDebugReplay.mutex);
@@ -5472,8 +5513,8 @@ void MainWindow::continueStressDebugReplay(void)
     if (frame >= kRollbackDebugReplayFrames)
     {
         CoreRollbackState finalState = {};
-        rmgk_ggpo::close_session();
-        if (!rmgk_ggpo::save_game_state(finalState, CoreGetCurrentFrameCount()))
+        RollbackDebugCloseSession();
+        if (!RollbackDebugSaveState(finalState, CoreGetCurrentFrameCount()))
         {
             failStressReplay(CoreGetError());
             return;
@@ -5520,7 +5561,7 @@ void MainWindow::continueStressDebugReplay(void)
                 ", got " + std::to_string(finalHash) + ", first payload diff " + std::to_string(firstDiff) +
                 ", wrote " + kRollbackDebugReplayLogPath);
         }
-        rmgk_ggpo::free_buffer(finalState);
+        RollbackDebugFreeState(finalState);
         return;
     }
 
@@ -5533,7 +5574,7 @@ void MainWindow::continueStressDebugReplay(void)
             failStressReplay("rollback checkpoint was missing");
             return;
         }
-        if (!rmgk_ggpo::load_game_state(checkpoint))
+        if (!RollbackDebugLoadState(checkpoint))
         {
             failStressReplay(CoreGetError());
             return;
@@ -5548,7 +5589,7 @@ void MainWindow::continueStressDebugReplay(void)
             g_RollbackDebugReplay.stressResimulating = true;
             g_RollbackDebugReplay.stressResumeFrame = frame;
         }
-        if (!rmgk_ggpo::advance_frames(kRollbackDebugStressRollbackFrames, CoreFrameOutput_None))
+        if (!RollbackDebugAdvanceFrames(kRollbackDebugStressRollbackFrames, CoreFrameOutput_None))
         {
             failStressReplay(CoreGetError());
         }
@@ -5566,7 +5607,7 @@ void MainWindow::continueStressDebugReplay(void)
         this->setDebugReplayStatusMessage("Rollback stress with graphics: " + std::to_string(frame) +
             "/" + std::to_string(kRollbackDebugReplayFrames) + " frames");
     }
-    if (!rmgk_ggpo::advance_frame(CoreFrameOutput_All))
+    if (!RollbackDebugAdvanceFrame(CoreFrameOutput_All))
     {
         failStressReplay(CoreGetError());
     }

@@ -159,14 +159,14 @@
     <property name="title">
      <string>Rollback</string>
     </property>
-    <addaction name="action_Rollback_SaveGgpoState"/>
-    <addaction name="action_Rollback_LoadGgpoState"/>
+    <addaction name="action_Rollback_SaveState"/>
+    <addaction name="action_Rollback_LoadState"/>
     <addaction name="separator"/>
     <addaction name="action_Rollback_StartDebugReplay"/>
     <addaction name="action_Rollback_VerifyDebugReplay"/>
     <addaction name="action_Rollback_VerifyDebugReplayWithGraphics"/>
     <addaction name="action_Rollback_StressDebugReplay"/>
-    <addaction name="action_Rollback_GgpoSynctestDebugReplay"/>
+    <addaction name="action_Rollback_SynctestDebugReplay"/>
    </widget>
    <addaction name="menuSystem"/>
    <addaction name="menuSettings"/>
@@ -663,20 +663,20 @@
     <string>Search</string>
    </property>
   </action>
-  <action name="action_Rollback_SaveGgpoState">
+  <action name="action_Rollback_SaveState">
    <property name="icon">
     <iconset theme="save-3-line"/>
    </property>
    <property name="text">
-    <string>&amp;Save GGPO State</string>
+    <string>&amp;Save Rollback State</string>
    </property>
   </action>
-  <action name="action_Rollback_LoadGgpoState">
+  <action name="action_Rollback_LoadState">
    <property name="icon">
     <iconset theme="folder-open-line"/>
    </property>
    <property name="text">
-    <string>&amp;Load GGPO State</string>
+    <string>&amp;Load Rollback State</string>
    </property>
   </action>
   <action name="action_Rollback_StartDebugReplay">
@@ -711,12 +711,12 @@
     <string>Stress Debug Replay (Rollback 5 Every 10)</string>
    </property>
   </action>
-  <action name="action_Rollback_GgpoSynctestDebugReplay">
+  <action name="action_Rollback_SynctestDebugReplay">
    <property name="icon">
     <iconset theme="pulse-line"/>
    </property>
    <property name="text">
-    <string>GGPO Synctest Debug Replay</string>
+    <string>Rollback Synctest Debug Replay</string>
    </property>
   </action>
  </widget>

@@ -246,13 +246,13 @@ class MainWindow : public QMainWindow, private Ui::MainWindow
     void on_Action_System_GSButton(void);
     void on_Action_System_Exit(void);
 
-    void on_Action_Rollback_SaveGgpoState(void);
-    void on_Action_Rollback_LoadGgpoState(void);
+    void on_Action_Rollback_SaveState(void);
+    void on_Action_Rollback_LoadState(void);
     void on_Action_Rollback_StartDebugReplay(void);
     void on_Action_Rollback_VerifyDebugReplay(void);
     void on_Action_Rollback_VerifyDebugReplayWithGraphics(void);
     void on_Action_Rollback_StressDebugReplay(void);
-    void on_Action_Rollback_GgpoSynctestDebugReplay(void);
+    void on_Action_Rollback_SynctestDebugReplay(void);
 
     void on_Action_Settings_Graphics(void);
     void on_Action_Settings_Audio(void);

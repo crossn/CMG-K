@@ -34,7 +34,7 @@ set(RMG_CORE_SOURCES
     Emulation.cpp
     SaveState.cpp
     RollbackNetcode.cpp
-    rmgk_ggpo.cpp
+    rmgk_gekko.cpp
     Callback.cpp
     Settings.cpp
     Archive.cpp
@@ -65,12 +65,9 @@ endif(PORTABLE_INSTALL)
 
 add_library(RMG-Core SHARED ${RMG_CORE_SOURCES})
 
-if(TARGET GGPO)
-    target_compile_definitions(RMG-Core PRIVATE RMGK_HAVE_GGPO)
-    target_link_libraries(RMG-Core PRIVATE GGPO)
-    if(WIN32)
-        target_link_libraries(RMG-Core PRIVATE winmm ws2_32)
-    endif()
+if(TARGET GekkoNet)
+    target_compile_definitions(RMG-Core PRIVATE RMGK_HAVE_GEKKONET)
+    target_link_libraries(RMG-Core PRIVATE GekkoNet)
 endif()
 
 if(UNIX)

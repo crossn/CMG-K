@@ -1947,7 +1947,7 @@ QWidget* KailleraNetplayDialog::createRollbackTab()
     {
         static_cast<SearchableComboBox*>(m_rollbackGameCombo)->setDisplayTextInset(4);
     }
-    m_rollbackGameCombo->setToolTip("Choose the ROM to host with GGPO rollback");
+    m_rollbackGameCombo->setToolTip("Choose the ROM to host with GekkoNet rollback");
     gameLayout->addWidget(m_rollbackGameCombo, 1);
     hostBodyLayout->addLayout(gameLayout);
 
@@ -2038,7 +2038,7 @@ QWidget* KailleraNetplayDialog::createRollbackTab()
 
     auto* note = new QLabel(
         "Host creates a waiting rollback lobby. Connect joins by code or ip:port. "
-        "When both players are ready, the lobby hands the peer endpoint to GGPO and starts the game.",
+        "When both players are ready, the lobby hands the peer endpoint to GekkoNet and starts the game.",
         connectBody);
     note->setWordWrap(true);
     note->setObjectName("KailleraFieldLabel");

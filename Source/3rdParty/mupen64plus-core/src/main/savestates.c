@@ -75,7 +75,8 @@ enum { DD_DISK_ID_OFFSET = 0x43670 };
 
 static const char* savestate_magic = "M64+SAVE";
 static const int savestate_latest_version = 0x00020000;  /* 2.0 */
-static const int rollback_state_header_magic = 'GGPO';
+static const int rollback_state_header_magic = 'RLBK';
+static const int rollback_state_legacy_header_magic = ('G' << 24) | ('G' << 16) | ('P' << 8) | 'O';
 static const int rollback_state_header_size = 6 * sizeof(int);
 static const unsigned char pj64_magic[4] = { 0xC8, 0xA6, 0xD8, 0x23 };
 
@@ -251,8 +252,8 @@ static int savestates_load_m64p(struct device* dev, char *filepath)
 
     SDL_LockMutex(savestates_lock);
 
-    // Check if this is a GGPO-style rollback buffer load.
-    if (strcmp(filepath, "GGPO") == 0)
+    // Check if this is a rollback buffer load.
+    if (strcmp(filepath, "ROLLBACK") == 0)
     {
         int *rollback_header;
 
@@ -264,7 +265,7 @@ static int savestates_load_m64p(struct device* dev, char *filepath)
         }
 
         rollback_header = (int *)rollback_load_buffer;
-        if (rollback_header[0] == rollback_state_header_magic)
+        if (rollback_header[0] == rollback_state_header_magic || rollback_header[0] == rollback_state_legacy_header_magic)
         {
             int header_size = rollback_header[1];
             if (header_size < rollback_state_header_size || (size_t)(header_size + 44) > rollback_load_buffer_size)
@@ -1739,7 +1740,7 @@ static int savestates_save_m64p(const struct device* dev, char *filepath)
 
     save->filepath = strdup(filepath);
     memory_save = strcmp(filepath, "MEMORY") == 0;
-    rollback_buffer_save = strcmp(filepath, "GGPO") == 0;
+    rollback_buffer_save = strcmp(filepath, "ROLLBACK") == 0;
 
     if(autoinc_save_slot)
         savestates_inc_slot();
@@ -2491,7 +2492,7 @@ int savestates_save_rollback_buffer(unsigned char **buffer, int *len, int *check
     rollback_save_buffer_checksum = checksum;
     rollback_save_buffer_frame = frame;
 
-    result = savestates_save_m64p(dev, "GGPO");
+    result = savestates_save_m64p(dev, "ROLLBACK");
 
     rollback_save_buffer = NULL;
     rollback_save_buffer_len = NULL;
@@ -2510,7 +2511,7 @@ int savestates_load_rollback_buffer(unsigned char *buffer, int len)
 
     rollback_load_buffer = buffer;
     rollback_load_buffer_size = (size_t)len;
-    result = savestates_load_m64p(&g_dev, "GGPO");
+    result = savestates_load_m64p(&g_dev, "ROLLBACK");
     rollback_load_buffer = NULL;
     rollback_load_buffer_size = 0;
 
