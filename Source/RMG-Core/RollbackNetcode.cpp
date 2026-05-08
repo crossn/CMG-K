@@ -85,6 +85,31 @@ CORE_EXPORT bool CoreRollbackAdvanceFrame(void)
     return CoreRunFrames(1, CoreFrameOutput_None);
 }
 
+CORE_EXPORT bool CoreRollbackSampleInput(void* values, int size, int players)
+{
+    std::string error;
+    m64p_error ret;
+    m64p_rollback_input_sample sample = {};
+
+    if (!m64p::Core.IsHooked())
+    {
+        return false;
+    }
+
+    sample.values = values;
+    sample.size = size;
+    sample.players = players;
+    ret = m64p::Core.DoCommand(M64CMD_ROLLBACK_SAMPLE_INPUT, 0, &sample);
+    if (ret != M64ERR_SUCCESS)
+    {
+        error = "CoreRollbackSampleInput DoCommand(M64CMD_ROLLBACK_SAMPLE_INPUT) Failed: ";
+        error += m64p::Core.ErrorMessage(ret);
+        CoreSetError(error);
+    }
+
+    return ret == M64ERR_SUCCESS;
+}
+
 CORE_EXPORT bool CoreRollbackSetInputCallback(CoreRollbackInputCallback callback)
 {
     std::string error;

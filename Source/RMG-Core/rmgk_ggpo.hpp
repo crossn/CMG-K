@@ -27,6 +27,8 @@ class rmgk_ggpo
 
     static bool start_session(const SessionCallbacks& callbacks, void* userData);
     static bool start_synctest(const SessionCallbacks& callbacks, void* userData, const char* gameName, int players, int inputSize, int checkDistance);
+    static bool start_p2p_session(const SessionCallbacks& callbacks, void* userData, const char* gameName, int players, int inputSize,
+        int localPlayer, unsigned short localPort, const char* remoteIp, unsigned short remotePort, int frameDelay);
     static void close_session();
     static bool idle(int timeoutMs);
     static bool is_session_running();

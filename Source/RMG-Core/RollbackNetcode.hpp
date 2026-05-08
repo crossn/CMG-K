@@ -24,6 +24,7 @@ bool CoreRollbackSaveGameState(CoreRollbackState& state, int frame);
 bool CoreRollbackLoadGameState(const CoreRollbackState& state);
 void CoreRollbackFreeGameState(CoreRollbackState& state);
 bool CoreRollbackAdvanceFrame(void);
+bool CoreRollbackSampleInput(void* values, int size, int players);
 bool CoreRollbackSetInputCallback(CoreRollbackInputCallback callback);
 bool CoreRollbackSetDeterministic(bool enabled);
 

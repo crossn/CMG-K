@@ -59,6 +59,39 @@ static int l_ROMOpen = 0;
 static int l_DiskOpen = 0;
 static int l_CallerUsingSDL = 0;
 
+static uint32_t rollback_sample_input_value(BUTTONS keys)
+{
+    const uint8_t* bytes = (const uint8_t*)&keys.Value;
+    return ((uint32_t)bytes[0] << 24)
+        | ((uint32_t)bytes[1] << 16)
+        | ((uint32_t)bytes[2] << 8)
+        | (uint32_t)bytes[3];
+}
+
+static m64p_error rollback_sample_input(m64p_rollback_input_sample* sample)
+{
+    int i;
+    uint32_t* values;
+
+    if (sample == NULL || sample->values == NULL)
+        return M64ERR_INPUT_ASSERT;
+    if (sample->size != (int)sizeof(uint32_t) || sample->players < 1 || sample->players > 4)
+        return M64ERR_INPUT_INVALID;
+    if (input.getKeys == NULL)
+        return M64ERR_INVALID_STATE;
+
+    values = (uint32_t*)sample->values;
+    for (i = 0; i < sample->players; ++i)
+    {
+        BUTTONS keys;
+        memset(&keys, 0, sizeof(keys));
+        input.getKeys(i, &keys);
+        values[i] = rollback_sample_input_value(keys);
+    }
+
+    return M64ERR_SUCCESS;
+}
+
 /* functions exported outside of libmupen64plus to front-end application */
 EXPORT m64p_error CALL CoreStartup(int APIVersion, const char *ConfigPath, const char *DataPath, void *Context,
                                    void (*DebugCallback)(void *, int, const char *), void *Context2,
@@ -383,6 +416,8 @@ EXPORT m64p_error CALL CoreDoCommand(m64p_command Command, int ParamInt, void *P
         case M64CMD_ROLLBACK_SET_DETERMINISTIC:
             g_dev.r4300.randomize_interrupt = ParamInt ? 0 : ConfigGetParamBool(g_CoreConfig, "RandomizeInterrupt");
             return M64ERR_SUCCESS;
+        case M64CMD_ROLLBACK_SAMPLE_INPUT:
+            return rollback_sample_input((m64p_rollback_input_sample*)ParamPtr);
         case M64CMD_FRAME_OUTPUT_SET:
             main_set_frame_output(
                 (ParamInt & M64FRAME_OUTPUT_VIDEO) != 0,

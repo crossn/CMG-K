@@ -67,6 +67,10 @@ private slots:
     void onCopyP2PCode();
     void onConfigureP2PCode();
 
+    // Rollback tab
+    void onRollbackHost();
+    void onRollbackJoin();
+
     // Network replies
     void onWaitingGamesReply(QNetworkReply* reply);
 
@@ -77,6 +81,7 @@ private:
     void setupUI();
     QWidget* createServerTab();
     QWidget* createP2PTab();
+    QWidget* createRollbackTab();
 
     void loadServerList();
     void saveServerList();
@@ -150,6 +155,14 @@ private:
     QPushButton* m_btnP2PJoin = nullptr;
     QListWidget* m_p2pStoredList = nullptr;
     QPushButton* m_btnP2PWaitingGames = nullptr;
+
+    // Rollback host/connect controls
+    QComboBox* m_rollbackGameCombo = nullptr;
+    QLineEdit* m_rollbackHostEdit = nullptr;
+    QLineEdit* m_rollbackPortEdit = nullptr;
+    QLineEdit* m_rollbackFrameDelayEdit = nullptr;
+    QPushButton* m_btnRollbackHost = nullptr;
+    QPushButton* m_btnRollbackJoin = nullptr;
 
     struct P2PStoredEntry {
         QString name;

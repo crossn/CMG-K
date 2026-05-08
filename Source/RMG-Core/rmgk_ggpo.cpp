@@ -32,6 +32,9 @@ GGPOSession* g_GgpoSession = nullptr;
 int g_GgpoPlayers = 0;
 int g_GgpoInputSize = 0;
 bool g_GgpoInAdvanceCallback = false;
+bool g_GgpoAggregateLocalInput = false;
+int g_GgpoLocalPlayer = 0;
+GGPOPlayerHandle g_GgpoLocalPlayerHandle = GGPO_INVALID_HANDLE;
 std::vector<uint32_t> g_GgpoLatchedInput;
 bool g_GgpoHasLatchedInput = false;
 #endif
@@ -101,13 +104,34 @@ bool add_local_input_for_next_frame()
     }
 
     std::vector<uint32_t> input(ggpo_input_words());
-    if (g_SessionCallbacks.synchronize_input != nullptr &&
-        !g_SessionCallbacks.synchronize_input(input.data(), g_GgpoInputSize, g_GgpoPlayers, g_SessionUserData))
+    if (g_SessionCallbacks.synchronize_input != nullptr)
+    {
+        if (!g_SessionCallbacks.synchronize_input(input.data(), g_GgpoInputSize, g_GgpoPlayers, g_SessionUserData))
+        {
+            return false;
+        }
+    }
+    else if (!CoreRollbackSampleInput(input.data(), g_GgpoInputSize, g_GgpoPlayers))
     {
         return false;
     }
 
-    return GGPO_SUCCEEDED(ggpo_add_local_input(g_GgpoSession, 0, input.data(), ggpo_input_bytes()));
+    if (g_GgpoAggregateLocalInput)
+    {
+        return GGPO_SUCCEEDED(ggpo_add_local_input(g_GgpoSession, g_GgpoLocalPlayerHandle, input.data(), ggpo_input_bytes()));
+    }
+
+    if (g_GgpoLocalPlayer < 1 || g_GgpoLocalPlayer > g_GgpoPlayers)
+    {
+        return false;
+    }
+
+    auto* inputBytes = reinterpret_cast<unsigned char*>(input.data());
+    return GGPO_SUCCEEDED(ggpo_add_local_input(
+        g_GgpoSession,
+        g_GgpoLocalPlayerHandle,
+        inputBytes + ((g_GgpoLocalPlayer - 1) * g_GgpoInputSize),
+        g_GgpoInputSize));
 }
 
 bool prepare_forward_frame_input()
@@ -244,6 +268,8 @@ CORE_EXPORT bool rmgk_ggpo::start_synctest(const SessionCallbacks& callbacks, vo
     g_SessionUserData = userData;
     g_GgpoPlayers = players;
     g_GgpoInputSize = inputSize;
+    g_GgpoAggregateLocalInput = true;
+    g_GgpoLocalPlayer = 1;
 
     GGPOSessionCallbacks ggpoCallbacks = make_ggpo_callbacks();
     std::string mutableGameName = gameName;
@@ -254,8 +280,105 @@ CORE_EXPORT bool rmgk_ggpo::start_synctest(const SessionCallbacks& callbacks, vo
         g_SessionUserData = nullptr;
         g_GgpoPlayers = 0;
         g_GgpoInputSize = 0;
+        g_GgpoAggregateLocalInput = false;
+        g_GgpoLocalPlayer = 0;
         return false;
     }
+    g_GgpoLocalPlayerHandle = 0;
+
+    g_SessionRunning = true;
+    if (!install_core_input_callback())
+    {
+        close_session();
+        return false;
+    }
+
+    return idle(0);
+#endif
+}
+
+CORE_EXPORT bool rmgk_ggpo::start_p2p_session(const SessionCallbacks& callbacks, void* userData, const char* gameName, int players, int inputSize,
+    int localPlayer, unsigned short localPort, const char* remoteIp, unsigned short remotePort, int frameDelay)
+{
+#ifndef RMGK_HAVE_GGPO
+    (void)callbacks;
+    (void)userData;
+    (void)gameName;
+    (void)players;
+    (void)inputSize;
+    (void)localPlayer;
+    (void)localPort;
+    (void)remoteIp;
+    (void)remotePort;
+    (void)frameDelay;
+    return false;
+#else
+    close_session();
+
+    if (gameName == nullptr || players < 2 || inputSize < 1 || localPlayer < 1 || localPlayer > players ||
+        remoteIp == nullptr || remoteIp[0] == '\0' || remotePort == 0)
+    {
+        return false;
+    }
+
+    g_SessionCallbacks = callbacks;
+    g_SessionUserData = userData;
+    g_GgpoPlayers = players;
+    g_GgpoInputSize = inputSize;
+    g_GgpoAggregateLocalInput = false;
+    g_GgpoLocalPlayer = localPlayer;
+
+    GGPOSessionCallbacks ggpoCallbacks = make_ggpo_callbacks();
+    std::string mutableGameName = gameName;
+    if (!GGPO_SUCCEEDED(ggpo_start_session(&g_GgpoSession, &ggpoCallbacks, mutableGameName.data(), players, inputSize, localPort)))
+    {
+        close_session();
+        return false;
+    }
+
+    for (int player = 1; player <= players; player++)
+    {
+        GGPOPlayer ggpoPlayer = {};
+        ggpoPlayer.size = sizeof(GGPOPlayer);
+        ggpoPlayer.player_num = player;
+        if (player == localPlayer)
+        {
+            ggpoPlayer.type = GGPO_PLAYERTYPE_LOCAL;
+        }
+        else
+        {
+            ggpoPlayer.type = GGPO_PLAYERTYPE_REMOTE;
+            std::strncpy(ggpoPlayer.u.remote.ip_address, remoteIp, sizeof(ggpoPlayer.u.remote.ip_address) - 1);
+            ggpoPlayer.u.remote.ip_address[sizeof(ggpoPlayer.u.remote.ip_address) - 1] = '\0';
+            ggpoPlayer.u.remote.port = remotePort;
+        }
+
+        GGPOPlayerHandle handle = GGPO_INVALID_HANDLE;
+        if (!GGPO_SUCCEEDED(ggpo_add_player(g_GgpoSession, &ggpoPlayer, &handle)))
+        {
+            close_session();
+            return false;
+        }
+
+        if (player == localPlayer)
+        {
+            g_GgpoLocalPlayerHandle = handle;
+            if (!GGPO_SUCCEEDED(ggpo_set_frame_delay(g_GgpoSession, handle, frameDelay)))
+            {
+                close_session();
+                return false;
+            }
+        }
+    }
+
+    if (g_GgpoLocalPlayerHandle == GGPO_INVALID_HANDLE)
+    {
+        close_session();
+        return false;
+    }
+
+    ggpo_set_disconnect_timeout(g_GgpoSession, 3000);
+    ggpo_set_disconnect_notify_start(g_GgpoSession, 1000);
 
     g_SessionRunning = true;
     if (!install_core_input_callback())
@@ -278,6 +401,9 @@ CORE_EXPORT void rmgk_ggpo::close_session()
         g_GgpoPlayers = 0;
         g_GgpoInputSize = 0;
         g_GgpoInAdvanceCallback = false;
+        g_GgpoAggregateLocalInput = false;
+        g_GgpoLocalPlayer = 0;
+        g_GgpoLocalPlayerHandle = GGPO_INVALID_HANDLE;
         g_GgpoLatchedInput.clear();
         g_GgpoHasLatchedInput = false;
     }

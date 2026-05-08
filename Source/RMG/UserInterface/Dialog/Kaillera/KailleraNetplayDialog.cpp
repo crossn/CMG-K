@@ -1526,6 +1526,7 @@ void KailleraNetplayDialog::setupUI()
     }
     m_tabWidget->addTab(createServerTab(), "Server");
     m_tabWidget->addTab(createP2PTab(), "Peer to Peer");
+    m_tabWidget->addTab(createRollbackTab(), "Rollback");
     connect(m_tabWidget, &QTabWidget::currentChanged, this, &KailleraNetplayDialog::onTabChanged);
     mainLayout->addWidget(m_tabWidget, 1);
 }
@@ -1914,6 +1915,144 @@ QWidget* KailleraNetplayDialog::createP2PTab()
     layout->addWidget(connectPane, 1);
 
     refreshP2PStaticCodeDisplay();
+
+    return tab;
+}
+
+QWidget* KailleraNetplayDialog::createRollbackTab()
+{
+    auto* tab = new QWidget();
+    auto* layout = new QVBoxLayout(tab);
+    layout->setContentsMargins(12, 12, 12, 12);
+    layout->setSpacing(10);
+
+    const QString theme = QString::fromStdString(CoreSettingsGetStringValue(SettingsID::GUI_Theme));
+
+    QVBoxLayout* hostLayout = nullptr;
+    auto* hostPane = createLauncherSectionPane(theme, tab, "Host Rollback Session", &hostLayout);
+    auto* hostBody = new QWidget(hostPane);
+    auto* hostBodyLayout = new QVBoxLayout(hostBody);
+    hostBodyLayout->setContentsMargins(0, 0, 0, 0);
+    hostBodyLayout->setSpacing(10);
+
+    auto* gameLayout = new QHBoxLayout();
+    auto* gameLabel = new QLabel("ROM:", hostBody);
+    gameLabel->setObjectName("KailleraFieldLabel");
+    gameLayout->addWidget(gameLabel);
+    m_rollbackGameCombo = new SearchableComboBox(hostBody);
+    m_rollbackGameCombo->setObjectName("KailleraInputCombo");
+    configureLauncherComboMetrics(m_rollbackGameCombo);
+    configureLauncherComboPopup(m_rollbackGameCombo, theme);
+    if (theme != "Modern")
+    {
+        static_cast<SearchableComboBox*>(m_rollbackGameCombo)->setDisplayTextInset(4);
+    }
+    m_rollbackGameCombo->setToolTip("Choose the ROM to host with GGPO rollback");
+    gameLayout->addWidget(m_rollbackGameCombo, 1);
+    hostBodyLayout->addLayout(gameLayout);
+
+    QStringList gameNames;
+    if (infos.gameList)
+    {
+        const char* p = infos.gameList;
+        while (*p)
+        {
+            gameNames.append(QString::fromUtf8(p));
+            p += strlen(p) + 1;
+        }
+    }
+    std::sort(gameNames.begin(), gameNames.end(), [](const QString& a, const QString& b) {
+        return QString::localeAwareCompare(a, b) < 0;
+    });
+    m_rollbackGameCombo->addItems(gameNames);
+
+    auto* hostOptionsLayout = new QHBoxLayout();
+    auto* portLabel = new QLabel("Port:", hostBody);
+    portLabel->setObjectName("KailleraFieldLabel");
+    hostOptionsLayout->addWidget(portLabel);
+    m_rollbackPortEdit = new QLineEdit(QString::number(CoreSettingsGetIntValue(SettingsID::Kaillera_Port)), hostBody);
+    m_rollbackPortEdit->setObjectName("KailleraInput");
+    m_rollbackPortEdit->setPlaceholderText("27886");
+    configureLauncherLineEditMetrics(m_rollbackPortEdit, theme);
+    m_rollbackPortEdit->setFixedWidth(90);
+    hostOptionsLayout->addWidget(m_rollbackPortEdit);
+
+    auto* delayLabel = new QLabel("Input Delay:", hostBody);
+    delayLabel->setObjectName("KailleraFieldLabel");
+    hostOptionsLayout->addWidget(delayLabel);
+    m_rollbackFrameDelayEdit = new QLineEdit("0", hostBody);
+    m_rollbackFrameDelayEdit->setObjectName("KailleraInput");
+    m_rollbackFrameDelayEdit->setPlaceholderText("0");
+    configureLauncherLineEditMetrics(m_rollbackFrameDelayEdit, theme);
+    m_rollbackFrameDelayEdit->setFixedWidth(70);
+    hostOptionsLayout->addWidget(m_rollbackFrameDelayEdit);
+    hostOptionsLayout->addStretch();
+
+    m_btnRollbackHost = new QPushButton("Host Rollback", hostBody);
+    m_btnRollbackHost->setObjectName("KailleraPrimaryButton");
+    configureLauncherButtonMetrics(m_btnRollbackHost);
+    configureLauncherAccentPalette(m_btnRollbackHost);
+    connect(m_btnRollbackHost, &QPushButton::clicked, this, &KailleraNetplayDialog::onRollbackHost);
+    hostOptionsLayout->addWidget(m_btnRollbackHost);
+    hostBodyLayout->addLayout(hostOptionsLayout);
+    hostLayout->addWidget(hostBody);
+    layout->addWidget(hostPane);
+
+    if (theme != "Modern")
+    {
+        auto* dividerRow = new QWidget(tab);
+        auto* dividerRowLayout = new QVBoxLayout(dividerRow);
+        dividerRowLayout->setContentsMargins(0, 6, 0, 6);
+        dividerRowLayout->setSpacing(0);
+        auto* divider = new QFrame(dividerRow);
+        divider->setObjectName("KailleraDivider");
+        divider->setFrameShape(QFrame::HLine);
+        divider->setFrameShadow(QFrame::Plain);
+        dividerRowLayout->addWidget(divider);
+        layout->addWidget(dividerRow);
+    }
+
+    QVBoxLayout* connectLayout = nullptr;
+    auto* connectPane = createLauncherSectionPane(theme, tab, "Connect to Rollback Session", &connectLayout);
+    auto* connectBody = new QWidget(connectPane);
+    auto* connectBodyLayout = new QVBoxLayout(connectBody);
+    connectBodyLayout->setContentsMargins(0, 0, 0, 0);
+    connectBodyLayout->setSpacing(10);
+
+    auto* addrLayout = new QHBoxLayout();
+    auto* addrLabel = new QLabel("IP/Port:", connectBody);
+    addrLabel->setObjectName("KailleraFieldLabel");
+    addrLayout->addWidget(addrLabel);
+    m_rollbackHostEdit = new QLineEdit(connectBody);
+    m_rollbackHostEdit->setObjectName("KailleraInput");
+    m_rollbackHostEdit->setPlaceholderText("ip:port");
+    configureLauncherLineEditMetrics(m_rollbackHostEdit, theme);
+    addrLayout->addWidget(m_rollbackHostEdit, 1);
+    m_btnRollbackJoin = new QPushButton("Connect", connectBody);
+    m_btnRollbackJoin->setObjectName("KailleraPrimaryButton");
+    configureLauncherButtonMetrics(m_btnRollbackJoin);
+    configureLauncherAccentPalette(m_btnRollbackJoin);
+    connect(m_btnRollbackJoin, &QPushButton::clicked, this, &KailleraNetplayDialog::onRollbackJoin);
+    addrLayout->addWidget(m_btnRollbackJoin);
+    connectBodyLayout->addLayout(addrLayout);
+
+    auto* note = new QLabel(
+        "GGPO rollback runtime is enabled, but live launch is guarded until frame-start local input sampling is wired. "
+        "PIF reads must stay side-effect-free like the passing synctest.",
+        connectBody);
+    note->setWordWrap(true);
+    note->setObjectName("KailleraFieldLabel");
+    connectBodyLayout->addWidget(note);
+
+    connectLayout->addWidget(connectBody);
+    layout->addWidget(connectPane);
+    layout->addStretch();
+
+    const int labelWidth = qMax(gameLabel->sizeHint().width(),
+        qMax(portLabel->sizeHint().width(), addrLabel->sizeHint().width()));
+    gameLabel->setFixedWidth(labelWidth);
+    portLabel->setFixedWidth(labelWidth);
+    addrLabel->setFixedWidth(labelWidth);
 
     return tab;
 }
@@ -3053,10 +3192,26 @@ void KailleraNetplayDialog::onStateMachineTimer()
 
 void KailleraNetplayDialog::onTabChanged(int index)
 {
-    // Tab order: 0=Server, 1=P2P
+    // Tab order: 0=Server, 1=P2P, 2=Rollback
     // n02 mode: 0=P2P, 1=Server
     int mode = (index == 1) ? 0 : 1;
     n02::activateMode(mode);
+}
+
+void KailleraNetplayDialog::onRollbackHost()
+{
+    QMessageBox::information(this, "Rollback Host",
+        "The GGPO session backend is present, but live rollback launch is intentionally guarded.\n\n"
+        "Next required piece: frame-start local controller sampling. "
+        "PIF polling must only read the GGPO-latched input, like the passing synctest.");
+}
+
+void KailleraNetplayDialog::onRollbackJoin()
+{
+    QMessageBox::information(this, "Rollback Connect",
+        "The GGPO session backend is present, but live rollback launch is intentionally guarded.\n\n"
+        "Next required piece: frame-start local controller sampling. "
+        "PIF polling must only read the GGPO-latched input, like the passing synctest.");
 }
 
 void KailleraNetplayDialog::onConfigureP2PCode()
