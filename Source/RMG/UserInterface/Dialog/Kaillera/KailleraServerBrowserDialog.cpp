@@ -2639,6 +2639,14 @@ void KailleraServerBrowserDialog::onUserGameJoined()
     switchToGameRoom();
     const QString color = infoMessageColor();
     m_gameChat->append("<span style='color:" + color + ";'>" + timestamp(color) + "You joined the game. Waiting for host to start...</span>");
+
+    QString joinMsg = QString::fromStdString(
+        CoreSettingsGetStringValue(SettingsID::Kaillera_JoinMessageJoin)).trimmed();
+    if (!joinMsg.isEmpty())
+    {
+        QByteArray msgBytes = joinMsg.toUtf8();
+        kaillera_game_chat_send(msgBytes.data());
+    }
 }
 
 void KailleraServerBrowserDialog::onUserGameClosed()

@@ -7,7 +7,7 @@ This fork is focused around netplay with the Kaillera protocol, supporting both 
 <p align="center"><a href='https://ko-fi.com/J3J21OOC74' target='_blank'><img height='36' style='border:0px;height:36px;' src='https://storage.ko-fi.com/cdn/kofi6.png?v=6' border='0' alt='Buy Me a Coffee at ko-fi.com' /></a></p>
 
 <p align="center">
-<img width="717" height="706" alt="image" src="https://github.com/user-attachments/assets/3cc981da-b9c1-4ed3-b9aa-ca081aa801a4" />
+<img width="962" height="860" alt="image" src="https://github.com/user-attachments/assets/adc7a1b3-0c4f-4d5d-9f88-79622e87f6ee" />
 </p>
 
 ## Netplay
@@ -26,9 +26,7 @@ This fork is focused around netplay with the Kaillera protocol, supporting both 
 - **Beep/flash on join**: Get notified when a player joins your game room
 - **Auto host message**: Configurable message sent to players joining your room
 
-#### Drop Actually Works!
-- Clicking Drop will stop emulation (if player 1 clicks drop, it will drop for all others in the room)
-- After all players drop, the room owner is able to restart emulation for everyone
+  <img width="283" height="38" alt="image" src="https://github.com/user-attachments/assets/6616186e-ab5d-4598-8b2c-4916d4a54dc4" />
 
 ### Peer-to-Peer (P2P) Mode
 
