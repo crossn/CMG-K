@@ -10,7 +10,7 @@
 #ifndef KAILLERANETPLAYDIALOG_HPP
 #define KAILLERANETPLAYDIALOG_HPP
 
-#ifdef _WIN32
+#ifdef NETPLAY
 
 #include <QDialog>
 #include <QAction>
@@ -186,5 +186,5 @@ private:
 
 };
 
-#endif // _WIN32
+#endif // NETPLAY
 #endif // KAILLERANETPLAYDIALOG_HPP

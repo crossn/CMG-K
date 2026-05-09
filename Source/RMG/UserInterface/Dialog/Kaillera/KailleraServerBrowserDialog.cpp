@@ -10,7 +10,7 @@
 #include "KailleraServerBrowserDialog.hpp"
 #include "KailleraTableStyle.hpp"
 
-#ifdef _WIN32
+#ifdef NETPLAY
 
 #include "../../KailleraUIBridge.hpp"
 #include "KailleraOptionsDialog.hpp"
@@ -41,7 +41,8 @@
 #include <QToolButton>
 #include <QListWidgetItem>
 #include <QMouseEvent>
-#include <windows.h>
+#include <QProxyStyle>
+#include <QStyle>
 
 namespace
 {
@@ -467,7 +468,7 @@ public:
 };
 
 KailleraServerBrowserDialog::KailleraServerBrowserDialog(const QString& serverName, QWidget* parent)
-    : QDialog(parent)
+    : QDialog(parent, Qt::Window)
     , m_serverName(serverName)
 {
     setWindowIcon(QIcon(":Resource/Kaillera.svg"));
@@ -2729,19 +2730,13 @@ void KailleraServerBrowserDialog::onPlayerJoined(QString name, int ping, unsigne
     // Beep on player join
     if (CoreSettingsGetBoolValue(SettingsID::Kaillera_BeepOnJoin))
     {
-        MessageBeep(MB_OK);
+        QApplication::beep();
     }
 
     // Flash taskbar if dialog not focused
     if (CoreSettingsGetBoolValue(SettingsID::Kaillera_FlashOnJoin) && !isActiveWindow())
     {
-        FLASHWINFO fwi = {};
-        fwi.cbSize = sizeof(fwi);
-        fwi.hwnd = reinterpret_cast<HWND>(winId());
-        fwi.dwFlags = FLASHW_TIMERNOFG | FLASHW_TRAY;
-        fwi.uCount = 0;
-        fwi.dwTimeout = 0;
-        FlashWindowEx(&fwi);
+        QApplication::alert(this);
     }
 }
 
@@ -3228,4 +3223,4 @@ void KailleraServerBrowserDialog::onStatsTimer()
 
 }
 
-#endif // _WIN32
+#endif // NETPLAY

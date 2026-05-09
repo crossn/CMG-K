@@ -10,7 +10,7 @@
 #ifndef KAILLERAP2PDIALOG_HPP
 #define KAILLERAP2PDIALOG_HPP
 
-#ifdef _WIN32
+#ifdef NETPLAY
 
 #include <QDialog>
 #include <QTextBrowser>
@@ -155,5 +155,5 @@ private:
     int m_travTimerStep = 0;
 };
 
-#endif // _WIN32
+#endif // NETPLAY
 #endif // KAILLERAP2PDIALOG_HPP

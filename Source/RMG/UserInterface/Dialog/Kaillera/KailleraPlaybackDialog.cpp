@@ -10,7 +10,7 @@
 #include "KailleraPlaybackDialog.hpp"
 #include "KailleraTableStyle.hpp"
 
-#ifdef _WIN32
+#ifdef NETPLAY
 
 #include <RMG-Core/Kaillera.hpp>
 #include <RMG-Core/Emulation.hpp>
@@ -540,4 +540,4 @@ void KailleraPlaybackDialog::onPlaybackDoubleClicked(int row, int column)
     }
 }
 
-#endif // _WIN32
+#endif // NETPLAY
