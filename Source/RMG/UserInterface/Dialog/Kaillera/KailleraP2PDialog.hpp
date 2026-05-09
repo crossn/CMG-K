@@ -65,6 +65,7 @@ private slots:
 private:
     void setupUI();
     void connectSignals();
+    void cleanupSessionForClose();
 
     // NAT traversal helpers
     void travSendToServer(const QByteArray& msg);
@@ -90,6 +91,7 @@ private:
     bool m_isHost;
     bool m_rollbackMode = false;
     bool m_detachedForRollback = false;
+    bool m_closeCleanupDone = false;
     bool m_ready = false;
     QString m_gameName;
     QString m_username;

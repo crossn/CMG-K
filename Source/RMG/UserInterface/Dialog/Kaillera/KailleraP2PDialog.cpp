@@ -443,8 +443,7 @@ KailleraP2PDialog::KailleraP2PDialog(bool isHost, const QString& gameName,
 
 KailleraP2PDialog::~KailleraP2PDialog()
 {
-    if (m_stepTimer)  m_stepTimer->stop();
-    if (m_travTimer)  m_travTimer->stop();
+    cleanupSessionForClose();
 }
 
 void KailleraP2PDialog::setupUI()
@@ -727,6 +726,17 @@ void KailleraP2PDialog::connectSignals()
 
 void KailleraP2PDialog::reject()
 {
+    cleanupSessionForClose();
+    QDialog::reject();
+}
+
+void KailleraP2PDialog::cleanupSessionForClose()
+{
+    if (m_closeCleanupDone)
+        return;
+
+    m_closeCleanupDone = true;
+
     if (m_stepTimer) m_stepTimer->stop();
     if (m_travTimer) m_travTimer->stop();
     m_ready = false;
@@ -744,8 +754,8 @@ void KailleraP2PDialog::reject()
         p2p_disconnect();
         p2p_core_cleanup();
     }
+
     travResetState();
-    QDialog::reject();
 }
 
 // ---- NAT traversal helpers ----
