@@ -8,7 +8,9 @@
  *  along with this program. If not, see <https://www.gnu.org/licenses/>.
  */
 #include <UserInterface/MainWindow.hpp>
+#if defined(_WIN32) && defined(NETPLAY)
 #include <Utilities/KailleraExport/KrecMp4Export.hpp>
+#endif
 
 #include <QCommandLineParser>
 #include <QApplication>
@@ -290,9 +292,14 @@ int main(int argc, char **argv)
     }
 #endif // PORTABLE_INSTALL
 
-    if (KailleraExport::IsReplayExportRequested(parser))
+    if (parser.isSet(exportKrecOption))
     {
+#if defined(_WIN32) && defined(NETPLAY)
         return KailleraExport::RunReplayExportFromCommandLine(parser);
+#else
+        std::cerr << "Replay export is only supported on Windows" << std::endl;
+        return 1;
+#endif
     }
 
     UserInterface::MainWindow window;
