@@ -286,6 +286,7 @@ int run_r4300_current(struct r4300_core* r4300)
 #ifdef NEW_DYNAREC
     if (r4300->emumode == EMUMODE_DYNAREC)
     {
+        main_rollback_capture_resume_probe();
         new_dyna_resume();
         return 1;
     }

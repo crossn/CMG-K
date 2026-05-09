@@ -21,17 +21,24 @@
 
 #define M64P_CORE_PROTOTYPES 1
 
-#include "interrupt.h"
-
 #ifdef __MINGW32__
 #define _CRT_RAND_S
 #endif
+
+#include "interrupt.h"
+
 #include <stdlib.h>
 
 #include <assert.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <string.h>
+
+#ifdef USE_SDL3
+#include <SDL3/SDL.h>
+#else
+#include <SDL.h>
+#endif
 
 #include "api/callbacks.h"
 #include "api/m64p_types.h"
@@ -54,6 +61,137 @@
 static struct node* alloc_node(struct pool* p);
 static void free_node(struct pool* p, struct node* node);
 static void clear_pool(struct pool* p);
+
+struct rollback_interrupt_stats
+{
+    uint64_t count;
+    uint64_t us;
+    uint64_t max_us;
+    uint32_t max_type;
+    uint64_t vi_count;
+    uint64_t vi_us;
+    uint64_t compare_count;
+    uint64_t compare_us;
+    uint64_t check_count;
+    uint64_t check_us;
+    uint64_t si_count;
+    uint64_t si_us;
+    uint64_t pi_count;
+    uint64_t pi_us;
+    uint64_t ai_count;
+    uint64_t ai_us;
+    uint64_t sp_count;
+    uint64_t sp_us;
+    uint64_t dp_count;
+    uint64_t dp_us;
+    uint64_t rsp_dma_count;
+    uint64_t rsp_dma_us;
+    uint64_t rsp_task_count;
+    uint64_t rsp_task_us;
+};
+
+static struct rollback_interrupt_stats l_RollbackInterruptStats;
+
+static uint64_t rollback_interrupt_now_us(void)
+{
+    uint64_t counter = SDL_GetPerformanceCounter();
+    uint64_t frequency = SDL_GetPerformanceFrequency();
+    return (counter / frequency) * 1000000ULL + ((counter % frequency) * 1000000ULL) / frequency;
+}
+
+void interrupt_rollback_stats_reset(void)
+{
+    memset(&l_RollbackInterruptStats, 0, sizeof(l_RollbackInterruptStats));
+}
+
+void interrupt_rollback_stats_fill(m64p_rollback_run_frame_stats* stats)
+{
+    if (stats == NULL)
+        return;
+
+    stats->interrupt_count = l_RollbackInterruptStats.count;
+    stats->interrupt_us = l_RollbackInterruptStats.us;
+    stats->interrupt_max_us = l_RollbackInterruptStats.max_us;
+    stats->interrupt_max_type = l_RollbackInterruptStats.max_type;
+    stats->interrupt_vi_count = l_RollbackInterruptStats.vi_count;
+    stats->interrupt_vi_us = l_RollbackInterruptStats.vi_us;
+    stats->interrupt_compare_count = l_RollbackInterruptStats.compare_count;
+    stats->interrupt_compare_us = l_RollbackInterruptStats.compare_us;
+    stats->interrupt_check_count = l_RollbackInterruptStats.check_count;
+    stats->interrupt_check_us = l_RollbackInterruptStats.check_us;
+    stats->interrupt_si_count = l_RollbackInterruptStats.si_count;
+    stats->interrupt_si_us = l_RollbackInterruptStats.si_us;
+    stats->interrupt_pi_count = l_RollbackInterruptStats.pi_count;
+    stats->interrupt_pi_us = l_RollbackInterruptStats.pi_us;
+    stats->interrupt_ai_count = l_RollbackInterruptStats.ai_count;
+    stats->interrupt_ai_us = l_RollbackInterruptStats.ai_us;
+    stats->interrupt_sp_count = l_RollbackInterruptStats.sp_count;
+    stats->interrupt_sp_us = l_RollbackInterruptStats.sp_us;
+    stats->interrupt_dp_count = l_RollbackInterruptStats.dp_count;
+    stats->interrupt_dp_us = l_RollbackInterruptStats.dp_us;
+    stats->interrupt_rsp_dma_count = l_RollbackInterruptStats.rsp_dma_count;
+    stats->interrupt_rsp_dma_us = l_RollbackInterruptStats.rsp_dma_us;
+    stats->interrupt_rsp_task_count = l_RollbackInterruptStats.rsp_task_count;
+    stats->interrupt_rsp_task_us = l_RollbackInterruptStats.rsp_task_us;
+}
+
+static void rollback_interrupt_record(int type, uint64_t elapsed_us)
+{
+    l_RollbackInterruptStats.count++;
+    l_RollbackInterruptStats.us += elapsed_us;
+
+    if (elapsed_us > l_RollbackInterruptStats.max_us)
+    {
+        l_RollbackInterruptStats.max_us = elapsed_us;
+        l_RollbackInterruptStats.max_type = (uint32_t)type;
+    }
+
+    switch (type)
+    {
+        case VI_INT:
+            l_RollbackInterruptStats.vi_count++;
+            l_RollbackInterruptStats.vi_us += elapsed_us;
+            break;
+        case COMPARE_INT:
+            l_RollbackInterruptStats.compare_count++;
+            l_RollbackInterruptStats.compare_us += elapsed_us;
+            break;
+        case CHECK_INT:
+            l_RollbackInterruptStats.check_count++;
+            l_RollbackInterruptStats.check_us += elapsed_us;
+            break;
+        case SI_INT:
+            l_RollbackInterruptStats.si_count++;
+            l_RollbackInterruptStats.si_us += elapsed_us;
+            break;
+        case PI_INT:
+            l_RollbackInterruptStats.pi_count++;
+            l_RollbackInterruptStats.pi_us += elapsed_us;
+            break;
+        case AI_INT:
+            l_RollbackInterruptStats.ai_count++;
+            l_RollbackInterruptStats.ai_us += elapsed_us;
+            break;
+        case SP_INT:
+            l_RollbackInterruptStats.sp_count++;
+            l_RollbackInterruptStats.sp_us += elapsed_us;
+            break;
+        case DP_INT:
+            l_RollbackInterruptStats.dp_count++;
+            l_RollbackInterruptStats.dp_us += elapsed_us;
+            break;
+        case RSP_DMA_EVT:
+            l_RollbackInterruptStats.rsp_dma_count++;
+            l_RollbackInterruptStats.rsp_dma_us += elapsed_us;
+            break;
+        case RSP_TSK_EVT:
+            l_RollbackInterruptStats.rsp_task_count++;
+            l_RollbackInterruptStats.rsp_task_us += elapsed_us;
+            break;
+        default:
+            break;
+    }
+}
 
 
 /* node allocation/deallocation on a given pool */
@@ -540,6 +678,8 @@ void gen_interrupt(struct r4300_core* r4300)
     uint32_t* cp0_regs = r4300_cp0_regs(&r4300->cp0);
     unsigned int* cp0_next_interrupt = r4300_cp0_next_interrupt(&r4300->cp0);
     int* cp0_cycle_count = r4300_cp0_cycle_count(&r4300->cp0);
+    int event_type;
+    uint64_t interrupt_begin;
 
     if (*r4300_stop(r4300) == 1)
     {
@@ -584,7 +724,10 @@ void gen_interrupt(struct r4300_core* r4300)
         return;
     }
 
-    switch (r4300->cp0.q.first->data.type)
+    event_type = r4300->cp0.q.first->data.type;
+    interrupt_begin = rollback_interrupt_now_us();
+
+    switch (event_type)
     {
         case VI_INT:
             call_interrupt_handler(&r4300->cp0, 0);
@@ -670,6 +813,8 @@ void gen_interrupt(struct r4300_core* r4300)
             exception_general(r4300);
             break;
     }
+
+    rollback_interrupt_record(event_type, rollback_interrupt_now_us() - interrupt_begin);
 
     if (!r4300->cp0.interrupt_unsafe_state)
     {

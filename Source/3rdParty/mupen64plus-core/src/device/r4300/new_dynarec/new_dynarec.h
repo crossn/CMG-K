@@ -44,6 +44,16 @@ struct new_dynarec_rollback_stats
     uint64_t full_invalidate_count;
     uint64_t range_invalidate_count;
     uint64_t block_invalidate_count;
+    uint64_t verify_dirty_count;
+    uint64_t verify_dirty_us;
+    uint64_t get_addr_count;
+    uint64_t get_addr_us;
+    uint64_t get_addr_ht_count;
+    uint64_t get_addr_32_count;
+    uint64_t dynamic_linker_count;
+    uint64_t dynamic_linker_us;
+    uint64_t dynamic_linker_ds_count;
+    uint64_t dynamic_linker_ds_us;
 };
 
 /* This struct contains "hot" variables used by the new_dynarec

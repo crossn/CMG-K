@@ -24,6 +24,8 @@
 
 #include <stdint.h>
 
+#include "api/m64p_types.h"
+
 struct r4300_core;
 struct cp0;
 struct interrupt_queue;
@@ -33,6 +35,8 @@ void init_interrupt(struct cp0* cp0);
 void raise_maskable_interrupt(struct r4300_core* r4300, uint32_t cause_ip);
 
 void gen_interrupt(struct r4300_core* r4300);
+void interrupt_rollback_stats_reset(void);
+void interrupt_rollback_stats_fill(m64p_rollback_run_frame_stats* stats);
 void r4300_check_interrupt(struct r4300_core* r4300, uint32_t cause_ip, int set_cause);
 
 void translate_event_queue(struct cp0* cp0, unsigned int base);

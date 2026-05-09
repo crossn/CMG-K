@@ -2366,6 +2366,8 @@ static void tlb_speed_hacks()
 /**** Linker ****/
 u_int verify_dirty(struct ll_entry * head)
 {
+  uint64_t rollback_begin = rollback_profile_now_us();
+  u_int result;
   void *source = NULL;
   if((int)head->start>=0xa0000000&&(int)head->start<0xa07fffff) {
     source=(void *)((uintptr_t)g_dev.rdram.dram+head->start-0xa0000000);
@@ -2378,12 +2380,20 @@ u_int verify_dirty(struct ll_entry * head)
     unsigned int page=head->start>>12;
     uintptr_t map_value=g_dev.r4300.new_dynarec_hot_state.memory_map[page];
 
-    if((intptr_t)map_value<(intptr_t)0)
-      return head->vaddr;
+    if((intptr_t)map_value<(intptr_t)0) {
+      result = head->vaddr;
+      rollback_stats.verify_dirty_count++;
+      rollback_stats.verify_dirty_us += rollback_profile_now_us() - rollback_begin;
+      return result;
+    }
 
     while(page<((head->start+head->length-1)>>12)) {
-      if((g_dev.r4300.new_dynarec_hot_state.memory_map[++page]<<2)!=(map_value<<2))
-        return head->vaddr;
+      if((g_dev.r4300.new_dynarec_hot_state.memory_map[++page]<<2)!=(map_value<<2)) {
+        result = head->vaddr;
+        rollback_stats.verify_dirty_count++;
+        rollback_stats.verify_dirty_us += rollback_profile_now_us() - rollback_begin;
+        return result;
+      }
     }
     source=(void*)(head->start+(map_value<<2));
   }
@@ -2391,9 +2401,12 @@ u_int verify_dirty(struct ll_entry * head)
     assert(0);
 
   if(memcmp(source,head->copy,head->length))
-    return head->vaddr;
+    result = head->vaddr;
   else
-    return 0;
+    result = 0;
+  rollback_stats.verify_dirty_count++;
+  rollback_stats.verify_dirty_us += rollback_profile_now_us() - rollback_begin;
+  return result;
 }
 
 // Add virtual address mapping for 32-bit compiled block
@@ -2560,8 +2573,17 @@ static struct ll_entry *get_dirty(struct r4300_core* r4300,u_int vaddr,u_int fla
   return NULL;
 }
 
+#define ROLLBACK_PROFILE_RETURN_PTR(count_field, us_field, value) \
+  do { \
+    void* rollback_profile_result = (value); \
+    rollback_stats.count_field++; \
+    rollback_stats.us_field += rollback_profile_now_us() - rollback_begin; \
+    return rollback_profile_result; \
+  } while (0)
+
 void *dynamic_linker(void * src, u_int vaddr)
 {
+  uint64_t rollback_begin = rollback_profile_now_us();
   assert((vaddr&1)==0);
   struct r4300_core* r4300 = &g_dev.r4300;
   struct ll_entry *head;
@@ -2579,20 +2601,24 @@ void *dynamic_linker(void * src, u_int vaddr)
 #else
     add_link(vaddr, add_pointer(src_rw,head->addr));
 #endif
-    return (void*)(((intptr_t)head->addr-(intptr_t)base_addr)+(intptr_t)base_addr_rx);
+    ROLLBACK_PROFILE_RETURN_PTR(dynamic_linker_count, dynamic_linker_us,
+      (void*)(((intptr_t)head->addr-(intptr_t)base_addr)+(intptr_t)base_addr_rx));
   }
 #endif
 
   struct ll_entry **ht_bin=hash_table[((vaddr>>16)^vaddr)&0xFFFF];
-  if(ht_bin[0]&&ht_bin[0]->vaddr==vaddr) return (void *)(((intptr_t)ht_bin[0]->addr-(intptr_t)base_addr)+(intptr_t)base_addr_rx);
-  if(ht_bin[1]&&ht_bin[1]->vaddr==vaddr) return (void *)(((intptr_t)ht_bin[1]->addr-(intptr_t)base_addr)+(intptr_t)base_addr_rx);
+  if(ht_bin[0]&&ht_bin[0]->vaddr==vaddr) ROLLBACK_PROFILE_RETURN_PTR(dynamic_linker_count, dynamic_linker_us,
+    (void *)(((intptr_t)ht_bin[0]->addr-(intptr_t)base_addr)+(intptr_t)base_addr_rx));
+  if(ht_bin[1]&&ht_bin[1]->vaddr==vaddr) ROLLBACK_PROFILE_RETURN_PTR(dynamic_linker_count, dynamic_linker_us,
+    (void *)(((intptr_t)ht_bin[1]->addr-(intptr_t)base_addr)+(intptr_t)base_addr_rx));
 
 #ifdef DISABLE_BLOCK_LINKING
   head=get_clean(r4300,vaddr,~0);
   if(head!=NULL){
     ht_bin[1]=ht_bin[0];
     ht_bin[0]=head;
-    return (void*)(((intptr_t)head->addr-(intptr_t)base_addr)+(intptr_t)base_addr_rx);
+    ROLLBACK_PROFILE_RETURN_PTR(dynamic_linker_count, dynamic_linker_us,
+      (void*)(((intptr_t)head->addr-(intptr_t)base_addr)+(intptr_t)base_addr_rx));
   }
 #endif
 
@@ -2606,21 +2632,23 @@ void *dynamic_linker(void * src, u_int vaddr)
       ht_bin[1]=ht_bin[0];
       ht_bin[0]=head;
     }
-    return (void*)(((intptr_t)head->clean_addr-(intptr_t)base_addr)+(intptr_t)base_addr_rx);
+    ROLLBACK_PROFILE_RETURN_PTR(dynamic_linker_count, dynamic_linker_us,
+      (void*)(((intptr_t)head->clean_addr-(intptr_t)base_addr)+(intptr_t)base_addr_rx));
   }
 
   int r=new_recompile_block(vaddr);
-  if(r==0) return dynamic_linker(src,vaddr);
+  if(r==0) ROLLBACK_PROFILE_RETURN_PTR(dynamic_linker_count, dynamic_linker_us, dynamic_linker(src,vaddr));
   // Execute in unmapped page, generate pagefault execption
   assert(r4300->cp0.tlb.LUT_r[(vaddr&~1) >> 12] == 0);
   assert((intptr_t)r4300->new_dynarec_hot_state.memory_map[(vaddr&~1) >> 12] < 0);
   r4300->delay_slot = vaddr&1;
   TLB_refill_exception(r4300, vaddr&~1, 2);
-  return get_addr_ht(r4300->new_dynarec_hot_state.pcaddr);
+  ROLLBACK_PROFILE_RETURN_PTR(dynamic_linker_count, dynamic_linker_us, get_addr_ht(r4300->new_dynarec_hot_state.pcaddr));
 }
 
 void *dynamic_linker_ds(void * src, u_int vaddr)
 {
+  uint64_t rollback_begin = rollback_profile_now_us();
   struct r4300_core* r4300 = &g_dev.r4300;
   struct ll_entry *head;
 
@@ -2637,20 +2665,24 @@ void *dynamic_linker_ds(void * src, u_int vaddr)
 #else
     add_link(vaddr, add_pointer(src_rw,head->addr));
 #endif
-    return (void*)(((intptr_t)head->addr-(intptr_t)base_addr)+(intptr_t)base_addr_rx);
+    ROLLBACK_PROFILE_RETURN_PTR(dynamic_linker_ds_count, dynamic_linker_ds_us,
+      (void*)(((intptr_t)head->addr-(intptr_t)base_addr)+(intptr_t)base_addr_rx));
   }
 #endif
 
   struct ll_entry **ht_bin=hash_table[((vaddr>>16)^vaddr)&0xFFFF];
-  if(ht_bin[0]&&ht_bin[0]->vaddr==vaddr) return (void *)(((intptr_t)ht_bin[0]->addr-(intptr_t)base_addr)+(intptr_t)base_addr_rx);
-  if(ht_bin[1]&&ht_bin[1]->vaddr==vaddr) return (void *)(((intptr_t)ht_bin[1]->addr-(intptr_t)base_addr)+(intptr_t)base_addr_rx);
+  if(ht_bin[0]&&ht_bin[0]->vaddr==vaddr) ROLLBACK_PROFILE_RETURN_PTR(dynamic_linker_ds_count, dynamic_linker_ds_us,
+    (void *)(((intptr_t)ht_bin[0]->addr-(intptr_t)base_addr)+(intptr_t)base_addr_rx));
+  if(ht_bin[1]&&ht_bin[1]->vaddr==vaddr) ROLLBACK_PROFILE_RETURN_PTR(dynamic_linker_ds_count, dynamic_linker_ds_us,
+    (void *)(((intptr_t)ht_bin[1]->addr-(intptr_t)base_addr)+(intptr_t)base_addr_rx));
 
 #ifdef DISABLE_BLOCK_LINKING
   head=get_clean(r4300,vaddr,~0);
   if(head!=NULL){
     ht_bin[1]=ht_bin[0];
     ht_bin[0]=head;
-    return (void*)(((intptr_t)head->addr-(intptr_t)base_addr)+(intptr_t)base_addr_rx);
+    ROLLBACK_PROFILE_RETURN_PTR(dynamic_linker_ds_count, dynamic_linker_ds_us,
+      (void*)(((intptr_t)head->addr-(intptr_t)base_addr)+(intptr_t)base_addr_rx));
   }
 #endif
 
@@ -2664,23 +2696,25 @@ void *dynamic_linker_ds(void * src, u_int vaddr)
       ht_bin[1]=ht_bin[0];
       ht_bin[0]=head;
     }
-    return (void*)(((intptr_t)head->clean_addr-(intptr_t)base_addr)+(intptr_t)base_addr_rx);
+    ROLLBACK_PROFILE_RETURN_PTR(dynamic_linker_ds_count, dynamic_linker_ds_us,
+      (void*)(((intptr_t)head->clean_addr-(intptr_t)base_addr)+(intptr_t)base_addr_rx));
   }
 
   int r=new_recompile_block((vaddr&0xFFFFFFF8)+1);
-  if(r==0) return dynamic_linker_ds(src,vaddr);
+  if(r==0) ROLLBACK_PROFILE_RETURN_PTR(dynamic_linker_ds_count, dynamic_linker_ds_us, dynamic_linker_ds(src,vaddr));
   // Execute in unmapped page, generate pagefault execption
   assert(r4300->cp0.tlb.LUT_r[(vaddr&~1) >> 12] == 0);
   assert((intptr_t)r4300->new_dynarec_hot_state.memory_map[(vaddr&~1) >> 12] < 0);
   r4300->delay_slot = vaddr&1;
   TLB_refill_exception(r4300, vaddr&~1, 2);
-  return get_addr_ht(r4300->new_dynarec_hot_state.pcaddr);
+  ROLLBACK_PROFILE_RETURN_PTR(dynamic_linker_ds_count, dynamic_linker_ds_us, get_addr_ht(r4300->new_dynarec_hot_state.pcaddr));
 }
 
 // Get address from virtual address
 // This is called from the recompiled JR/JALR instructions
 void *get_addr(u_int vaddr)
 {
+  uint64_t rollback_begin = rollback_profile_now_us();
   struct r4300_core* r4300 = &g_dev.r4300;
   struct ll_entry *head;
   struct ll_entry **ht_bin=hash_table[((vaddr>>16)^vaddr)&0xFFFF];
@@ -2689,7 +2723,8 @@ void *get_addr(u_int vaddr)
   if(head!=NULL){
     ht_bin[1]=ht_bin[0];
     ht_bin[0]=head;
-    return (void*)(((intptr_t)head->addr-(intptr_t)base_addr)+(intptr_t)base_addr_rx);
+    ROLLBACK_PROFILE_RETURN_PTR(get_addr_count, get_addr_us,
+      (void*)(((intptr_t)head->addr-(intptr_t)base_addr)+(intptr_t)base_addr_rx));
   }
 
   head=get_dirty(r4300,vaddr,~0);
@@ -2702,33 +2737,40 @@ void *get_addr(u_int vaddr)
       ht_bin[1]=ht_bin[0];
       ht_bin[0]=head;
     }
-    return (void*)(((intptr_t)head->clean_addr-(intptr_t)base_addr)+(intptr_t)base_addr_rx);
+    ROLLBACK_PROFILE_RETURN_PTR(get_addr_count, get_addr_us,
+      (void*)(((intptr_t)head->clean_addr-(intptr_t)base_addr)+(intptr_t)base_addr_rx));
   }
 
   int r=new_recompile_block(vaddr);
-  if(r==0) return get_addr(vaddr);
+  if(r==0) ROLLBACK_PROFILE_RETURN_PTR(get_addr_count, get_addr_us, get_addr(vaddr));
   // Execute in unmapped page, generate pagefault execption
   assert(r4300->cp0.tlb.LUT_r[(vaddr&~1) >> 12] == 0);
   assert((intptr_t)r4300->new_dynarec_hot_state.memory_map[(vaddr&~1) >> 12] < 0);
   r4300->delay_slot = vaddr&1;
   TLB_refill_exception(r4300, vaddr&~1, 2);
-  return get_addr_ht(r4300->new_dynarec_hot_state.pcaddr);
+  ROLLBACK_PROFILE_RETURN_PTR(get_addr_count, get_addr_us, get_addr_ht(r4300->new_dynarec_hot_state.pcaddr));
 }
 
 // Look up address in hash table first
 void *get_addr_ht(u_int vaddr)
 {
+  uint64_t rollback_begin = rollback_profile_now_us();
   struct ll_entry **ht_bin=hash_table[((vaddr>>16)^vaddr)&0xFFFF];
-  if(ht_bin[0]&&ht_bin[0]->vaddr==vaddr) return (void *)(((intptr_t)ht_bin[0]->addr-(intptr_t)base_addr)+(intptr_t)base_addr_rx);
-  if(ht_bin[1]&&ht_bin[1]->vaddr==vaddr) return (void *)(((intptr_t)ht_bin[1]->addr-(intptr_t)base_addr)+(intptr_t)base_addr_rx);
-  return get_addr(vaddr);
+  if(ht_bin[0]&&ht_bin[0]->vaddr==vaddr) ROLLBACK_PROFILE_RETURN_PTR(get_addr_ht_count, get_addr_us,
+    (void *)(((intptr_t)ht_bin[0]->addr-(intptr_t)base_addr)+(intptr_t)base_addr_rx));
+  if(ht_bin[1]&&ht_bin[1]->vaddr==vaddr) ROLLBACK_PROFILE_RETURN_PTR(get_addr_ht_count, get_addr_us,
+    (void *)(((intptr_t)ht_bin[1]->addr-(intptr_t)base_addr)+(intptr_t)base_addr_rx));
+  ROLLBACK_PROFILE_RETURN_PTR(get_addr_ht_count, get_addr_us, get_addr(vaddr));
 }
 
 void *get_addr_32(u_int vaddr,u_int flags)
 {
+  uint64_t rollback_begin = rollback_profile_now_us();
   struct ll_entry **ht_bin=hash_table[((vaddr>>16)^vaddr)&0xFFFF];
-  if(ht_bin[0]&&ht_bin[0]->vaddr==vaddr) return (void *)(((intptr_t)ht_bin[0]->addr-(intptr_t)base_addr)+(intptr_t)base_addr_rx);
-  if(ht_bin[1]&&ht_bin[1]->vaddr==vaddr) return (void *)(((intptr_t)ht_bin[1]->addr-(intptr_t)base_addr)+(intptr_t)base_addr_rx);
+  if(ht_bin[0]&&ht_bin[0]->vaddr==vaddr) ROLLBACK_PROFILE_RETURN_PTR(get_addr_32_count, get_addr_us,
+    (void *)(((intptr_t)ht_bin[0]->addr-(intptr_t)base_addr)+(intptr_t)base_addr_rx));
+  if(ht_bin[1]&&ht_bin[1]->vaddr==vaddr) ROLLBACK_PROFILE_RETURN_PTR(get_addr_32_count, get_addr_us,
+    (void *)(((intptr_t)ht_bin[1]->addr-(intptr_t)base_addr)+(intptr_t)base_addr_rx));
 
   struct r4300_core* r4300 = &g_dev.r4300;
   struct ll_entry *head;
@@ -2741,7 +2783,8 @@ void *get_addr_32(u_int vaddr,u_int flags)
         ht_bin[1]=head;
       }
     }
-    return (void*)(((intptr_t)head->addr-(intptr_t)base_addr)+(intptr_t)base_addr_rx);
+    ROLLBACK_PROFILE_RETURN_PTR(get_addr_32_count, get_addr_us,
+      (void*)(((intptr_t)head->addr-(intptr_t)base_addr)+(intptr_t)base_addr_rx));
   }
 
   head=get_dirty(r4300,vaddr,flags);
@@ -2753,17 +2796,18 @@ void *get_addr_32(u_int vaddr,u_int flags)
         ht_bin[1]=head;
       }
      }
-    return (void*)(((intptr_t)head->clean_addr-(intptr_t)base_addr)+(intptr_t)base_addr_rx);
+    ROLLBACK_PROFILE_RETURN_PTR(get_addr_32_count, get_addr_us,
+      (void*)(((intptr_t)head->clean_addr-(intptr_t)base_addr)+(intptr_t)base_addr_rx));
   }
 
   int r=new_recompile_block(vaddr);
-  if(r==0) return get_addr(vaddr);
+  if(r==0) ROLLBACK_PROFILE_RETURN_PTR(get_addr_32_count, get_addr_us, get_addr(vaddr));
   // Execute in unmapped page, generate pagefault execption
   assert(r4300->cp0.tlb.LUT_r[(vaddr&~1) >> 12] == 0);
   assert((intptr_t)r4300->new_dynarec_hot_state.memory_map[(vaddr&~1) >> 12] < 0);
   r4300->delay_slot = vaddr&1;
   TLB_refill_exception(r4300, vaddr&~1, 2);
-  return get_addr_ht(r4300->new_dynarec_hot_state.pcaddr);
+  ROLLBACK_PROFILE_RETURN_PTR(get_addr_32_count, get_addr_us, get_addr_ht(r4300->new_dynarec_hot_state.pcaddr));
 }
 
 // Check if an address is already compiled

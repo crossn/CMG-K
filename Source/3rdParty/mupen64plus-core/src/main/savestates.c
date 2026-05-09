@@ -2709,7 +2709,12 @@ int savestates_load_rollback_buffer(unsigned char *buffer, int len)
 
     rollback_load_buffer = buffer;
     rollback_load_buffer_size = (size_t)len;
+    main_rollback_capture_load_before_probe();
     result = savestates_load_m64p(&g_dev, "ROLLBACK");
+    if (result)
+    {
+        main_rollback_capture_load_probe();
+    }
     rollback_load_buffer = NULL;
     rollback_load_buffer_size = 0;
 

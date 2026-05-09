@@ -68,6 +68,7 @@
 #include "device/controllers/paks/transferpak.h"
 #include "device/gb/gb_cart.h"
 #include "device/pif/bootrom_hle.h"
+#include "device/r4300/interrupt.h"
 #include "device/r4300/new_dynarec/new_dynarec.h"
 #include "eventloop.h"
 #include "main.h"
@@ -146,6 +147,27 @@ static int   l_RollbackVisibleStepCompleted = 0;
 static int   l_RollbackHiddenStepActive = 0;
 static int   l_RollbackHiddenStepCompleted = 0;
 static m64p_rollback_run_frame_stats l_RollbackRunFrameStats;
+static uint32_t l_RollbackLoadProbePc = 0;
+static uint32_t l_RollbackLoadProbeCp0Count = 0;
+static uint32_t l_RollbackLoadProbeNextInterrupt = 0;
+static uint32_t l_RollbackLoadProbeCurrentFrame = 0;
+static int32_t l_RollbackLoadProbeCycleCount = 0;
+static int32_t l_RollbackLoadProbePendingException = 0;
+static int32_t l_RollbackLoadProbeStop = 0;
+static uint32_t l_RollbackLoadBeforePc = 0;
+static uint32_t l_RollbackLoadBeforeCp0Count = 0;
+static uint32_t l_RollbackLoadBeforeNextInterrupt = 0;
+static uint32_t l_RollbackLoadBeforeCurrentFrame = 0;
+static int32_t l_RollbackLoadBeforeCycleCount = 0;
+static int32_t l_RollbackLoadBeforePendingException = 0;
+static int32_t l_RollbackLoadBeforeStop = 0;
+static uint32_t l_RollbackResumeProbePc = 0;
+static uint32_t l_RollbackResumeProbeCp0Count = 0;
+static uint32_t l_RollbackResumeProbeNextInterrupt = 0;
+static uint32_t l_RollbackResumeProbeCurrentFrame = 0;
+static int32_t l_RollbackResumeProbeCycleCount = 0;
+static int32_t l_RollbackResumeProbePendingException = 0;
+static int32_t l_RollbackResumeProbeStop = 0;
 
 static osd_message_t *l_msgVol = NULL;
 static osd_message_t *l_msgFF = NULL;
@@ -741,10 +763,61 @@ int main_rollback_visible_frame_completed(void)
     return completed;
 }
 
+static void main_rollback_read_cpu_probe(uint32_t* pc, uint32_t* cp0_count, uint32_t* next_interrupt,
+    uint32_t* current_frame, int32_t* cycle_count, int32_t* pending_exception, int32_t* stop)
+{
+    uint32_t* cp0_regs = r4300_cp0_regs(&g_dev.r4300.cp0);
+
+    *pc = *r4300_pc(&g_dev.r4300);
+    *cp0_count = cp0_regs[CP0_COUNT_REG];
+    *next_interrupt = *r4300_cp0_next_interrupt(&g_dev.r4300.cp0);
+    *current_frame = l_CurrentFrame;
+#ifdef NEW_DYNAREC
+    *cycle_count = g_dev.r4300.new_dynarec_hot_state.cycle_count;
+    *pending_exception = g_dev.r4300.new_dynarec_hot_state.pending_exception;
+    *stop = g_dev.r4300.new_dynarec_hot_state.stop;
+#else
+    *cycle_count = *r4300_cp0_cycle_count(&g_dev.r4300.cp0);
+    *pending_exception = 0;
+    *stop = *r4300_stop(&g_dev.r4300);
+#endif
+}
+
+void main_rollback_capture_load_probe(void)
+{
+    main_rollback_read_cpu_probe(&l_RollbackLoadProbePc, &l_RollbackLoadProbeCp0Count,
+        &l_RollbackLoadProbeNextInterrupt, &l_RollbackLoadProbeCurrentFrame,
+        &l_RollbackLoadProbeCycleCount, &l_RollbackLoadProbePendingException,
+        &l_RollbackLoadProbeStop);
+}
+
+void main_rollback_capture_load_before_probe(void)
+{
+    main_rollback_read_cpu_probe(&l_RollbackLoadBeforePc, &l_RollbackLoadBeforeCp0Count,
+        &l_RollbackLoadBeforeNextInterrupt, &l_RollbackLoadBeforeCurrentFrame,
+        &l_RollbackLoadBeforeCycleCount, &l_RollbackLoadBeforePendingException,
+        &l_RollbackLoadBeforeStop);
+}
+
+void main_rollback_capture_resume_probe(void)
+{
+    main_rollback_read_cpu_probe(&l_RollbackResumeProbePc, &l_RollbackResumeProbeCp0Count,
+        &l_RollbackResumeProbeNextInterrupt, &l_RollbackResumeProbeCurrentFrame,
+        &l_RollbackResumeProbeCycleCount, &l_RollbackResumeProbePendingException,
+        &l_RollbackResumeProbeStop);
+}
+
 static void main_rollback_hidden_frame_begin(void)
 {
     l_RollbackHiddenStepActive = 1;
     l_RollbackHiddenStepCompleted = 0;
+    main_rollback_read_cpu_probe(&l_RollbackRunFrameStats.hidden_begin_pc,
+        &l_RollbackRunFrameStats.hidden_begin_cp0_count,
+        &l_RollbackRunFrameStats.hidden_begin_next_interrupt,
+        &l_RollbackRunFrameStats.hidden_begin_current_frame,
+        &l_RollbackRunFrameStats.hidden_begin_cycle_count,
+        &l_RollbackRunFrameStats.hidden_begin_pending_exception,
+        &l_RollbackRunFrameStats.hidden_begin_stop);
 }
 
 static int main_rollback_hidden_frame_completed(void)
@@ -769,6 +842,20 @@ int main_rollback_run_frame(int output_flags)
     memset(&l_RollbackRunFrameStats, 0, sizeof(l_RollbackRunFrameStats));
     l_RollbackRunFrameStats.output_flags = output_flags;
     l_RollbackRunFrameStats.emumode = g_dev.r4300.emumode;
+    l_RollbackRunFrameStats.load_before_pc = l_RollbackLoadBeforePc;
+    l_RollbackRunFrameStats.load_before_cp0_count = l_RollbackLoadBeforeCp0Count;
+    l_RollbackRunFrameStats.load_before_next_interrupt = l_RollbackLoadBeforeNextInterrupt;
+    l_RollbackRunFrameStats.load_before_current_frame = l_RollbackLoadBeforeCurrentFrame;
+    l_RollbackRunFrameStats.load_before_cycle_count = l_RollbackLoadBeforeCycleCount;
+    l_RollbackRunFrameStats.load_before_pending_exception = l_RollbackLoadBeforePendingException;
+    l_RollbackRunFrameStats.load_before_stop = l_RollbackLoadBeforeStop;
+    l_RollbackRunFrameStats.load_probe_pc = l_RollbackLoadProbePc;
+    l_RollbackRunFrameStats.load_probe_cp0_count = l_RollbackLoadProbeCp0Count;
+    l_RollbackRunFrameStats.load_probe_next_interrupt = l_RollbackLoadProbeNextInterrupt;
+    l_RollbackRunFrameStats.load_probe_current_frame = l_RollbackLoadProbeCurrentFrame;
+    l_RollbackRunFrameStats.load_probe_cycle_count = l_RollbackLoadProbeCycleCount;
+    l_RollbackRunFrameStats.load_probe_pending_exception = l_RollbackLoadProbePendingException;
+    l_RollbackRunFrameStats.load_probe_stop = l_RollbackLoadProbeStop;
     cp0_regs = r4300_cp0_regs(&g_dev.r4300.cp0);
     l_RollbackRunFrameStats.cp0_count_before = cp0_regs[CP0_COUNT_REG];
     l_RollbackRunFrameStats.next_interrupt_before = *r4300_cp0_next_interrupt(&g_dev.r4300.cp0);
@@ -788,6 +875,7 @@ int main_rollback_run_frame(int output_flags)
     new_dynarec_rollback_stats_reset();
 #endif
     r4300_cached_code_rollback_stats_reset();
+    interrupt_rollback_stats_reset();
 
     main_set_frame_output(
         (output_flags & M64FRAME_OUTPUT_VIDEO) != 0,
@@ -799,6 +887,7 @@ int main_rollback_run_frame(int output_flags)
     r4300_begin = rollback_profile_now_us();
     result = run_r4300_current(&g_dev.r4300);
     l_RollbackRunFrameStats.r4300_us = rollback_profile_now_us() - r4300_begin;
+    interrupt_rollback_stats_fill(&l_RollbackRunFrameStats);
     if (!main_rollback_hidden_frame_completed())
         result = 0;
     l_RollbackRunFrameStats.cp0_count_after = cp0_regs[CP0_COUNT_REG];
@@ -813,6 +902,13 @@ int main_rollback_run_frame(int output_flags)
     l_RollbackRunFrameStats.dynarec_pending_exception_after = g_dev.r4300.new_dynarec_hot_state.pending_exception;
     l_RollbackRunFrameStats.dynarec_stop_after = g_dev.r4300.new_dynarec_hot_state.stop;
 #endif
+    l_RollbackRunFrameStats.resume_probe_pc = l_RollbackResumeProbePc;
+    l_RollbackRunFrameStats.resume_probe_cp0_count = l_RollbackResumeProbeCp0Count;
+    l_RollbackRunFrameStats.resume_probe_next_interrupt = l_RollbackResumeProbeNextInterrupt;
+    l_RollbackRunFrameStats.resume_probe_current_frame = l_RollbackResumeProbeCurrentFrame;
+    l_RollbackRunFrameStats.resume_probe_cycle_count = l_RollbackResumeProbeCycleCount;
+    l_RollbackRunFrameStats.resume_probe_pending_exception = l_RollbackResumeProbePendingException;
+    l_RollbackRunFrameStats.resume_probe_stop = l_RollbackResumeProbeStop;
 
     main_set_frame_output(old_video, old_audio, old_pacing, old_input);
 #ifdef NEW_DYNAREC
@@ -825,6 +921,16 @@ int main_rollback_run_frame(int output_flags)
         l_RollbackRunFrameStats.dynarec_full_invalidate_count = dynarec_stats.full_invalidate_count;
         l_RollbackRunFrameStats.dynarec_range_invalidate_count = dynarec_stats.range_invalidate_count;
         l_RollbackRunFrameStats.dynarec_block_invalidate_count = dynarec_stats.block_invalidate_count;
+        l_RollbackRunFrameStats.dynarec_verify_dirty_count = dynarec_stats.verify_dirty_count;
+        l_RollbackRunFrameStats.dynarec_verify_dirty_us = dynarec_stats.verify_dirty_us;
+        l_RollbackRunFrameStats.dynarec_get_addr_count = dynarec_stats.get_addr_count;
+        l_RollbackRunFrameStats.dynarec_get_addr_us = dynarec_stats.get_addr_us;
+        l_RollbackRunFrameStats.dynarec_get_addr_ht_count = dynarec_stats.get_addr_ht_count;
+        l_RollbackRunFrameStats.dynarec_get_addr_32_count = dynarec_stats.get_addr_32_count;
+        l_RollbackRunFrameStats.dynarec_dynamic_linker_count = dynarec_stats.dynamic_linker_count;
+        l_RollbackRunFrameStats.dynarec_dynamic_linker_us = dynarec_stats.dynamic_linker_us;
+        l_RollbackRunFrameStats.dynarec_dynamic_linker_ds_count = dynarec_stats.dynamic_linker_ds_count;
+        l_RollbackRunFrameStats.dynarec_dynamic_linker_ds_us = dynarec_stats.dynamic_linker_ds_us;
         new_dynarec_rollback_stats_reset();
     }
 #endif

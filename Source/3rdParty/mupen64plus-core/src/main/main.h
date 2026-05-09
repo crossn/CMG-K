@@ -89,6 +89,9 @@ int main_rollback_execute_begin_frame(void);
 int main_rollback_execute_end_frame(void);
 void main_rollback_visible_frame_begin(void);
 int main_rollback_visible_frame_completed(void);
+void main_rollback_capture_load_before_probe(void);
+void main_rollback_capture_load_probe(void);
+void main_rollback_capture_resume_probe(void);
 
 void main_speedup(int percent);
 void main_speeddown(int percent);
