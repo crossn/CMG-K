@@ -147,7 +147,9 @@ public:
 #include <cstdint>
 #include <cstring>
 #include <fstream>
+#include <iomanip>
 #include <mutex>
+#include <sstream>
 #include <vector>
 
 #include <RMG-Core/CachedRomHeaderAndSettings.hpp>
@@ -247,6 +249,8 @@ void WriteRollbackDebugReplayLog(const std::string& phase, bool matched, uint64_
     uint64_t actualHash, size_t recordedInputFrames, size_t replayedInputFrames,
     const CoreRollbackState& expectedState, const CoreRollbackState& actualState);
 void WriteRollbackDebugReplayEventLog(const std::string& phase, const std::string& message);
+std::string FormatRollbackRunFrameStats(const CoreRollbackRunFrameStats& stats);
+bool RollbackDebugShouldIgnoreStopFailure(const std::string& error);
 
 bool RollbackDebugEnsureStableFrameControl()
 {
@@ -274,6 +278,62 @@ void RollbackDebugCloseSession()
     g_RollbackDebugReplay.stressRollbackCount = 0;
     g_RollbackDebugReplay.stressRollbackFrames = 0;
     g_RollbackDebugReplay.stressResimulatedFrames = 0;
+}
+
+std::string FormatRollbackRunFrameStats(const CoreRollbackRunFrameStats& stats)
+{
+    std::ostringstream stream;
+    stream << " core_total_us=" << stats.totalUs
+           << " r4300_us=" << stats.r4300Us
+           << " vi_us=" << stats.viUs
+           << " new_frame_us=" << stats.newFrameUs
+           << " cheats_us=" << stats.cheatsUs
+           << " pacing_us=" << stats.pacingUs
+           << " input_us=" << stats.inputUs
+           << " pause_us=" << stats.pauseUs
+           << " netplay_us=" << stats.netplayUs
+           << " dynarec_recompiles=" << stats.dynarecRecompileCount
+           << " dynarec_recompile_us=" << stats.dynarecRecompileUs
+           << " dynarec_invalidate_us=" << stats.dynarecInvalidateUs
+           << " dynarec_full_invalidates=" << stats.dynarecFullInvalidateCount
+           << " dynarec_range_invalidates=" << stats.dynarecRangeInvalidateCount
+           << " dynarec_block_invalidates=" << stats.dynarecBlockInvalidateCount
+           << " cached_code_full_invalidates=" << stats.cachedCodeFullInvalidateCount
+           << " cached_code_range_invalidates=" << stats.cachedCodeRangeInvalidateCount
+           << " emumode=" << stats.emumode
+           << " cp0_count_before=" << stats.cp0CountBefore
+           << " cp0_count_after=" << stats.cp0CountAfter
+           << " cp0_count_delta=" << (stats.cp0CountAfter - stats.cp0CountBefore)
+           << " next_interrupt_before=" << stats.nextInterruptBefore
+           << " next_interrupt_after=" << stats.nextInterruptAfter
+           << " current_frame_before=" << stats.currentFrameBefore
+           << " current_frame_after=" << stats.currentFrameAfter
+           << " dynarec_cycle_count_before=" << stats.dynarecCycleCountBefore
+           << " dynarec_cycle_count_after=" << stats.dynarecCycleCountAfter
+           << " dynarec_pending_exception_before=" << stats.dynarecPendingExceptionBefore
+           << " dynarec_pending_exception_after=" << stats.dynarecPendingExceptionAfter
+           << " dynarec_stop_before=" << stats.dynarecStopBefore
+           << " dynarec_stop_after=" << stats.dynarecStopAfter
+           << " delay_slot_before=" << stats.delaySlotBefore
+           << " delay_slot_after=" << stats.delaySlotAfter
+           << " output_flags=" << stats.outputFlags
+           << std::hex << std::setfill('0')
+           << " pc_before=0x" << std::setw(8) << stats.pcBefore
+           << " pc_after=0x" << std::setw(8) << stats.pcAfter
+           << " dynarec_pcaddr_before=0x" << std::setw(8) << stats.dynarecPcaddrBefore
+           << " dynarec_pcaddr_after=0x" << std::setw(8) << stats.dynarecPcaddrAfter
+           << " cp0_last_addr_before=0x" << std::setw(8) << stats.cp0LastAddrBefore
+           << " cp0_last_addr_after=0x" << std::setw(8) << stats.cp0LastAddrAfter
+           << std::dec;
+    return stream.str();
+}
+
+bool RollbackDebugShouldIgnoreStopFailure(const std::string& error)
+{
+    return !CoreIsEmulationRunning() ||
+        error.find("INVALID_STATE") != std::string::npos ||
+        error.find("stop") != std::string::npos ||
+        error.find("Stop") != std::string::npos;
 }
 
 bool RollbackDebugIsPlaybackMode(RollbackDebugReplayMode mode)
@@ -1132,10 +1192,17 @@ bool RollbackDebugRunStressRollbackFromRollbackFrame(size_t frame)
     const auto loadBeginTime = std::chrono::steady_clock::now();
     if (!CoreRollbackLoadGameState(checkpoint))
     {
+        const std::string error = CoreGetError();
         WriteRollbackDebugReplayEventLog("stress_failed",
-            "load frame=" + std::to_string(rollbackFrame) + " error=" + CoreGetError());
+            "load frame=" + std::to_string(rollbackFrame) + " error=" + error);
         std::lock_guard<std::mutex> lock(g_RollbackDebugReplay.mutex);
         g_RollbackDebugReplay.mode = RollbackDebugReplayMode::Idle;
+        if (RollbackDebugShouldIgnoreStopFailure(error))
+        {
+            WriteRollbackDebugReplayEventLog("stress_stopped",
+                "ignored shutdown load failure at frame=" + std::to_string(rollbackFrame) + " error=" + error);
+            return true;
+        }
         return false;
     }
     const auto loadUs =
@@ -1165,21 +1232,44 @@ bool RollbackDebugRunStressRollbackFromRollbackFrame(size_t frame)
     long long resimMaxUs = 0;
     for (int i = 0; i < kRollbackDebugStressRollbackFrames; i++)
     {
+        const size_t resimFrame = rollbackFrame + static_cast<size_t>(i) + 1;
         const auto resimBeginTime = std::chrono::steady_clock::now();
-        if (!rmgk_gekko::debug_run_frame_with_inputs(resimInputs[static_cast<size_t>(i)].data(),
-            kRollbackDebugReplayPlayers, CoreFrameOutput_None))
-        {
-            WriteRollbackDebugReplayEventLog("stress_failed",
-                "resim frame=" + std::to_string(rollbackFrame + static_cast<size_t>(i) + 1) +
-                " error=" + CoreGetError());
-            std::lock_guard<std::mutex> lock(g_RollbackDebugReplay.mutex);
-            g_RollbackDebugReplay.mode = RollbackDebugReplayMode::Idle;
-            g_RollbackDebugReplay.countReplayInputHash = true;
-            return false;
-        }
+        const bool resimOk = rmgk_gekko::debug_run_frame_with_inputs(
+            resimInputs[static_cast<size_t>(i)].data(), kRollbackDebugReplayPlayers, CoreFrameOutput_None);
         const auto resimUs =
             std::chrono::duration_cast<std::chrono::microseconds>(
                 std::chrono::steady_clock::now() - resimBeginTime).count();
+        CoreRollbackRunFrameStats runFrameStats;
+        const bool hasRunFrameStats = CoreRollbackGetRunFrameStats(runFrameStats);
+        std::string statsMessage =
+            "frame=" + std::to_string(resimFrame) +
+            " source_frame=" + std::to_string(rollbackFrame + static_cast<size_t>(i)) +
+            " resim_us=" + std::to_string(resimUs) +
+            " p1=" + std::to_string(resimInputs[static_cast<size_t>(i)][0]) +
+            " p2=" + std::to_string(resimInputs[static_cast<size_t>(i)][1]) +
+            " p3=" + std::to_string(resimInputs[static_cast<size_t>(i)][2]) +
+            " p4=" + std::to_string(resimInputs[static_cast<size_t>(i)][3]);
+        if (hasRunFrameStats)
+        {
+            statsMessage += FormatRollbackRunFrameStats(runFrameStats);
+        }
+
+        if (!resimOk)
+        {
+            const std::string error = CoreGetError();
+            WriteRollbackDebugReplayEventLog("stress_resim_failed", statsMessage + " error=" + error);
+            std::lock_guard<std::mutex> lock(g_RollbackDebugReplay.mutex);
+            g_RollbackDebugReplay.mode = RollbackDebugReplayMode::Idle;
+            g_RollbackDebugReplay.countReplayInputHash = true;
+            if (RollbackDebugShouldIgnoreStopFailure(error))
+            {
+                WriteRollbackDebugReplayEventLog("stress_stopped",
+                    "ignored shutdown failure at frame=" + std::to_string(resimFrame) + " error=" + error);
+                return true;
+            }
+            return false;
+        }
+        WriteRollbackDebugReplayEventLog("stress_resim_frame", statsMessage);
         resimTotalUs += resimUs;
         resimMaxUs = std::max(resimMaxUs, resimUs);
     }

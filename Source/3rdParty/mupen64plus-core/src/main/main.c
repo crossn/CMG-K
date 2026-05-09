@@ -143,6 +143,8 @@ static int   l_RollbackExecuteActive = 0;
 static int   l_RollbackSingleStepActive = 0;
 static int   l_RollbackVisibleStepActive = 0;
 static int   l_RollbackVisibleStepCompleted = 0;
+static int   l_RollbackHiddenStepActive = 0;
+static int   l_RollbackHiddenStepCompleted = 0;
 static m64p_rollback_run_frame_stats l_RollbackRunFrameStats;
 
 static osd_message_t *l_msgVol = NULL;
@@ -691,6 +693,8 @@ void main_set_rollback_execute_callbacks(m64p_rollback_execute_callbacks* callba
         l_RollbackExecuteActive = 0;
         l_RollbackVisibleStepActive = 0;
         l_RollbackVisibleStepCompleted = 0;
+        l_RollbackHiddenStepActive = 0;
+        l_RollbackHiddenStepCompleted = 0;
 #ifdef NEW_DYNAREC
         new_dynarec_rollback_stats_reset();
 #endif
@@ -737,6 +741,20 @@ int main_rollback_visible_frame_completed(void)
     return completed;
 }
 
+static void main_rollback_hidden_frame_begin(void)
+{
+    l_RollbackHiddenStepActive = 1;
+    l_RollbackHiddenStepCompleted = 0;
+}
+
+static int main_rollback_hidden_frame_completed(void)
+{
+    int completed = l_RollbackHiddenStepCompleted;
+    l_RollbackHiddenStepActive = 0;
+    l_RollbackHiddenStepCompleted = 0;
+    return completed;
+}
+
 int main_rollback_run_frame(int output_flags)
 {
     int old_video = l_FrameOutputVideo;
@@ -777,11 +795,12 @@ int main_rollback_run_frame(int output_flags)
         (output_flags & M64FRAME_OUTPUT_PACING) != 0,
         (output_flags & M64FRAME_OUTPUT_INPUT) != 0);
 
-    l_RollbackSingleStepActive = 1;
+    main_rollback_hidden_frame_begin();
     r4300_begin = rollback_profile_now_us();
     result = run_r4300_current(&g_dev.r4300);
     l_RollbackRunFrameStats.r4300_us = rollback_profile_now_us() - r4300_begin;
-    l_RollbackSingleStepActive = 0;
+    if (!main_rollback_hidden_frame_completed())
+        result = 0;
     l_RollbackRunFrameStats.cp0_count_after = cp0_regs[CP0_COUNT_REG];
     l_RollbackRunFrameStats.next_interrupt_after = *r4300_cp0_next_interrupt(&g_dev.r4300.cp0);
     l_RollbackRunFrameStats.pc_after = *r4300_pc(&g_dev.r4300);
@@ -1197,11 +1216,17 @@ void new_frame(void)
         return;
     }
 
-    if (g_FrameCallback != NULL)
+    if (!l_RollbackHiddenStepActive && g_FrameCallback != NULL)
         (*g_FrameCallback)(l_CurrentFrame);
 
     /* advance the current frame */
     l_CurrentFrame++;
+
+    if (l_RollbackHiddenStepActive) {
+        l_RollbackHiddenStepCompleted = 1;
+        stop_device(&g_dev);
+        return;
+    }
 
     if (l_RollbackVisibleStepActive) {
         l_RollbackVisibleStepCompleted = 1;
@@ -1332,7 +1357,7 @@ void new_vi(void)
     int frame_output_input = main_frame_frontend_input_enabled();
     uint64_t rollback_vi_begin = 0;
     uint64_t rollback_step_begin = 0;
-    int rollback_profile_active = l_RollbackSingleStepActive;
+    int rollback_profile_active = l_RollbackSingleStepActive || l_RollbackHiddenStepActive;
 
     if (rollback_profile_active)
         rollback_vi_begin = rollback_profile_now_us();
