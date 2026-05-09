@@ -1260,6 +1260,15 @@ CORE_EXPORT void rmgk_gekko::request_stop()
 #endif
 }
 
+CORE_EXPORT bool rmgk_gekko::is_netplay_session_active()
+{
+#ifdef RMGK_HAVE_GEKKONET
+    return g_GekkoSession != nullptr && g_GekkoRemoteHandle >= 0;
+#else
+    return false;
+#endif
+}
+
 CORE_EXPORT bool rmgk_gekko::execute()
 {
 #ifndef RMGK_HAVE_GEKKONET

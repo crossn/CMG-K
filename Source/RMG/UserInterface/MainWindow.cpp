@@ -1922,7 +1922,7 @@ void MainWindow::configureUI(QApplication* app, bool showUI)
     }
 
     this->menuBar()->setVisible(this->ui_ShowMenubar);
-    this->menuRollback->menuAction()->setVisible(!CoreSettingsGetBoolValue(SettingsID::Rollback_HideMenu));
+    this->menuRollback->menuAction()->setVisible(CoreSettingsGetBoolValue(SettingsID::Rollback_EnableLocalTesting));
     this->toolBar->setVisible(this->ui_ShowToolbar);
     this->statusBar()->setVisible(this->ui_ShowStatusbar);
     this->statusBar()->addPermanentWidget(this->ui_StatusBar_Label, 99);
@@ -2317,7 +2317,7 @@ void MainWindow::updateUI(bool inEmulation, bool isPaused)
 
     // update timer timeout
     this->ui_StatusBarTimerTimeout = CoreSettingsGetIntValue(SettingsID::GUI_StatusbarMessageDuration);
-    this->menuRollback->menuAction()->setVisible(!CoreSettingsGetBoolValue(SettingsID::Rollback_HideMenu));
+    this->menuRollback->menuAction()->setVisible(CoreSettingsGetBoolValue(SettingsID::Rollback_EnableLocalTesting));
 }
 
 void MainWindow::setDebugReplayStatusMessage(const std::string& message)
@@ -2548,7 +2548,10 @@ void MainWindow::updateActions(bool inEmulation, bool isPaused)
         rollbackDebugReplayReady = g_RollbackDebugReplay.ready || rollbackDebugReplayFileExists;
     }
 
-    this->menuRollback->menuAction()->setVisible(!CoreSettingsGetBoolValue(SettingsID::Rollback_HideMenu));
+    this->menuRollback->menuAction()->setVisible(CoreSettingsGetBoolValue(SettingsID::Rollback_EnableLocalTesting));
+
+    const bool synchronizedNetplayActive = CoreIsSynchronizedNetplayActive();
+    const bool netplaySessionActive = synchronizedNetplayActive || CoreHasInitKaillera();
 
     keyBinding = QString::fromStdString(CoreSettingsGetStringValue(SettingsID::KeyBinding_StartROM));
     this->action_System_StartRom->setShortcut(QKeySequence(keyBinding));
@@ -2567,7 +2570,7 @@ void MainWindow::updateActions(bool inEmulation, bool isPaused)
 #else
     this->action_System_Shutdown->setEnabled(inEmulation && !CoreHasInitNetplay());
 #endif
-    this->menuReset->setEnabled(inEmulation && !CoreHasInitNetplay() && !CoreHasInitKaillera());
+    this->menuReset->setEnabled(inEmulation && !netplaySessionActive);
     keyBinding = QString::fromStdString(CoreSettingsGetStringValue(SettingsID::KeyBinding_SoftReset));
 #ifdef NETPLAY
     this->action_Netplay_Start->setEnabled(!inEmulation && this->netplaySessionDialog == nullptr && this->kailleraSessionManager == nullptr);
@@ -2576,20 +2579,20 @@ void MainWindow::updateActions(bool inEmulation, bool isPaused)
 #endif
     this->action_Netplay_Start->setShortcut(QKeySequence(keyBinding));
     keyBinding = QString::fromStdString(CoreSettingsGetStringValue(SettingsID::KeyBinding_HardReset));
-    this->action_System_HardReset->setEnabled(inEmulation && !CoreHasInitNetplay() && !CoreHasInitKaillera());
+    this->action_System_HardReset->setEnabled(inEmulation && !netplaySessionActive);
     this->action_System_HardReset->setShortcut(QKeySequence(keyBinding));
     keyBinding = QString::fromStdString(CoreSettingsGetStringValue(SettingsID::KeyBinding_Resume));
     this->action_System_Pause->setChecked(isPaused);
-    this->action_System_Pause->setEnabled(inEmulation && !CoreHasInitNetplay() && !CoreHasInitKaillera());
+    this->action_System_Pause->setEnabled(inEmulation && !synchronizedNetplayActive);
     this->action_System_Pause->setShortcut(QKeySequence(keyBinding));
     keyBinding = QString::fromStdString(CoreSettingsGetStringValue(SettingsID::KeyBinding_Screenshot));
     this->action_System_Screenshot->setEnabled(inEmulation);
     this->action_System_Screenshot->setShortcut(QKeySequence(keyBinding));
     keyBinding = QString::fromStdString(CoreSettingsGetStringValue(SettingsID::KeyBinding_LimitFPS));
-    this->action_System_LimitFPS->setEnabled(inEmulation && !CoreHasInitNetplay());
+    this->action_System_LimitFPS->setEnabled(inEmulation && !synchronizedNetplayActive);
     this->action_System_LimitFPS->setShortcut(QKeySequence(keyBinding));
     this->action_System_LimitFPS->setChecked(CoreIsSpeedLimiterEnabled());
-    this->menuSpeedFactor->setEnabled(inEmulation && !CoreHasInitNetplay());
+    this->menuSpeedFactor->setEnabled(inEmulation && !synchronizedNetplayActive);
     keyBinding = QString::fromStdString(CoreSettingsGetStringValue(SettingsID::KeyBinding_SaveState));
     this->action_System_SaveState->setEnabled(inEmulation);
     this->action_System_SaveState->setShortcut(QKeySequence(keyBinding));
@@ -2597,17 +2600,17 @@ void MainWindow::updateActions(bool inEmulation, bool isPaused)
     this->action_System_SaveAs->setEnabled(inEmulation);
     this->action_System_SaveAs->setShortcut(QKeySequence(keyBinding));
     keyBinding = QString::fromStdString(CoreSettingsGetStringValue(SettingsID::KeyBinding_LoadState));
-    this->action_System_LoadState->setEnabled(inEmulation && !CoreHasInitNetplay());
+    this->action_System_LoadState->setEnabled(inEmulation && !synchronizedNetplayActive);
     this->action_System_LoadState->setShortcut(QKeySequence(keyBinding));
     keyBinding = QString::fromStdString(CoreSettingsGetStringValue(SettingsID::KeyBinding_Load));
-    this->action_System_Load->setEnabled(inEmulation && !CoreHasInitNetplay());
+    this->action_System_Load->setEnabled(inEmulation && !synchronizedNetplayActive);
     this->action_System_Load->setShortcut(QKeySequence(keyBinding));
     this->menuCurrent_Save_State->setEnabled(inEmulation);
     keyBinding = QString::fromStdString(CoreSettingsGetStringValue(SettingsID::KeyBinding_Cheats));
-    this->action_System_Cheats->setEnabled(inEmulation && !CoreHasInitNetplay());
+    this->action_System_Cheats->setEnabled(inEmulation && !synchronizedNetplayActive);
     this->action_System_Cheats->setShortcut(QKeySequence(keyBinding));
     keyBinding = QString::fromStdString(CoreSettingsGetStringValue(SettingsID::KeyBinding_GSButton));
-    this->action_System_GSButton->setEnabled(inEmulation && !CoreHasInitNetplay());
+    this->action_System_GSButton->setEnabled(inEmulation && !synchronizedNetplayActive);
     this->action_System_GSButton->setShortcut(QKeySequence(keyBinding));
     keyBinding = QString::fromStdString(CoreSettingsGetStringValue(SettingsID::KeyBinding_Exit));
     this->action_System_Exit->setShortcut(QKeySequence(keyBinding));
@@ -3417,8 +3420,8 @@ void MainWindow::on_QGuiApplication_applicationStateChanged(Qt::ApplicationState
 
         case Qt::ApplicationState::ApplicationInactive:
         {
-            // Don't pause if Kaillera netplay is active (can't pause during synchronized netplay)
-            if (pauseOnFocusLoss && isRunning && !isPaused && !CoreHasInitKaillera())
+            // Don't pause during synchronized netplay.
+            if (pauseOnFocusLoss && isRunning && !isPaused && !CoreIsSynchronizedNetplayActive())
             {
                 this->on_Action_System_Pause();
                 this->ui_ManuallyPaused = false;
