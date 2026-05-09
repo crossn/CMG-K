@@ -59,8 +59,6 @@ class MainWindow : public QMainWindow, private Ui::MainWindow
   private:
     void setDebugReplayStatusMessage(const std::string& message);
     void startVerifyDebugReplay(bool withGraphics);
-    void runStressDebugReplay(void);
-    void continueStressDebugReplay(void);
 
     Thread::EmulationThread *emulationThread = nullptr;
 
@@ -225,7 +223,7 @@ class MainWindow : public QMainWindow, private Ui::MainWindow
 #endif // NETPLAY
 
     void on_QGuiApplication_applicationStateChanged(Qt::ApplicationState state);
- 
+
 #ifdef UPDATER
     void on_networkAccessManager_Finished(QNetworkReply *reply);
 #endif // UPDATER
@@ -253,8 +251,6 @@ class MainWindow : public QMainWindow, private Ui::MainWindow
     void on_Action_Rollback_StartDebugReplay(void);
     void on_Action_Rollback_VerifyDebugReplay(void);
     void on_Action_Rollback_VerifyDebugReplayWithGraphics(void);
-    void on_Action_Rollback_StressDebugReplay(void);
-    void on_Action_Rollback_SynctestDebugReplay(void);
     void on_Action_Rollback_ClientInputReplay(bool checked);
 
     void on_Action_Settings_Graphics(void);

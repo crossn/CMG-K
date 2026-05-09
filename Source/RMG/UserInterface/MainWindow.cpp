@@ -48,7 +48,7 @@
 #include <QDesktopServices>
 #include <QGuiApplication>
 #include <QStyleFactory>
-#include <QActionGroup> 
+#include <QActionGroup>
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QMessageBox>
@@ -179,20 +179,16 @@ namespace
 {
 constexpr int kRollbackDebugReplayFrames = 1200;
 constexpr int kRollbackDebugReplayPlayers = 4;
-constexpr int kRollbackDebugStressInterval = 10;
-constexpr int kRollbackDebugStressRollbackFrames = 5;
 constexpr const char* kRollbackDebugReplayFilePath = "rollback_sanity_test.replay";
 constexpr const char* kRollbackDebugReplayLogPath = "rollback_sanity_test.log";
 constexpr uint32_t kRollbackDebugReplayMagic = 0x52534452;
-constexpr uint32_t kRollbackDebugReplayVersion = 6;
+constexpr uint32_t kRollbackDebugReplayVersion = 9;
 
 enum class RollbackDebugReplayMode
 {
     Idle,
     Recording,
-    Verifying,
-    Synctesting,
-    Stressing
+    Verifying
 };
 
 struct RollbackDebugReplayState
@@ -201,7 +197,6 @@ struct RollbackDebugReplayState
     RollbackDebugReplayMode mode = RollbackDebugReplayMode::Idle;
     CoreRollbackState initialState;
     CoreRollbackState finalState;
-    std::array<CoreRollbackState, kRollbackDebugStressRollbackFrames + 1> stressCheckpoints;
     std::vector<std::array<uint32_t, kRollbackDebugReplayPlayers>> inputs;
     std::vector<uint64_t> inputHashes;
     std::vector<uint64_t> frameHashes;
@@ -216,62 +211,55 @@ struct RollbackDebugReplayState
     uint64_t recordedInputHash = 0;
     uint64_t replayedInputHash = 0;
     uint64_t finalHash = 0;
-    size_t stressRollbackCount = 0;
-    size_t stressRollbackFrames = 0;
-    size_t stressResimulatedFrames = 0;
-    int stressResumeFrame = 0;
+    bool frameAdvancedThisFrame = false;
+    bool pendingInitialSave = false;
+    bool pendingInitialLoad = false;
     bool countReplayInputHash = true;
-    bool stressResimulating = false;
     bool verifyWithGraphics = false;
+    bool lastVerifyCompleted = false;
+    bool lastVerifyMatched = false;
+    uint64_t lastVerifyExpectedHash = 0;
+    uint64_t lastVerifyActualHash = 0;
+    size_t lastVerifyRecordedInputFrames = 0;
+    size_t lastVerifyReplayedInputFrames = 0;
     bool ready = false;
 };
 
 RollbackDebugReplayState g_RollbackDebugReplay;
 
-size_t RollbackDebugStressCheckpointIndex(int frame);
-void FreeRollbackDebugStressCheckpoints();
-bool SaveRollbackDebugStressCheckpoint(int frame);
-bool RollbackDebugReplaySynchronizeInput(void* values, int size, int players, void* userData);
-int RollbackDebugReplayCoreInputCallback(void* values, int size, int players);
+bool RollbackDebugReplayBeginFrame(void* userData);
+bool RollbackDebugReplayInputProvider(uint32_t* inputs, int players, void* userData);
+bool RollbackDebugReplayEndFrame(void* userData);
+bool RollbackDebugRecordFrameHashFromRollbackFrame();
+bool RollbackDebugFinishRecordingFromRollbackFrame();
+bool RollbackDebugVerifyFromRollbackFrame();
+void WriteRollbackDebugReplayLog(const std::string& phase, bool matched, uint64_t expectedHash,
+    uint64_t actualHash, size_t recordedInputFrames, size_t replayedInputFrames,
+    const CoreRollbackState& expectedState, const CoreRollbackState& actualState);
+void WriteRollbackDebugReplayEventLog(const std::string& phase, const std::string& message);
 
-bool RollbackDebugStartSession()
+bool RollbackDebugEnsureStableFrameControl()
 {
-    return CoreRollbackSetInputCallback(RollbackDebugReplayCoreInputCallback);
+    if (!CoreIsEmulationRunning())
+    {
+        return false;
+    }
+    if (CoreIsEmulationPaused())
+    {
+        return CoreResumeEmulation();
+    }
+    return true;
 }
 
 void RollbackDebugCloseSession()
 {
-    CoreRollbackSetInputCallback(nullptr);
-}
-
-bool RollbackDebugSaveState(CoreRollbackState& state, int frame)
-{
-    return CoreRollbackSaveGameState(state, frame);
-}
-
-bool RollbackDebugLoadState(const CoreRollbackState& state)
-{
-    return CoreRollbackLoadGameState(state);
-}
-
-void RollbackDebugFreeState(CoreRollbackState& state)
-{
-    CoreRollbackFreeGameState(state);
-}
-
-bool RollbackDebugAdvanceFrame(int frameOutputFlags = CoreFrameOutput_None)
-{
-    return CoreRunFrames(1, frameOutputFlags);
-}
-
-bool RollbackDebugAdvanceFrames(int frames, int frameOutputFlags = CoreFrameOutput_None)
-{
-    if (frames < 1)
-    {
-        frames = 1;
-    }
-
-    return CoreRunFrames(frames, frameOutputFlags);
+    rmgk_gekko::set_debug_hooks(nullptr, nullptr, nullptr, nullptr);
+    rmgk_gekko::set_debug_frame_output(-1);
+    CoreSetFrameOutput(CoreFrameOutput_All);
+    std::lock_guard<std::mutex> lock(g_RollbackDebugReplay.mutex);
+    g_RollbackDebugReplay.frameAdvancedThisFrame = false;
+    g_RollbackDebugReplay.pendingInitialSave = false;
+    g_RollbackDebugReplay.pendingInitialLoad = false;
 }
 
 bool WriteReplayBytes(std::ofstream& file, const void* data, size_t size)
@@ -556,7 +544,6 @@ bool LoadRollbackDebugReplayFile(std::string& error)
         std::lock_guard<std::mutex> lock(g_RollbackDebugReplay.mutex);
         oldState = g_RollbackDebugReplay.initialState;
         oldFinalState = g_RollbackDebugReplay.finalState;
-        FreeRollbackDebugStressCheckpoints();
         g_RollbackDebugReplay.initialState = replayState;
         g_RollbackDebugReplay.finalState = replayFinalState;
         g_RollbackDebugReplay.inputs = std::move(replayInputs);
@@ -575,8 +562,8 @@ bool LoadRollbackDebugReplayFile(std::string& error)
         g_RollbackDebugReplay.finalHash = finalHash;
         g_RollbackDebugReplay.ready = true;
     }
-    RollbackDebugFreeState(oldState);
-    RollbackDebugFreeState(oldFinalState);
+    CoreRollbackFreeGameState(oldState);
+    CoreRollbackFreeGameState(oldFinalState);
     return true;
 }
 
@@ -637,68 +624,130 @@ uint64_t HashRollbackState(const CoreRollbackState& state)
     return hash;
 }
 
-size_t RollbackDebugStressCheckpointIndex(int frame)
-{
-    return static_cast<size_t>(frame % static_cast<int>(g_RollbackDebugReplay.stressCheckpoints.size()));
-}
-
-void FreeRollbackDebugStressCheckpoints()
-{
-    for (auto& checkpoint : g_RollbackDebugReplay.stressCheckpoints)
-    {
-        RollbackDebugFreeState(checkpoint);
-    }
-}
-
-bool SaveRollbackDebugStressCheckpoint(int frame)
-{
-    const size_t checkpointIndex = RollbackDebugStressCheckpointIndex(frame);
-    RollbackDebugFreeState(g_RollbackDebugReplay.stressCheckpoints[checkpointIndex]);
-    return RollbackDebugSaveState(g_RollbackDebugReplay.stressCheckpoints[checkpointIndex], frame);
-}
-
-bool RollbackDebugReplaySynchronizeInput(void* values, int size, int players, void* userData)
+bool RollbackDebugReplayBeginFrame(void* userData)
 {
     (void)userData;
 
-    if (values == nullptr || size != static_cast<int>(sizeof(uint32_t)) || players < 1)
+    RollbackDebugReplayMode mode;
+    bool pendingInitialSave;
+    bool pendingInitialLoad;
+    {
+        std::lock_guard<std::mutex> lock(g_RollbackDebugReplay.mutex);
+        mode = g_RollbackDebugReplay.mode;
+        pendingInitialSave = g_RollbackDebugReplay.pendingInitialSave;
+        pendingInitialLoad = g_RollbackDebugReplay.pendingInitialLoad;
+        g_RollbackDebugReplay.frameAdvancedThisFrame = false;
+    }
+
+    if (mode == RollbackDebugReplayMode::Recording && pendingInitialSave)
+    {
+        CoreRollbackState initialState = {};
+        if (!CoreRollbackSaveGameState(initialState, CoreGetCurrentFrameCount()))
+        {
+            WriteRollbackDebugReplayEventLog("record_initial_save_failed", CoreGetError());
+            std::lock_guard<std::mutex> lock(g_RollbackDebugReplay.mutex);
+            g_RollbackDebugReplay.mode = RollbackDebugReplayMode::Idle;
+            g_RollbackDebugReplay.pendingInitialSave = false;
+            return false;
+        }
+
+        {
+            std::lock_guard<std::mutex> lock(g_RollbackDebugReplay.mutex);
+            g_RollbackDebugReplay.initialState = initialState;
+            g_RollbackDebugReplay.pendingInitialSave = false;
+        }
+        WriteRollbackDebugReplayEventLog("record_initial_save",
+            "frame=" + std::to_string(initialState.frame) +
+            " hash=" + std::to_string(HashRollbackState(initialState)));
+        return true;
+    }
+
+    if (mode != RollbackDebugReplayMode::Verifying || !pendingInitialLoad)
+    {
+        return true;
+    }
+
+    if (!CoreRollbackLoadGameState(g_RollbackDebugReplay.initialState))
+    {
+        WriteRollbackDebugReplayEventLog("verify_initial_load_failed", CoreGetError());
+        std::lock_guard<std::mutex> lock(g_RollbackDebugReplay.mutex);
+        g_RollbackDebugReplay.mode = RollbackDebugReplayMode::Idle;
+        g_RollbackDebugReplay.pendingInitialSave = false;
+        g_RollbackDebugReplay.pendingInitialLoad = false;
+        return false;
+    }
+
+    CoreRollbackState loadedInitialState = {};
+    if (CoreRollbackSaveGameState(loadedInitialState, CoreGetCurrentFrameCount()))
+    {
+        CoreRollbackState expectedInitialState;
+        size_t recordedInputFrames;
+        {
+            std::lock_guard<std::mutex> lock(g_RollbackDebugReplay.mutex);
+            expectedInitialState = g_RollbackDebugReplay.initialState;
+            recordedInputFrames = g_RollbackDebugReplay.inputs.size();
+        }
+        const uint64_t expectedInitialHash = HashRollbackState(expectedInitialState);
+        const uint64_t loadedInitialHash = HashRollbackState(loadedInitialState);
+        WriteRollbackDebugReplayLog("verify_initial_load", expectedInitialHash == loadedInitialHash,
+            expectedInitialHash, loadedInitialHash, recordedInputFrames, 0, expectedInitialState, loadedInitialState);
+    }
+    CoreRollbackFreeGameState(loadedInitialState);
+
+    {
+        std::lock_guard<std::mutex> lock(g_RollbackDebugReplay.mutex);
+        g_RollbackDebugReplay.pendingInitialLoad = false;
+    }
+    return true;
+}
+
+bool RollbackDebugReplayInputProvider(uint32_t* inputs, int players, void* userData)
+{
+    (void)userData;
+    if (inputs == nullptr || players < 1)
     {
         return false;
     }
 
-    auto* inputValues = static_cast<uint32_t*>(values);
-    std::lock_guard<std::mutex> lock(g_RollbackDebugReplay.mutex);
-
-    if (g_RollbackDebugReplay.mode == RollbackDebugReplayMode::Recording)
+    std::array<uint32_t, kRollbackDebugReplayPlayers> frameInputs = {};
+    RollbackDebugReplayMode mode;
+    bool verifyWithGraphics = false;
     {
+        std::lock_guard<std::mutex> lock(g_RollbackDebugReplay.mutex);
+        mode = g_RollbackDebugReplay.mode;
+        verifyWithGraphics = g_RollbackDebugReplay.verifyWithGraphics;
+    }
+
+    if (mode == RollbackDebugReplayMode::Recording)
+    {
+        CoreSetFrameOutput(CoreFrameOutput_All);
+        const int playerCount = std::min(players, kRollbackDebugReplayPlayers);
+        for (int i = 0; i < playerCount; i++)
+        {
+            frameInputs[i] = inputs[i];
+        }
+
+        std::lock_guard<std::mutex> lock(g_RollbackDebugReplay.mutex);
         if (g_RollbackDebugReplay.inputs.size() < kRollbackDebugReplayFrames)
         {
-            std::array<uint32_t, kRollbackDebugReplayPlayers> frameInputs = {};
-            const int playerCount = std::min(players, kRollbackDebugReplayPlayers);
-            for (int i = 0; i < playerCount; i++)
-            {
-                frameInputs[i] = inputValues[i];
-            }
             const uint64_t inputHash = HashRollbackDebugReplayInputFrame(frameInputs);
             g_RollbackDebugReplay.inputHashes.push_back(inputHash);
             g_RollbackDebugReplay.recordedInputHash =
                 AppendRollbackDebugReplayHash(g_RollbackDebugReplay.recordedInputHash, inputHash);
             g_RollbackDebugReplay.inputs.push_back(frameInputs);
         }
-
-        return true;
+        g_RollbackDebugReplay.frameAdvancedThisFrame = true;
     }
-
-    if (g_RollbackDebugReplay.mode == RollbackDebugReplayMode::Verifying ||
-        g_RollbackDebugReplay.mode == RollbackDebugReplayMode::Synctesting ||
-        g_RollbackDebugReplay.mode == RollbackDebugReplayMode::Stressing)
+    else if (mode == RollbackDebugReplayMode::Verifying)
     {
+        CoreSetFrameOutput(verifyWithGraphics ? CoreFrameOutput_All : CoreFrameOutput_None);
+        std::lock_guard<std::mutex> lock(g_RollbackDebugReplay.mutex);
         if (g_RollbackDebugReplay.verifyInputIndex >= g_RollbackDebugReplay.inputs.size())
         {
             return false;
         }
 
-        const auto& frameInputs = g_RollbackDebugReplay.inputs[g_RollbackDebugReplay.verifyInputIndex++];
+        frameInputs = g_RollbackDebugReplay.inputs[g_RollbackDebugReplay.verifyInputIndex++];
         const uint64_t inputHash = HashRollbackDebugReplayInputFrame(frameInputs);
         if (g_RollbackDebugReplay.verifyInputIndex <= g_RollbackDebugReplay.inputHashes.size())
         {
@@ -710,26 +759,214 @@ bool RollbackDebugReplaySynchronizeInput(void* values, int size, int players, vo
                 g_RollbackDebugReplay.firstInputMismatchActualHash = inputHash;
             }
         }
-        if (g_RollbackDebugReplay.countReplayInputHash)
-        {
-            g_RollbackDebugReplay.replayedInputHash =
-                AppendRollbackDebugReplayHash(g_RollbackDebugReplay.replayedInputHash, inputHash);
-        }
-        const int playerCount = std::min(players, kRollbackDebugReplayPlayers);
-        for (int i = 0; i < playerCount; i++)
-        {
-            inputValues[i] = frameInputs[i];
-        }
+        g_RollbackDebugReplay.replayedInputHash =
+            AppendRollbackDebugReplayHash(g_RollbackDebugReplay.replayedInputHash, inputHash);
+        g_RollbackDebugReplay.frameAdvancedThisFrame = true;
+    }
+    else
+    {
+        return CoreRollbackSampleInput(inputs, static_cast<int>(sizeof(uint32_t)), players);
+    }
 
-        return true;
+    std::memset(inputs, 0, static_cast<size_t>(players) * sizeof(uint32_t));
+    const int playerCount = std::min(players, kRollbackDebugReplayPlayers);
+    for (int i = 0; i < playerCount; i++)
+    {
+        inputs[i] = frameInputs[i];
+    }
+    return true;
+}
+
+bool RollbackDebugReplayEndFrame(void* userData)
+{
+    (void)userData;
+    RollbackDebugReplayMode mode;
+    bool shouldRecordFrameHash = false;
+    bool shouldFinishRecording = false;
+    bool shouldVerifyFrame = false;
+    {
+        std::lock_guard<std::mutex> lock(g_RollbackDebugReplay.mutex);
+        mode = g_RollbackDebugReplay.mode;
+        shouldRecordFrameHash =
+            mode == RollbackDebugReplayMode::Recording &&
+            g_RollbackDebugReplay.frameAdvancedThisFrame;
+        shouldFinishRecording =
+            shouldRecordFrameHash &&
+            g_RollbackDebugReplay.inputs.size() >= static_cast<size_t>(kRollbackDebugReplayFrames);
+        shouldVerifyFrame =
+            mode == RollbackDebugReplayMode::Verifying &&
+            g_RollbackDebugReplay.frameAdvancedThisFrame;
+        g_RollbackDebugReplay.frameAdvancedThisFrame = false;
+    }
+
+    if (shouldRecordFrameHash && !RollbackDebugRecordFrameHashFromRollbackFrame())
+    {
+        return false;
+    }
+    if (shouldFinishRecording)
+    {
+        return RollbackDebugFinishRecordingFromRollbackFrame();
+    }
+    if (shouldVerifyFrame)
+    {
+        return RollbackDebugVerifyFromRollbackFrame();
     }
 
     return true;
 }
 
-int RollbackDebugReplayCoreInputCallback(void* values, int size, int players)
+bool RollbackDebugRecordFrameHashFromRollbackFrame()
 {
-    return RollbackDebugReplaySynchronizeInput(values, size, players, nullptr) ? 1 : 0;
+    CoreRollbackState frameState;
+    if (!CoreRollbackSaveGameState(frameState, CoreGetCurrentFrameCount()))
+    {
+        std::lock_guard<std::mutex> lock(g_RollbackDebugReplay.mutex);
+        g_RollbackDebugReplay.mode = RollbackDebugReplayMode::Idle;
+        g_RollbackDebugReplay.ready = false;
+        WriteRollbackDebugReplayEventLog("record_frame_hash_failed", CoreGetError());
+        return false;
+    }
+
+    const uint64_t frameHash = HashRollbackState(frameState);
+    size_t frameHashCount;
+    {
+        std::lock_guard<std::mutex> lock(g_RollbackDebugReplay.mutex);
+        if (g_RollbackDebugReplay.frameHashes.size() < static_cast<size_t>(kRollbackDebugReplayFrames))
+        {
+            g_RollbackDebugReplay.frameHashes.push_back(frameHash);
+        }
+        frameHashCount = g_RollbackDebugReplay.frameHashes.size();
+    }
+    if (frameHashCount <= 5 || (frameHashCount % 60) == 0)
+    {
+        WriteRollbackDebugReplayEventLog("record_frame_hash",
+            "frame=" + std::to_string(frameHashCount) + " hash=" + std::to_string(frameHash));
+    }
+
+    CoreRollbackFreeGameState(frameState);
+    return true;
+}
+
+bool RollbackDebugFinishRecordingFromRollbackFrame()
+{
+    CoreRollbackState finalState;
+    if (!CoreRollbackSaveGameState(finalState, CoreGetCurrentFrameCount()))
+    {
+        std::lock_guard<std::mutex> lock(g_RollbackDebugReplay.mutex);
+        g_RollbackDebugReplay.mode = RollbackDebugReplayMode::Idle;
+        g_RollbackDebugReplay.ready = false;
+        WriteRollbackDebugReplayEventLog("record_failed", CoreGetError());
+        return false;
+    }
+
+    const uint64_t finalHash = HashRollbackState(finalState);
+    size_t recordedInputFrames;
+    {
+        std::lock_guard<std::mutex> lock(g_RollbackDebugReplay.mutex);
+        if (g_RollbackDebugReplay.frameHashes.empty())
+        {
+            g_RollbackDebugReplay.frameHashes.push_back(finalHash);
+        }
+        else if (g_RollbackDebugReplay.frameHashes.size() < static_cast<size_t>(kRollbackDebugReplayFrames))
+        {
+            g_RollbackDebugReplay.frameHashes.push_back(finalHash);
+        }
+        g_RollbackDebugReplay.finalHash = finalHash;
+        g_RollbackDebugReplay.mode = RollbackDebugReplayMode::Idle;
+        recordedInputFrames = g_RollbackDebugReplay.inputs.size();
+    }
+
+    std::string replayFileError;
+    const bool replayFileSaved = SaveRollbackDebugReplayFile(replayFileError, finalState);
+    {
+        std::lock_guard<std::mutex> lock(g_RollbackDebugReplay.mutex);
+        g_RollbackDebugReplay.ready = replayFileSaved;
+    }
+    WriteRollbackDebugReplayLog("record", replayFileSaved, finalHash, finalHash,
+        recordedInputFrames, recordedInputFrames, finalState, finalState);
+    WriteRollbackDebugReplayEventLog(replayFileSaved ? "record_finished" : "record_failed",
+        replayFileSaved ? ("frames=" + std::to_string(recordedInputFrames)) : replayFileError);
+    CoreRollbackFreeGameState(finalState);
+    RollbackDebugCloseSession();
+    return replayFileSaved;
+}
+
+bool RollbackDebugVerifyFromRollbackFrame()
+{
+    CoreRollbackState finalState;
+    if (!CoreRollbackSaveGameState(finalState, CoreGetCurrentFrameCount()))
+    {
+        std::lock_guard<std::mutex> lock(g_RollbackDebugReplay.mutex);
+        g_RollbackDebugReplay.mode = RollbackDebugReplayMode::Idle;
+        return false;
+    }
+
+    const uint64_t finalHash = HashRollbackState(finalState);
+    uint64_t expectedHash;
+    CoreRollbackState expectedFinalState;
+    size_t replayedInputFrames;
+    size_t recordedInputFrames;
+    size_t verifyFrameIndex;
+    bool finished;
+    bool matched;
+    {
+        std::lock_guard<std::mutex> lock(g_RollbackDebugReplay.mutex);
+        const bool hasPerFrameHashes =
+            g_RollbackDebugReplay.frameHashes.size() == static_cast<size_t>(kRollbackDebugReplayFrames);
+        if (hasPerFrameHashes && g_RollbackDebugReplay.verifyFrameIndex < g_RollbackDebugReplay.frameHashes.size())
+        {
+            const uint64_t expectedFrameHash = g_RollbackDebugReplay.frameHashes[g_RollbackDebugReplay.verifyFrameIndex];
+            if (finalHash != expectedFrameHash && g_RollbackDebugReplay.firstMismatchFrame < 0)
+            {
+                g_RollbackDebugReplay.firstMismatchFrame = static_cast<int>(g_RollbackDebugReplay.verifyFrameIndex + 1);
+                g_RollbackDebugReplay.firstMismatchExpectedHash = expectedFrameHash;
+                g_RollbackDebugReplay.firstMismatchActualHash = finalHash;
+                WriteRollbackDebugReplayEventLog("verify_frame_mismatch",
+                    "frame=" + std::to_string(g_RollbackDebugReplay.firstMismatchFrame) +
+                    " expected_hash=" + std::to_string(expectedFrameHash) +
+                    " actual_hash=" + std::to_string(finalHash) +
+                    " replayed_inputs=" + std::to_string(g_RollbackDebugReplay.verifyInputIndex));
+            }
+        }
+        g_RollbackDebugReplay.verifyFrameIndex++;
+        expectedHash = g_RollbackDebugReplay.finalHash;
+        expectedFinalState = g_RollbackDebugReplay.finalState;
+        replayedInputFrames = g_RollbackDebugReplay.verifyInputIndex;
+        recordedInputFrames = g_RollbackDebugReplay.inputs.size();
+        verifyFrameIndex = g_RollbackDebugReplay.verifyFrameIndex;
+        finished = verifyFrameIndex >= static_cast<size_t>(kRollbackDebugReplayFrames);
+        matched = finalHash == expectedHash &&
+            recordedInputFrames == replayedInputFrames &&
+            g_RollbackDebugReplay.recordedInputHash == g_RollbackDebugReplay.replayedInputHash &&
+            g_RollbackDebugReplay.firstInputMismatchFrame < 0;
+        if (finished)
+        {
+            g_RollbackDebugReplay.mode = RollbackDebugReplayMode::Idle;
+            g_RollbackDebugReplay.lastVerifyCompleted = true;
+            g_RollbackDebugReplay.lastVerifyMatched = matched;
+            g_RollbackDebugReplay.lastVerifyExpectedHash = expectedHash;
+            g_RollbackDebugReplay.lastVerifyActualHash = finalHash;
+            g_RollbackDebugReplay.lastVerifyRecordedInputFrames = recordedInputFrames;
+            g_RollbackDebugReplay.lastVerifyReplayedInputFrames = replayedInputFrames;
+        }
+    }
+
+    if (!finished && (verifyFrameIndex <= 5 || (verifyFrameIndex % 60) == 0))
+    {
+        WriteRollbackDebugReplayEventLog("verify_frame_progress",
+            "frame=" + std::to_string(verifyFrameIndex) +
+            " hash=" + std::to_string(finalHash) +
+            " replayed_inputs=" + std::to_string(replayedInputFrames));
+    }
+
+    if (finished)
+    {
+        WriteRollbackDebugReplayLog("verify", matched, expectedHash, finalHash,
+            recordedInputFrames, replayedInputFrames, expectedFinalState, finalState);
+        RollbackDebugCloseSession();
+    }
+    CoreRollbackFreeGameState(finalState);
+    return true;
 }
 
 int FirstRollbackStatePayloadDifference(const CoreRollbackState& expected, const CoreRollbackState& actual, int& expectedLen, int& actualLen)
@@ -803,9 +1040,6 @@ void WriteRollbackDebugReplayLog(const std::string& phase,
     }
     log << "recorded_frame_hashes=" << g_RollbackDebugReplay.frameHashes.size() << "\n";
     log << "verify_frame_index=" << g_RollbackDebugReplay.verifyFrameIndex << "\n";
-    log << "stress_rollback_count=" << g_RollbackDebugReplay.stressRollbackCount << "\n";
-    log << "stress_rollback_frames=" << g_RollbackDebugReplay.stressRollbackFrames << "\n";
-    log << "stress_resimulated_frames=" << g_RollbackDebugReplay.stressResimulatedFrames << "\n";
     log << "first_mismatch_frame=" << g_RollbackDebugReplay.firstMismatchFrame << "\n";
     log << "first_mismatch_expected_hash=" << g_RollbackDebugReplay.firstMismatchExpectedHash << "\n";
     log << "first_mismatch_actual_hash=" << g_RollbackDebugReplay.firstMismatchActualHash << "\n";
@@ -902,10 +1136,9 @@ MainWindow::MainWindow() : QMainWindow(nullptr)
 
 MainWindow::~MainWindow()
 {
-    RollbackDebugFreeState(this->ui_RollbackDebugState);
-    RollbackDebugFreeState(g_RollbackDebugReplay.initialState);
-    RollbackDebugFreeState(g_RollbackDebugReplay.finalState);
-    FreeRollbackDebugStressCheckpoints();
+    CoreRollbackFreeGameState(this->ui_RollbackDebugState);
+    CoreRollbackFreeGameState(g_RollbackDebugReplay.initialState);
+    CoreRollbackFreeGameState(g_RollbackDebugReplay.finalState);
 }
 
 bool MainWindow::Init(QApplication* app, bool showUI, bool launchROM)
@@ -1125,7 +1358,7 @@ void MainWindow::closeEvent(QCloseEvent *event)
     // we have to make sure we save the geomtry
     // for the ROM browser when emulation
     // isn't running (or hasn't run at all)
-    if (!this->ui_QuitAfterEmulation && 
+    if (!this->ui_QuitAfterEmulation &&
         !inEmulation)
     {
         this->storeGeometry();
@@ -1233,7 +1466,7 @@ void MainWindow::initializeUI(bool launchROM)
     this->ui_StatusBar_RenderModeLabel = new QLabel(this);
 
     // only start refreshing the ROM browser
-    // when RMG isn't launched with a ROM 
+    // when RMG isn't launched with a ROM
     // specified on the commandline
     if (!launchROM)
     {
@@ -1436,7 +1669,7 @@ void MainWindow::configureTheme(QApplication* app)
         // set the stylesheet theme,
         // if the file exists and can be opened
         QFile themeFile(themePath);
-        if (themeFile.exists() && 
+        if (themeFile.exists() &&
             themeFile.open(QIODevice::ReadOnly))
         {
             app->setStyleSheet(themeFile.readAll());
@@ -1995,13 +2228,11 @@ void MainWindow::updateActions(bool inEmulation, bool isPaused)
     this->action_System_Exit->setShortcut(QKeySequence(keyBinding));
 
     // rollback actions
-    this->action_Rollback_SaveState->setEnabled(inEmulation && isPaused);
-    this->action_Rollback_LoadState->setEnabled(inEmulation && isPaused && this->ui_RollbackDebugState.buffer != nullptr);
-    this->action_Rollback_StartDebugReplay->setEnabled(inEmulation && isPaused && rollbackDebugReplayIdle);
-    this->action_Rollback_VerifyDebugReplay->setEnabled(inEmulation && isPaused && rollbackDebugReplayReady && rollbackDebugReplayIdle);
-    this->action_Rollback_VerifyDebugReplayWithGraphics->setEnabled(inEmulation && isPaused && rollbackDebugReplayReady && rollbackDebugReplayIdle);
-    this->action_Rollback_StressDebugReplay->setEnabled(inEmulation && isPaused && rollbackDebugReplayReady && rollbackDebugReplayIdle);
-    this->action_Rollback_SynctestDebugReplay->setEnabled(inEmulation && isPaused && rollbackDebugReplayReady && rollbackDebugReplayIdle);
+    this->action_Rollback_SaveState->setEnabled(inEmulation && rollbackDebugReplayIdle);
+    this->action_Rollback_LoadState->setEnabled(inEmulation && rollbackDebugReplayIdle && this->ui_RollbackDebugState.buffer != nullptr);
+    this->action_Rollback_StartDebugReplay->setEnabled(inEmulation && rollbackDebugReplayIdle);
+    this->action_Rollback_VerifyDebugReplay->setEnabled(inEmulation && rollbackDebugReplayReady && rollbackDebugReplayIdle);
+    this->action_Rollback_VerifyDebugReplayWithGraphics->setEnabled(inEmulation && rollbackDebugReplayReady && rollbackDebugReplayIdle);
     this->action_Rollback_ClientInputReplay->setEnabled(inEmulation);
     if (!inEmulation)
     {
@@ -2220,7 +2451,7 @@ Qt::ToolBarArea MainWindow::getToolbarAreaFromSettingArea(int value)
         return Qt::ToolBarArea::TopToolBarArea;
     case 1:
         return Qt::ToolBarArea::BottomToolBarArea;
-    case 2: 
+    case 2:
         return Qt::ToolBarArea::LeftToolBarArea;
     case 3:
         return Qt::ToolBarArea::RightToolBarArea;
@@ -2268,8 +2499,7 @@ void MainWindow::configureActions(void)
         this->action_System_GSButton, this->action_System_Exit,
         this->action_Rollback_SaveState, this->action_Rollback_LoadState,
         this->action_Rollback_StartDebugReplay, this->action_Rollback_VerifyDebugReplay,
-        this->action_Rollback_VerifyDebugReplayWithGraphics, this->action_Rollback_StressDebugReplay,
-        this->action_Rollback_SynctestDebugReplay, this->action_Rollback_ClientInputReplay,
+        this->action_Rollback_VerifyDebugReplayWithGraphics, this->action_Rollback_ClientInputReplay,
         // Settings actions
         this->action_Settings_Graphics, this->action_Settings_Audio,
         this->action_Settings_Rsp, this->action_Settings_Input,
@@ -2401,8 +2631,6 @@ void MainWindow::connectActionSignals(void)
     connect(this->action_Rollback_StartDebugReplay, &QAction::triggered, this, &MainWindow::on_Action_Rollback_StartDebugReplay);
     connect(this->action_Rollback_VerifyDebugReplay, &QAction::triggered, this, &MainWindow::on_Action_Rollback_VerifyDebugReplay);
     connect(this->action_Rollback_VerifyDebugReplayWithGraphics, &QAction::triggered, this, &MainWindow::on_Action_Rollback_VerifyDebugReplayWithGraphics);
-    connect(this->action_Rollback_StressDebugReplay, &QAction::triggered, this, &MainWindow::on_Action_Rollback_StressDebugReplay);
-    connect(this->action_Rollback_SynctestDebugReplay, &QAction::triggered, this, &MainWindow::on_Action_Rollback_SynctestDebugReplay);
     connect(this->action_Rollback_ClientInputReplay, &QAction::triggered, this, &MainWindow::on_Action_Rollback_ClientInputReplay);
 
     connect(this->action_Settings_Graphics, &QAction::triggered, this, &MainWindow::on_Action_Settings_Graphics);
@@ -2491,7 +2719,7 @@ void MainWindow::showNetplaySessionDialog(QWebSocket* webSocket, QJsonObject jso
         this->netplaySessionDialog->deleteLater();
         this->netplaySessionDialog = nullptr;
     }
-    
+
     this->netplaySessionDialog = new Dialog::NetplaySessionDialog(nullptr, webSocket, json, sessionFile);
     connect(this->netplaySessionDialog, &Dialog::NetplaySessionDialog::OnPlayGame, this, &MainWindow::on_Netplay_PlayGame);
     connect(this->netplaySessionDialog, &Dialog::NetplaySessionDialog::rejected, this, &MainWindow::on_NetplaySessionDialog_rejected);
@@ -2759,7 +2987,7 @@ void MainWindow::on_EventFilter_FileDropped(QDropEvent *event)
     if (inEmulation && confirmDragDrop)
     {
         confirmDragDrop = false;
-        bool ret = QtMessageBox::Question(this, "Are you sure you want to launch the drag & dropped ROM?", 
+        bool ret = QtMessageBox::Question(this, "Are you sure you want to launch the drag & dropped ROM?",
                                                 "Don't ask for confirmation again", confirmDragDrop);
         if (!ret)
         {
@@ -3085,7 +3313,7 @@ void MainWindow::on_Action_System_SaveAs(void)
     {
         this->ui_ManuallySavedState = true;
 
-        CoreSaveStateType type = fileName.endsWith(".pj") ? 
+        CoreSaveStateType type = fileName.endsWith(".pj") ?
                                     CoreSaveStateType::Project64 :
                                     CoreSaveStateType::Mupen64Plus;
 
@@ -4725,174 +4953,6 @@ void MainWindow::on_Core_StateCallback(CoreStateCallbackType type, int value)
 
             if (value == static_cast<int>(CoreEmulationState::Paused))
             {
-                RollbackDebugReplayMode replayMode;
-                {
-                    std::lock_guard<std::mutex> lock(g_RollbackDebugReplay.mutex);
-                    replayMode = g_RollbackDebugReplay.mode;
-                }
-
-                if (replayMode == RollbackDebugReplayMode::Recording)
-                {
-                    CoreRollbackState finalState;
-                    RollbackDebugCloseSession();
-
-                    if (!RollbackDebugSaveState(finalState, CoreGetCurrentFrameCount()))
-                    {
-                        {
-                            std::lock_guard<std::mutex> lock(g_RollbackDebugReplay.mutex);
-                            g_RollbackDebugReplay.mode = RollbackDebugReplayMode::Idle;
-                            g_RollbackDebugReplay.ready = false;
-                        }
-                        this->showErrorMessage("Debug Replay Recording Failed", QString::fromStdString(CoreGetError()));
-                    }
-                    else
-                    {
-                        uint64_t finalHash = HashRollbackState(finalState);
-                        size_t recordedInputFrames;
-                        {
-                            std::lock_guard<std::mutex> lock(g_RollbackDebugReplay.mutex);
-                            g_RollbackDebugReplay.frameHashes.clear();
-                            g_RollbackDebugReplay.frameHashes.push_back(finalHash);
-                            g_RollbackDebugReplay.finalHash = finalHash;
-                            g_RollbackDebugReplay.mode = RollbackDebugReplayMode::Idle;
-                            recordedInputFrames = g_RollbackDebugReplay.inputs.size();
-                        }
-                        std::string replayFileError;
-                        const bool replayFileSaved = SaveRollbackDebugReplayFile(replayFileError, finalState);
-                        {
-                            std::lock_guard<std::mutex> lock(g_RollbackDebugReplay.mutex);
-                            g_RollbackDebugReplay.ready = replayFileSaved;
-                        }
-                        WriteRollbackDebugReplayLog("record", true, finalHash, finalHash, recordedInputFrames, recordedInputFrames, finalState, finalState);
-                        OnScreenDisplayResume();
-                        if (replayFileSaved)
-                        {
-                            this->setDebugReplayStatusMessage("Recorded debug replay: " + std::to_string(recordedInputFrames) +
-                                " input frames, payload hash " + std::to_string(finalHash) + ", wrote " + kRollbackDebugReplayFilePath +
-                                " and " + kRollbackDebugReplayLogPath);
-                        }
-                        else
-                        {
-                            this->setDebugReplayStatusMessage("Failed to write debug replay: " + replayFileError);
-                        }
-                    }
-
-                    RollbackDebugFreeState(finalState);
-                    this->updateActions(true, true);
-                }
-                else if (replayMode == RollbackDebugReplayMode::Verifying)
-                {
-                    CoreRollbackState finalState;
-
-                    if (!RollbackDebugSaveState(finalState, CoreGetCurrentFrameCount()))
-                    {
-                        RollbackDebugCloseSession();
-                        {
-                            std::lock_guard<std::mutex> lock(g_RollbackDebugReplay.mutex);
-                            g_RollbackDebugReplay.mode = RollbackDebugReplayMode::Idle;
-                        }
-                        this->showErrorMessage("Debug Replay Verification Failed", QString::fromStdString(CoreGetError()));
-                    }
-                    else
-                    {
-                        const uint64_t finalHash = HashRollbackState(finalState);
-                        uint64_t expectedHash;
-                        CoreRollbackState expectedFinalState;
-                        size_t replayedInputFrames;
-                        size_t recordedInputFrames;
-                        size_t verifyFrameIndex;
-                        bool finished;
-                        bool matched;
-                        {
-                            std::lock_guard<std::mutex> lock(g_RollbackDebugReplay.mutex);
-                            const bool hasPerFrameHashes =
-                                g_RollbackDebugReplay.frameHashes.size() == static_cast<size_t>(kRollbackDebugReplayFrames);
-                            if (hasPerFrameHashes && g_RollbackDebugReplay.verifyFrameIndex < g_RollbackDebugReplay.frameHashes.size())
-                            {
-                                const uint64_t expectedFrameHash = g_RollbackDebugReplay.frameHashes[g_RollbackDebugReplay.verifyFrameIndex];
-                                if (finalHash != expectedFrameHash && g_RollbackDebugReplay.firstMismatchFrame < 0)
-                                {
-                                    g_RollbackDebugReplay.firstMismatchFrame = static_cast<int>(g_RollbackDebugReplay.verifyFrameIndex + 1);
-                                    g_RollbackDebugReplay.firstMismatchExpectedHash = expectedFrameHash;
-                                    g_RollbackDebugReplay.firstMismatchActualHash = finalHash;
-                                }
-                            }
-                            g_RollbackDebugReplay.verifyFrameIndex++;
-                            expectedHash = g_RollbackDebugReplay.finalHash;
-                            expectedFinalState = g_RollbackDebugReplay.finalState;
-                            replayedInputFrames = g_RollbackDebugReplay.verifyInputIndex;
-                            recordedInputFrames = g_RollbackDebugReplay.inputs.size();
-                            verifyFrameIndex = g_RollbackDebugReplay.verifyFrameIndex;
-                            finished = !hasPerFrameHashes || verifyFrameIndex >= static_cast<size_t>(kRollbackDebugReplayFrames);
-                            matched = finalHash == expectedHash;
-                        }
-
-                        if (!finished)
-                        {
-                            const bool withGraphics = g_RollbackDebugReplay.verifyWithGraphics;
-                            RollbackDebugFreeState(finalState);
-                            if ((verifyFrameIndex % 60) == 0)
-                            {
-                                OnScreenDisplayResume();
-                                this->setDebugReplayStatusMessage("Verifying debug replay" + std::string(withGraphics ? " with graphics: " : ": ") +
-                                    std::to_string(verifyFrameIndex) + "/" + std::to_string(kRollbackDebugReplayFrames) + " frames");
-                            }
-                            QTimer::singleShot(0, this, [this, withGraphics]()
-                            {
-                                bool stillVerifying;
-                                {
-                                    std::lock_guard<std::mutex> lock(g_RollbackDebugReplay.mutex);
-                                    stillVerifying = g_RollbackDebugReplay.mode == RollbackDebugReplayMode::Verifying;
-                                }
-                                if (stillVerifying && !RollbackDebugAdvanceFrame(withGraphics ? CoreFrameOutput_All : CoreFrameOutput_None))
-                                {
-                                    RollbackDebugCloseSession();
-                                    {
-                                        std::lock_guard<std::mutex> lock(g_RollbackDebugReplay.mutex);
-                                        g_RollbackDebugReplay.mode = RollbackDebugReplayMode::Idle;
-                                    }
-                                    this->updateActions(true, true);
-                                    this->showErrorMessage("Debug Replay Verify Run Failed", QString::fromStdString(CoreGetError()));
-                                }
-                            });
-                            return;
-                        }
-
-                        RollbackDebugCloseSession();
-                        {
-                            std::lock_guard<std::mutex> lock(g_RollbackDebugReplay.mutex);
-                            g_RollbackDebugReplay.mode = RollbackDebugReplayMode::Idle;
-                        }
-                        WriteRollbackDebugReplayLog("verify", matched, expectedHash, finalHash, recordedInputFrames,
-                            replayedInputFrames, expectedFinalState, finalState);
-
-                        if (matched)
-                        {
-                            OnScreenDisplayResume();
-                            this->setDebugReplayStatusMessage("Debug replay matched: " + std::to_string(replayedInputFrames) +
-                                " input frames, payload hash " + std::to_string(finalHash) + ", wrote " + kRollbackDebugReplayLogPath);
-                        }
-                        else
-                        {
-                            int expectedPayloadLen = 0;
-                            int actualPayloadLen = 0;
-                            const int firstDiff = FirstRollbackStatePayloadDifference(expectedFinalState, finalState, expectedPayloadLen, actualPayloadLen);
-                            OnScreenDisplayResume();
-                            this->setDebugReplayStatusMessage("Debug replay mismatch: expected " + std::to_string(expectedHash) +
-                                ", got " + std::to_string(finalHash) + ", replayed " + std::to_string(replayedInputFrames) +
-                                "/" + std::to_string(recordedInputFrames) + " input frames, first payload diff " +
-                                std::to_string(firstDiff) + ", lens " + std::to_string(expectedPayloadLen) + "/" +
-                                std::to_string(actualPayloadLen) + ", wrote " + kRollbackDebugReplayLogPath);
-                        }
-                    }
-
-                    RollbackDebugFreeState(finalState);
-                    this->updateActions(true, true);
-                }
-                else if (replayMode == RollbackDebugReplayMode::Stressing)
-                {
-                    this->continueStressDebugReplay();
-                }
             }
         } break;
         case CoreStateCallbackType::SaveStateSlot:
@@ -4957,7 +5017,7 @@ void MainWindow::on_Core_StateCallback(CoreStateCallbackType type, int value)
                 }
                 else
                 {
-                    this->ui_LoadSaveStateSlotTimerId = this->startTimer(500);   
+                    this->ui_LoadSaveStateSlotTimerId = this->startTimer(500);
                 }
             }
             else if (this->ui_LoadSaveStateSlotTimerId != -1 && value != 0)
@@ -4997,7 +5057,7 @@ void MainWindow::on_Core_StateCallback(CoreStateCallbackType type, int value)
             }
             this->ui_UpdateSaveStateSlotTimerId = this->startTimer(1000);
 
-            this->action_Rollback_LoadState->setEnabled(CoreIsEmulationPaused() && this->ui_RollbackDebugState.buffer != nullptr);
+            this->action_Rollback_LoadState->setEnabled(this->ui_RollbackDebugState.buffer != nullptr);
 
             this->ui_ManuallySavedState = false;
         } break;
@@ -5017,10 +5077,16 @@ void MainWindow::on_Core_StateCallback(CoreStateCallbackType type, int value)
 
 void MainWindow::on_Action_Rollback_SaveState(void)
 {
-    RollbackDebugFreeState(this->ui_RollbackDebugState);
+    if (!RollbackDebugEnsureStableFrameControl())
+    {
+        this->showErrorMessage("Save Rollback State Failed", QString::fromStdString(CoreGetError()));
+        return;
+    }
+
+    CoreRollbackFreeGameState(this->ui_RollbackDebugState);
     this->action_Rollback_LoadState->setEnabled(false);
 
-    if (!RollbackDebugSaveState(this->ui_RollbackDebugState, CoreGetCurrentFrameCount()))
+    if (!CoreRollbackSaveGameState(this->ui_RollbackDebugState, CoreGetCurrentFrameCount()))
     {
         this->showErrorMessage("Save Rollback State Failed", QString::fromStdString(CoreGetError()));
         return;
@@ -5032,12 +5098,18 @@ void MainWindow::on_Action_Rollback_SaveState(void)
 
 void MainWindow::on_Action_Rollback_LoadState(void)
 {
+    if (!RollbackDebugEnsureStableFrameControl())
+    {
+        this->showErrorMessage("Load Rollback State Failed", QString::fromStdString(CoreGetError()));
+        return;
+    }
+
     if (this->ui_RollbackDebugState.buffer == nullptr)
     {
         return;
     }
 
-    if (!RollbackDebugLoadState(this->ui_RollbackDebugState))
+    if (!CoreRollbackLoadGameState(this->ui_RollbackDebugState))
     {
         this->showErrorMessage("Load Rollback State Failed", QString::fromStdString(CoreGetError()));
         return;
@@ -5048,14 +5120,14 @@ void MainWindow::on_Action_Rollback_LoadState(void)
 
 void MainWindow::on_Action_Rollback_StartDebugReplay(void)
 {
-    if (!CoreIsEmulationPaused())
+    if (!RollbackDebugEnsureStableFrameControl())
     {
-        this->setDebugReplayStatusMessage("Pause emulation before recording a debug replay");
+        this->showErrorMessage("Debug Replay Pause Failed", QString::fromStdString(CoreGetError()));
         return;
     }
 
-    RollbackDebugFreeState(g_RollbackDebugReplay.initialState);
-    RollbackDebugFreeState(g_RollbackDebugReplay.finalState);
+    CoreRollbackFreeGameState(g_RollbackDebugReplay.initialState);
+    CoreRollbackFreeGameState(g_RollbackDebugReplay.finalState);
     {
         std::lock_guard<std::mutex> lock(g_RollbackDebugReplay.mutex);
         g_RollbackDebugReplay.inputs.clear();
@@ -5072,21 +5144,13 @@ void MainWindow::on_Action_Rollback_StartDebugReplay(void)
         g_RollbackDebugReplay.recordedInputHash = 0;
         g_RollbackDebugReplay.replayedInputHash = 0;
         g_RollbackDebugReplay.finalHash = 0;
-        g_RollbackDebugReplay.stressRollbackCount = 0;
-        g_RollbackDebugReplay.stressRollbackFrames = 0;
-        g_RollbackDebugReplay.stressResimulatedFrames = 0;
-        g_RollbackDebugReplay.stressResumeFrame = 0;
+        g_RollbackDebugReplay.frameAdvancedThisFrame = false;
+        g_RollbackDebugReplay.pendingInitialSave = true;
+        g_RollbackDebugReplay.pendingInitialLoad = false;
         g_RollbackDebugReplay.countReplayInputHash = true;
-        g_RollbackDebugReplay.stressResimulating = false;
         g_RollbackDebugReplay.verifyWithGraphics = false;
         g_RollbackDebugReplay.ready = false;
         g_RollbackDebugReplay.mode = RollbackDebugReplayMode::Idle;
-    }
-
-    if (!RollbackDebugSaveState(g_RollbackDebugReplay.initialState, CoreGetCurrentFrameCount()))
-    {
-        this->showErrorMessage("Debug Replay Save Initial State Failed", QString::fromStdString(CoreGetError()));
-        return;
     }
 
     if (!CoreRollbackSetDeterministic(true))
@@ -5095,11 +5159,9 @@ void MainWindow::on_Action_Rollback_StartDebugReplay(void)
         return;
     }
 
-    if (!RollbackDebugStartSession())
-    {
-        this->showErrorMessage("Debug Replay Input Callback Failed", QString::fromStdString(CoreGetError()));
-        return;
-    }
+    rmgk_gekko::set_debug_hooks(RollbackDebugReplayInputProvider, RollbackDebugReplayBeginFrame, RollbackDebugReplayEndFrame, nullptr);
+    CoreSetFrameOutput(CoreFrameOutput_All);
+    rmgk_gekko::set_debug_frame_output(CoreFrameOutput_All);
 
     {
         std::lock_guard<std::mutex> lock(g_RollbackDebugReplay.mutex);
@@ -5109,17 +5171,45 @@ void MainWindow::on_Action_Rollback_StartDebugReplay(void)
     this->updateActions(true, true);
     this->setDebugReplayStatusMessage("Recording debug replay for " + std::to_string(kRollbackDebugReplayFrames) + " frames");
 
-    if (!RollbackDebugAdvanceFrames(kRollbackDebugReplayFrames, CoreFrameOutput_All))
+    QTimer* progressTimer = new QTimer(this);
+    progressTimer->setInterval(250);
+    connect(progressTimer, &QTimer::timeout, this, [this, progressTimer]()
     {
-        RollbackDebugCloseSession();
+        RollbackDebugReplayMode mode;
+        bool ready;
+        size_t recordedInputFrames;
+        uint64_t finalHash;
         {
             std::lock_guard<std::mutex> lock(g_RollbackDebugReplay.mutex);
-            g_RollbackDebugReplay.mode = RollbackDebugReplayMode::Idle;
-            g_RollbackDebugReplay.ready = false;
+            mode = g_RollbackDebugReplay.mode;
+            ready = g_RollbackDebugReplay.ready;
+            recordedInputFrames = g_RollbackDebugReplay.inputs.size();
+            finalHash = g_RollbackDebugReplay.finalHash;
         }
-        this->updateActions(true, true);
-        this->showErrorMessage("Debug Replay Run Failed", QString::fromStdString(CoreGetError()));
-    }
+
+        if (mode == RollbackDebugReplayMode::Recording)
+        {
+            this->setDebugReplayStatusMessage("Recording debug replay: " + std::to_string(recordedInputFrames) +
+                "/" + std::to_string(kRollbackDebugReplayFrames) + " frames");
+            return;
+        }
+
+        progressTimer->stop();
+        progressTimer->deleteLater();
+        this->updateActions(true, false);
+        if (ready)
+        {
+            this->setDebugReplayStatusMessage("Recorded debug replay: " + std::to_string(recordedInputFrames) +
+                " input frames, payload hash " + std::to_string(finalHash) + ", wrote " + kRollbackDebugReplayFilePath +
+                " and " + kRollbackDebugReplayLogPath);
+        }
+        else
+        {
+            this->setDebugReplayStatusMessage("Debug replay recording stopped before a replay was written; wrote " +
+                std::string(kRollbackDebugReplayLogPath));
+        }
+    });
+    progressTimer->start();
 }
 
 void MainWindow::on_Action_Rollback_VerifyDebugReplay(void)
@@ -5130,149 +5220,6 @@ void MainWindow::on_Action_Rollback_VerifyDebugReplay(void)
 void MainWindow::on_Action_Rollback_VerifyDebugReplayWithGraphics(void)
 {
     this->startVerifyDebugReplay(true);
-}
-
-void MainWindow::on_Action_Rollback_StressDebugReplay(void)
-{
-    this->runStressDebugReplay();
-}
-
-void MainWindow::on_Action_Rollback_SynctestDebugReplay(void)
-{
-    if (!CoreIsEmulationPaused())
-    {
-        this->setDebugReplayStatusMessage("Pause emulation before running rollback synctest");
-        return;
-    }
-
-    std::string replayFileError;
-    if (!LoadRollbackDebugReplayFile(replayFileError))
-    {
-        this->setDebugReplayStatusMessage("Could not load debug replay: " + replayFileError);
-        WriteRollbackDebugReplayEventLog("rollback_synctest_load_failed", replayFileError);
-        return;
-    }
-
-    {
-        std::lock_guard<std::mutex> lock(g_RollbackDebugReplay.mutex);
-        if (!g_RollbackDebugReplay.ready || g_RollbackDebugReplay.initialState.buffer == nullptr)
-        {
-            this->setDebugReplayStatusMessage("No debug replay recorded yet");
-            return;
-        }
-        g_RollbackDebugReplay.verifyInputIndex = 0;
-        g_RollbackDebugReplay.verifyFrameIndex = 0;
-        g_RollbackDebugReplay.firstInputMismatchFrame = -1;
-        g_RollbackDebugReplay.firstInputMismatchExpectedHash = 0;
-        g_RollbackDebugReplay.firstInputMismatchActualHash = 0;
-        g_RollbackDebugReplay.firstMismatchFrame = -1;
-        g_RollbackDebugReplay.firstMismatchExpectedHash = 0;
-        g_RollbackDebugReplay.firstMismatchActualHash = 0;
-        g_RollbackDebugReplay.replayedInputHash = 0;
-        g_RollbackDebugReplay.stressRollbackCount = 0;
-        g_RollbackDebugReplay.stressRollbackFrames = 0;
-        g_RollbackDebugReplay.stressResimulatedFrames = 0;
-        g_RollbackDebugReplay.stressResumeFrame = 0;
-        g_RollbackDebugReplay.countReplayInputHash = true;
-        g_RollbackDebugReplay.stressResimulating = false;
-        g_RollbackDebugReplay.verifyWithGraphics = false;
-    }
-
-    if (!CoreRollbackSetDeterministic(true))
-    {
-        this->showErrorMessage("Rollback Synctest Deterministic Mode Failed", QString::fromStdString(CoreGetError()));
-        return;
-    }
-
-    if (!RollbackDebugLoadState(g_RollbackDebugReplay.initialState))
-    {
-        this->showErrorMessage("Rollback Synctest Load Initial State Failed", QString::fromStdString(CoreGetError()));
-        return;
-    }
-
-    if (!RollbackDebugStartSession())
-    {
-        this->showErrorMessage("Rollback Synctest Start Failed", QString::fromStdString(CoreGetError()));
-        return;
-    }
-
-    {
-        std::lock_guard<std::mutex> lock(g_RollbackDebugReplay.mutex);
-        g_RollbackDebugReplay.mode = RollbackDebugReplayMode::Synctesting;
-    }
-
-    this->updateActions(true, true);
-    this->setDebugReplayStatusMessage("Running rollback synctest debug replay for " + std::to_string(kRollbackDebugReplayFrames) + " frames");
-    WriteRollbackDebugReplayEventLog("rollback_synctest_started", "hidden");
-
-    if (!RollbackDebugAdvanceFrames(kRollbackDebugReplayFrames, CoreFrameOutput_None))
-    {
-        RollbackDebugCloseSession();
-        {
-            std::lock_guard<std::mutex> lock(g_RollbackDebugReplay.mutex);
-            g_RollbackDebugReplay.mode = RollbackDebugReplayMode::Idle;
-        }
-        this->updateActions(true, true);
-        this->showErrorMessage("Rollback Synctest Run Failed", QString::fromStdString(CoreGetError()));
-        return;
-    }
-
-    CoreRollbackState finalState;
-    if (!RollbackDebugSaveState(finalState, CoreGetCurrentFrameCount()))
-    {
-        RollbackDebugCloseSession();
-        {
-            std::lock_guard<std::mutex> lock(g_RollbackDebugReplay.mutex);
-            g_RollbackDebugReplay.mode = RollbackDebugReplayMode::Idle;
-        }
-        this->updateActions(true, true);
-        this->showErrorMessage("Rollback Synctest Save Final State Failed", QString::fromStdString(CoreGetError()));
-        return;
-    }
-
-    const uint64_t finalHash = HashRollbackState(finalState);
-    uint64_t expectedHash;
-    CoreRollbackState expectedFinalState;
-    size_t replayedInputFrames;
-    size_t recordedInputFrames;
-    bool inputsMatched;
-    {
-        std::lock_guard<std::mutex> lock(g_RollbackDebugReplay.mutex);
-        g_RollbackDebugReplay.verifyFrameIndex = kRollbackDebugReplayFrames;
-        expectedHash = g_RollbackDebugReplay.finalHash;
-        expectedFinalState = g_RollbackDebugReplay.finalState;
-        replayedInputFrames = g_RollbackDebugReplay.verifyInputIndex;
-        recordedInputFrames = g_RollbackDebugReplay.inputs.size();
-        inputsMatched =
-            recordedInputFrames == replayedInputFrames &&
-            g_RollbackDebugReplay.recordedInputHash == g_RollbackDebugReplay.replayedInputHash &&
-            g_RollbackDebugReplay.firstInputMismatchFrame < 0;
-        g_RollbackDebugReplay.mode = RollbackDebugReplayMode::Idle;
-    }
-
-    RollbackDebugCloseSession();
-    const bool matched = inputsMatched && finalHash == expectedHash;
-    WriteRollbackDebugReplayLog("rollback_synctest_verify", matched, expectedHash, finalHash,
-        recordedInputFrames, replayedInputFrames, expectedFinalState, finalState);
-
-    if (matched)
-    {
-        this->setDebugReplayStatusMessage("Rollback synctest replay matched: " + std::to_string(replayedInputFrames) +
-            " input frames, payload hash " + std::to_string(finalHash) + ", wrote " + kRollbackDebugReplayLogPath);
-    }
-    else
-    {
-        int expectedPayloadLen = 0;
-        int actualPayloadLen = 0;
-        const int firstDiff = FirstRollbackStatePayloadDifference(expectedFinalState, finalState, expectedPayloadLen, actualPayloadLen);
-        this->setDebugReplayStatusMessage("Rollback synctest replay mismatch: expected " + std::to_string(expectedHash) +
-            ", got " + std::to_string(finalHash) + ", replayed " + std::to_string(replayedInputFrames) +
-            "/" + std::to_string(recordedInputFrames) + " input frames, first payload diff " +
-            std::to_string(firstDiff) + ", lens " + std::to_string(expectedPayloadLen) + "/" +
-            std::to_string(actualPayloadLen) + ", wrote " + kRollbackDebugReplayLogPath);
-    }
-
-    this->updateActions(true, true);
 }
 
 void MainWindow::on_Action_Rollback_ClientInputReplay(bool checked)
@@ -5296,9 +5243,9 @@ void MainWindow::on_Action_Rollback_ClientInputReplay(bool checked)
 
 void MainWindow::startVerifyDebugReplay(bool withGraphics)
 {
-    if (!CoreIsEmulationPaused())
+    if (!RollbackDebugEnsureStableFrameControl())
     {
-        this->setDebugReplayStatusMessage("Pause emulation before verifying a debug replay");
+        this->showErrorMessage("Debug Replay Pause Failed", QString::fromStdString(CoreGetError()));
         return;
     }
 
@@ -5326,13 +5273,18 @@ void MainWindow::startVerifyDebugReplay(bool withGraphics)
         g_RollbackDebugReplay.firstMismatchExpectedHash = 0;
         g_RollbackDebugReplay.firstMismatchActualHash = 0;
         g_RollbackDebugReplay.replayedInputHash = 0;
-        g_RollbackDebugReplay.stressRollbackCount = 0;
-        g_RollbackDebugReplay.stressRollbackFrames = 0;
-        g_RollbackDebugReplay.stressResimulatedFrames = 0;
-        g_RollbackDebugReplay.stressResumeFrame = 0;
+        g_RollbackDebugReplay.frameAdvancedThisFrame = false;
+        g_RollbackDebugReplay.pendingInitialSave = false;
+        g_RollbackDebugReplay.pendingInitialLoad = true;
         g_RollbackDebugReplay.countReplayInputHash = true;
-        g_RollbackDebugReplay.stressResimulating = false;
         g_RollbackDebugReplay.verifyWithGraphics = withGraphics;
+        g_RollbackDebugReplay.lastVerifyCompleted = false;
+        g_RollbackDebugReplay.lastVerifyMatched = false;
+        g_RollbackDebugReplay.lastVerifyExpectedHash = 0;
+        g_RollbackDebugReplay.lastVerifyActualHash = 0;
+        g_RollbackDebugReplay.lastVerifyRecordedInputFrames = 0;
+        g_RollbackDebugReplay.lastVerifyReplayedInputFrames = 0;
+        g_RollbackDebugReplay.mode = RollbackDebugReplayMode::Verifying;
     }
 
     if (!CoreRollbackSetDeterministic(true))
@@ -5341,337 +5293,72 @@ void MainWindow::startVerifyDebugReplay(bool withGraphics)
         return;
     }
 
-    if (!RollbackDebugLoadState(g_RollbackDebugReplay.initialState))
-    {
-        this->showErrorMessage("Debug Replay Load Initial State Failed", QString::fromStdString(CoreGetError()));
-        return;
-    }
-
-    CoreRollbackState loadedInitialState = {};
-    if (RollbackDebugSaveState(loadedInitialState, CoreGetCurrentFrameCount()))
-    {
-        CoreRollbackState expectedInitialState;
-        size_t recordedInputFrames;
-        {
-            std::lock_guard<std::mutex> lock(g_RollbackDebugReplay.mutex);
-            expectedInitialState = g_RollbackDebugReplay.initialState;
-            recordedInputFrames = g_RollbackDebugReplay.inputs.size();
-        }
-        const uint64_t expectedInitialHash = HashRollbackState(expectedInitialState);
-        const uint64_t loadedInitialHash = HashRollbackState(loadedInitialState);
-        WriteRollbackDebugReplayLog("verify_initial_load", expectedInitialHash == loadedInitialHash,
-            expectedInitialHash, loadedInitialHash, recordedInputFrames, 0, expectedInitialState, loadedInitialState);
-        if (expectedInitialHash != loadedInitialHash)
-        {
-            this->setDebugReplayStatusMessage("Debug replay initial load mismatch; wrote " + std::string(kRollbackDebugReplayLogPath));
-        }
-    }
-    RollbackDebugFreeState(loadedInitialState);
-
-    if (!RollbackDebugStartSession())
-    {
-        this->showErrorMessage("Debug Replay Input Callback Failed", QString::fromStdString(CoreGetError()));
-        return;
-    }
-
-    {
-        std::lock_guard<std::mutex> lock(g_RollbackDebugReplay.mutex);
-        g_RollbackDebugReplay.mode = RollbackDebugReplayMode::Verifying;
-    }
+    rmgk_gekko::set_debug_hooks(RollbackDebugReplayInputProvider, RollbackDebugReplayBeginFrame, RollbackDebugReplayEndFrame, nullptr);
+    CoreSetFrameOutput(withGraphics ? CoreFrameOutput_All : CoreFrameOutput_None);
+    rmgk_gekko::set_debug_frame_output(withGraphics ? CoreFrameOutput_All : CoreFrameOutput_None);
 
     this->updateActions(true, true);
     this->setDebugReplayStatusMessage("Verifying debug replay" + std::string(withGraphics ? " with graphics" : "") +
         " for " + std::to_string(kRollbackDebugReplayFrames) + " frames");
     WriteRollbackDebugReplayEventLog("verify_started", withGraphics ? "with graphics" : "hidden");
 
-    size_t recordedFrameHashes;
+    QTimer* progressTimer = new QTimer(this);
+    progressTimer->setInterval(250);
+    connect(progressTimer, &QTimer::timeout, this, [this, progressTimer, withGraphics]()
     {
-        std::lock_guard<std::mutex> lock(g_RollbackDebugReplay.mutex);
-        recordedFrameHashes = g_RollbackDebugReplay.frameHashes.size();
-    }
-    const int framesToRun = recordedFrameHashes == static_cast<size_t>(kRollbackDebugReplayFrames) ? 1 : kRollbackDebugReplayFrames;
-
-    if (!RollbackDebugAdvanceFrames(framesToRun, withGraphics ? CoreFrameOutput_All : CoreFrameOutput_None))
-    {
-        RollbackDebugCloseSession();
-        {
-            std::lock_guard<std::mutex> lock(g_RollbackDebugReplay.mutex);
-            g_RollbackDebugReplay.mode = RollbackDebugReplayMode::Idle;
-        }
-        this->updateActions(true, true);
-        this->showErrorMessage("Debug Replay Verify Run Failed", QString::fromStdString(CoreGetError()));
-    }
-}
-
-void MainWindow::runStressDebugReplay(void)
-{
-    if (!CoreIsEmulationPaused())
-    {
-        this->setDebugReplayStatusMessage("Pause emulation before running rollback stress replay");
-        return;
-    }
-
-    std::string replayFileError;
-    if (!LoadRollbackDebugReplayFile(replayFileError))
-    {
-        this->setDebugReplayStatusMessage("Could not load debug replay: " + replayFileError);
-        WriteRollbackDebugReplayEventLog("stress_load_failed", replayFileError);
-        return;
-    }
-
-    {
-        std::lock_guard<std::mutex> lock(g_RollbackDebugReplay.mutex);
-        if (!g_RollbackDebugReplay.ready || g_RollbackDebugReplay.initialState.buffer == nullptr)
-        {
-            this->setDebugReplayStatusMessage("No debug replay recorded yet");
-            return;
-        }
-        g_RollbackDebugReplay.verifyInputIndex = 0;
-        g_RollbackDebugReplay.verifyFrameIndex = 0;
-        g_RollbackDebugReplay.firstInputMismatchFrame = -1;
-        g_RollbackDebugReplay.firstInputMismatchExpectedHash = 0;
-        g_RollbackDebugReplay.firstInputMismatchActualHash = 0;
-        g_RollbackDebugReplay.firstMismatchFrame = -1;
-        g_RollbackDebugReplay.firstMismatchExpectedHash = 0;
-        g_RollbackDebugReplay.firstMismatchActualHash = 0;
-        g_RollbackDebugReplay.replayedInputHash = 0;
-        g_RollbackDebugReplay.stressRollbackCount = 0;
-        g_RollbackDebugReplay.stressRollbackFrames = 0;
-        g_RollbackDebugReplay.stressResimulatedFrames = 0;
-        g_RollbackDebugReplay.stressResumeFrame = 0;
-        g_RollbackDebugReplay.countReplayInputHash = true;
-        g_RollbackDebugReplay.stressResimulating = false;
-        g_RollbackDebugReplay.verifyWithGraphics = false;
-    }
-
-    if (!CoreRollbackSetDeterministic(true))
-    {
-        this->showErrorMessage("Rollback Stress Deterministic Mode Failed", QString::fromStdString(CoreGetError()));
-        return;
-    }
-
-    if (!RollbackDebugLoadState(g_RollbackDebugReplay.initialState))
-    {
-        this->showErrorMessage("Rollback Stress Load Initial State Failed", QString::fromStdString(CoreGetError()));
-        return;
-    }
-
-    CoreRollbackState loadedInitialState = {};
-    if (RollbackDebugSaveState(loadedInitialState, CoreGetCurrentFrameCount()))
-    {
-        CoreRollbackState expectedInitialState;
-        size_t recordedInputFrames;
-        {
-            std::lock_guard<std::mutex> lock(g_RollbackDebugReplay.mutex);
-            expectedInitialState = g_RollbackDebugReplay.initialState;
-            recordedInputFrames = g_RollbackDebugReplay.inputs.size();
-        }
-        const uint64_t expectedInitialHash = HashRollbackState(expectedInitialState);
-        const uint64_t loadedInitialHash = HashRollbackState(loadedInitialState);
-        WriteRollbackDebugReplayLog("stress_initial_load", expectedInitialHash == loadedInitialHash,
-            expectedInitialHash, loadedInitialHash, recordedInputFrames, 0, expectedInitialState, loadedInitialState);
-        if (expectedInitialHash != loadedInitialHash)
-        {
-            RollbackDebugFreeState(loadedInitialState);
-            this->setDebugReplayStatusMessage("Rollback stress initial load mismatch; wrote " + std::string(kRollbackDebugReplayLogPath));
-            return;
-        }
-    }
-    RollbackDebugFreeState(loadedInitialState);
-
-    FreeRollbackDebugStressCheckpoints();
-    if (!SaveRollbackDebugStressCheckpoint(0))
-    {
-        this->showErrorMessage("Rollback Stress Save Initial Checkpoint Failed", QString::fromStdString(CoreGetError()));
-        return;
-    }
-
-    if (!RollbackDebugStartSession())
-    {
-        FreeRollbackDebugStressCheckpoints();
-        this->showErrorMessage("Rollback Stress Input Callback Failed", QString::fromStdString(CoreGetError()));
-        return;
-    }
-
-    {
-        std::lock_guard<std::mutex> lock(g_RollbackDebugReplay.mutex);
-        g_RollbackDebugReplay.mode = RollbackDebugReplayMode::Stressing;
-    }
-
-    this->updateActions(true, true);
-    this->setDebugReplayStatusMessage("Stress replay with graphics: rollback 5 frames every 10 frames");
-    WriteRollbackDebugReplayEventLog("stress_started", "with graphics; rollback 5 frames every 10 frames");
-
-    {
-        std::lock_guard<std::mutex> lock(g_RollbackDebugReplay.mutex);
-        g_RollbackDebugReplay.verifyInputIndex = 0;
-        g_RollbackDebugReplay.countReplayInputHash = true;
-    }
-    if (!RollbackDebugAdvanceFrame(CoreFrameOutput_All))
-    {
-        RollbackDebugCloseSession();
-        WriteRollbackDebugReplayEventLog("stress_failed", CoreGetError());
-        {
-            std::lock_guard<std::mutex> lock(g_RollbackDebugReplay.mutex);
-            g_RollbackDebugReplay.mode = RollbackDebugReplayMode::Idle;
-            g_RollbackDebugReplay.countReplayInputHash = true;
-        }
-        FreeRollbackDebugStressCheckpoints();
-        this->updateActions(true, true);
-        this->showErrorMessage("Rollback Stress Replay Failed", QString::fromStdString(CoreGetError()));
-    }
-}
-
-void MainWindow::continueStressDebugReplay(void)
-{
-    auto failStressReplay = [this](const std::string& error)
-    {
-        RollbackDebugCloseSession();
-        WriteRollbackDebugReplayEventLog("stress_failed", error);
-        {
-            std::lock_guard<std::mutex> lock(g_RollbackDebugReplay.mutex);
-            g_RollbackDebugReplay.mode = RollbackDebugReplayMode::Idle;
-            g_RollbackDebugReplay.countReplayInputHash = true;
-            g_RollbackDebugReplay.stressResimulating = false;
-        }
-        FreeRollbackDebugStressCheckpoints();
-        this->updateActions(true, true);
-        this->showErrorMessage("Rollback Stress Replay Failed", QString::fromStdString(error));
-    };
-
-    bool wasResimulating;
-    int frame;
-    int resumeFrame;
-    {
-        std::lock_guard<std::mutex> lock(g_RollbackDebugReplay.mutex);
-        wasResimulating = g_RollbackDebugReplay.stressResimulating;
-        frame = static_cast<int>(g_RollbackDebugReplay.verifyFrameIndex);
-        resumeFrame = g_RollbackDebugReplay.stressResumeFrame;
-        if (wasResimulating)
-        {
-            frame = resumeFrame;
-            g_RollbackDebugReplay.verifyFrameIndex = static_cast<size_t>(frame);
-            g_RollbackDebugReplay.verifyInputIndex = static_cast<size_t>(frame);
-            g_RollbackDebugReplay.countReplayInputHash = true;
-            g_RollbackDebugReplay.stressResimulating = false;
-        }
-    }
-
-    if (!wasResimulating)
-    {
-        frame++;
-        if (!SaveRollbackDebugStressCheckpoint(frame))
-        {
-            failStressReplay(CoreGetError());
-            return;
-        }
-        {
-            std::lock_guard<std::mutex> lock(g_RollbackDebugReplay.mutex);
-            g_RollbackDebugReplay.verifyFrameIndex = static_cast<size_t>(frame);
-        }
-    }
-
-    if (frame >= kRollbackDebugReplayFrames)
-    {
-        CoreRollbackState finalState = {};
-        RollbackDebugCloseSession();
-        if (!RollbackDebugSaveState(finalState, CoreGetCurrentFrameCount()))
-        {
-            failStressReplay(CoreGetError());
-            return;
-        }
-
-        const uint64_t finalHash = HashRollbackState(finalState);
+        RollbackDebugReplayMode mode;
+        bool completed;
+        bool matched;
         uint64_t expectedHash;
-        CoreRollbackState expectedFinalState;
-        size_t replayedInputFrames;
+        uint64_t actualHash;
+        size_t verifyFrameIndex;
         size_t recordedInputFrames;
-        size_t stressRollbackCount;
-        bool inputsMatched;
+        size_t replayedInputFrames;
         {
             std::lock_guard<std::mutex> lock(g_RollbackDebugReplay.mutex);
-            expectedFinalState = g_RollbackDebugReplay.finalState;
-            expectedHash = g_RollbackDebugReplay.finalHash;
-            replayedInputFrames = g_RollbackDebugReplay.verifyFrameIndex;
-            recordedInputFrames = g_RollbackDebugReplay.inputs.size();
-            stressRollbackCount = g_RollbackDebugReplay.stressRollbackCount;
-            inputsMatched = g_RollbackDebugReplay.replayedInputHash == g_RollbackDebugReplay.recordedInputHash &&
-                g_RollbackDebugReplay.firstInputMismatchFrame < 0;
-            g_RollbackDebugReplay.mode = RollbackDebugReplayMode::Idle;
-            g_RollbackDebugReplay.countReplayInputHash = true;
+            mode = g_RollbackDebugReplay.mode;
+            completed = g_RollbackDebugReplay.lastVerifyCompleted;
+            matched = g_RollbackDebugReplay.lastVerifyMatched;
+            expectedHash = g_RollbackDebugReplay.lastVerifyExpectedHash;
+            actualHash = g_RollbackDebugReplay.lastVerifyActualHash;
+            verifyFrameIndex = g_RollbackDebugReplay.verifyFrameIndex;
+            recordedInputFrames = g_RollbackDebugReplay.lastVerifyRecordedInputFrames != 0 ?
+                g_RollbackDebugReplay.lastVerifyRecordedInputFrames : g_RollbackDebugReplay.inputs.size();
+            replayedInputFrames = g_RollbackDebugReplay.lastVerifyReplayedInputFrames != 0 ?
+                g_RollbackDebugReplay.lastVerifyReplayedInputFrames : g_RollbackDebugReplay.verifyInputIndex;
         }
 
-        const bool matched = inputsMatched && finalHash == expectedHash;
-        WriteRollbackDebugReplayLog("stress_verify", matched, expectedHash, finalHash, recordedInputFrames,
-            replayedInputFrames, expectedFinalState, finalState);
-        FreeRollbackDebugStressCheckpoints();
-        this->updateActions(true, true);
-        OnScreenDisplayResume();
+        if (mode == RollbackDebugReplayMode::Verifying)
+        {
+            this->setDebugReplayStatusMessage("Verifying debug replay" + std::string(withGraphics ? " with graphics: " : ": ") +
+                std::to_string(verifyFrameIndex) + "/" + std::to_string(kRollbackDebugReplayFrames) + " frames");
+            return;
+        }
+
+        progressTimer->stop();
+        progressTimer->deleteLater();
+        this->updateActions(true, false);
+        if (!completed)
+        {
+            this->setDebugReplayStatusMessage("Debug replay verify stopped before completion; wrote " +
+                std::string(kRollbackDebugReplayLogPath));
+            return;
+        }
+
         if (matched)
         {
-            this->setDebugReplayStatusMessage("Rollback stress matched: " + std::to_string(replayedInputFrames) +
-                " frames, " + std::to_string(stressRollbackCount) + " rollbacks, payload hash " +
-                std::to_string(finalHash) + ", wrote " + kRollbackDebugReplayLogPath);
+            this->setDebugReplayStatusMessage("Debug replay matched: " + std::to_string(replayedInputFrames) +
+                "/" + std::to_string(recordedInputFrames) + " input frames, payload hash " +
+                std::to_string(actualHash) + ", wrote " + kRollbackDebugReplayLogPath);
         }
         else
         {
-            int expectedPayloadLen = 0;
-            int actualPayloadLen = 0;
-            const int firstDiff = FirstRollbackStatePayloadDifference(expectedFinalState, finalState, expectedPayloadLen, actualPayloadLen);
-            this->setDebugReplayStatusMessage("Rollback stress mismatch: expected " + std::to_string(expectedHash) +
-                ", got " + std::to_string(finalHash) + ", first payload diff " + std::to_string(firstDiff) +
-                ", wrote " + kRollbackDebugReplayLogPath);
+            this->setDebugReplayStatusMessage("Debug replay mismatch: expected " + std::to_string(expectedHash) +
+                ", got " + std::to_string(actualHash) + ", replayed " + std::to_string(replayedInputFrames) +
+                "/" + std::to_string(recordedInputFrames) + " input frames, wrote " + kRollbackDebugReplayLogPath);
         }
-        RollbackDebugFreeState(finalState);
-        return;
-    }
-
-    if (!wasResimulating && frame > 0 && (frame % kRollbackDebugStressInterval) == 0)
-    {
-        const int rollbackFrame = frame - kRollbackDebugStressRollbackFrames;
-        CoreRollbackState& checkpoint = g_RollbackDebugReplay.stressCheckpoints[RollbackDebugStressCheckpointIndex(rollbackFrame)];
-        if (checkpoint.buffer == nullptr)
-        {
-            failStressReplay("rollback checkpoint was missing");
-            return;
-        }
-        if (!RollbackDebugLoadState(checkpoint))
-        {
-            failStressReplay(CoreGetError());
-            return;
-        }
-        {
-            std::lock_guard<std::mutex> lock(g_RollbackDebugReplay.mutex);
-            g_RollbackDebugReplay.verifyInputIndex = static_cast<size_t>(rollbackFrame);
-            g_RollbackDebugReplay.countReplayInputHash = false;
-            g_RollbackDebugReplay.stressRollbackCount++;
-            g_RollbackDebugReplay.stressRollbackFrames += kRollbackDebugStressRollbackFrames;
-            g_RollbackDebugReplay.stressResimulatedFrames += kRollbackDebugStressRollbackFrames;
-            g_RollbackDebugReplay.stressResimulating = true;
-            g_RollbackDebugReplay.stressResumeFrame = frame;
-        }
-        if (!RollbackDebugAdvanceFrames(kRollbackDebugStressRollbackFrames, CoreFrameOutput_None))
-        {
-            failStressReplay(CoreGetError());
-        }
-        return;
-    }
-
-    {
-        std::lock_guard<std::mutex> lock(g_RollbackDebugReplay.mutex);
-        g_RollbackDebugReplay.verifyInputIndex = static_cast<size_t>(frame);
-        g_RollbackDebugReplay.countReplayInputHash = true;
-    }
-    if ((frame % 30) == 0)
-    {
-        OnScreenDisplayResume();
-        this->setDebugReplayStatusMessage("Rollback stress with graphics: " + std::to_string(frame) +
-            "/" + std::to_string(kRollbackDebugReplayFrames) + " frames");
-    }
-    if (!RollbackDebugAdvanceFrame(CoreFrameOutput_All))
-    {
-        failStressReplay(CoreGetError());
-    }
+    });
+    progressTimer->start();
 }
 
 void MainWindow::on_VidExt_Quit(void)

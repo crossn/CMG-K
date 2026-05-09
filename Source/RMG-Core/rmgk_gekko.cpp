@@ -65,6 +65,7 @@ int g_GekkoInputSize = 0;
 int g_GekkoLocalPlayer = 0;
 int g_GekkoLocalHandle = -1;
 int g_GekkoRemoteHandle = -1;
+std::vector<int> g_GekkoLocalHandles;
 std::vector<unsigned char> g_GekkoLatchedInput;
 bool g_GekkoHasLatchedInput = false;
 std::atomic_bool g_GekkoExecuting{false};
@@ -86,6 +87,11 @@ size_t g_GekkoClientReplayIndex = 0;
 long long g_GekkoLastLoadStateUs = 0;
 long long g_GekkoLastSaveStateUs = 0;
 long long g_GekkoLastRunFrameUs = 0;
+rmgk_gekko::InputProvider g_GekkoDebugInputProvider = nullptr;
+rmgk_gekko::FrameCallback g_GekkoDebugBeginFrame = nullptr;
+rmgk_gekko::FrameCallback g_GekkoDebugEndFrame = nullptr;
+void* g_GekkoDebugUserData = nullptr;
+int g_GekkoDebugFrameOutput = -1;
 #endif
 
 int rmgk_gekko_core_input_callback(void* values, int size, int players)
@@ -331,60 +337,81 @@ bool load_gekko_state(const GekkoGameEvent* event)
 
 bool submit_local_input()
 {
-    uint32_t input = 0;
-    if (!CoreRollbackSampleInput(&input, g_GekkoInputSize, 1))
+    std::vector<uint32_t> physicalInputs(static_cast<size_t>(std::max(g_GekkoPlayers, 1)), 0);
+    if (!CoreRollbackSampleInput(physicalInputs.data(), g_GekkoInputSize, g_GekkoPlayers))
     {
         write_gekko_log("add_local_input sample=fail");
         return false;
     }
 
+    const bool localOnlySession = g_GekkoRemoteHandle < 0 && g_GekkoLocalHandles.size() > 1;
+    bool submitted = false;
+
+    for (int player = 1; player <= g_GekkoPlayers; player++)
     {
-        std::lock_guard<std::mutex> lock(g_GekkoClientReplayMutex);
-        if (g_GekkoLocalPlayer == 2 && g_GekkoClientReplayMode == ClientInputReplayMode::Recording)
+        const size_t playerIndex = static_cast<size_t>(player - 1);
+        const int handle = playerIndex < g_GekkoLocalHandles.size() ? g_GekkoLocalHandles[playerIndex] : -1;
+        if (handle < 0)
         {
-            g_GekkoClientReplayInputs.push_back(input);
-            if (g_GekkoClientReplayInputs.size() >= kGekkoClientReplayFrames)
+            continue;
+        }
+
+        uint32_t input = localOnlySession ? physicalInputs[playerIndex] : physicalInputs[0];
+        {
+            std::lock_guard<std::mutex> lock(g_GekkoClientReplayMutex);
+            if (!localOnlySession && g_GekkoLocalPlayer == 2 && g_GekkoClientReplayMode == ClientInputReplayMode::Recording)
             {
-                g_GekkoClientReplayMode = ClientInputReplayMode::Playing;
-                g_GekkoClientReplayIndex = 0;
-                write_gekko_log("client_input_replay mode=playing recorded_frames=600");
+                g_GekkoClientReplayInputs.push_back(input);
+                if (g_GekkoClientReplayInputs.size() >= kGekkoClientReplayFrames)
+                {
+                    g_GekkoClientReplayMode = ClientInputReplayMode::Playing;
+                    g_GekkoClientReplayIndex = 0;
+                    write_gekko_log("client_input_replay mode=playing recorded_frames=600");
+                }
+            }
+            else if (!localOnlySession && g_GekkoLocalPlayer == 2 && g_GekkoClientReplayMode == ClientInputReplayMode::Playing &&
+                !g_GekkoClientReplayInputs.empty())
+            {
+                input = g_GekkoClientReplayInputs[g_GekkoClientReplayIndex++];
+                if (g_GekkoClientReplayIndex >= g_GekkoClientReplayInputs.size())
+                {
+                    g_GekkoClientReplayIndex = 0;
+                }
             }
         }
-        else if (g_GekkoLocalPlayer == 2 && g_GekkoClientReplayMode == ClientInputReplayMode::Playing &&
-            !g_GekkoClientReplayInputs.empty())
+
+        gekko_add_local_input(g_GekkoSession, handle, &input);
+        submitted = true;
+
+        if (player != g_GekkoLocalPlayer)
         {
-            input = g_GekkoClientReplayInputs[g_GekkoClientReplayIndex++];
-            if (g_GekkoClientReplayIndex >= g_GekkoClientReplayInputs.size())
-            {
-                g_GekkoClientReplayIndex = 0;
-            }
+            continue;
         }
+
+        const bool changed = input != g_GekkoLastSubmittedInput;
+        if (changed)
+        {
+            g_GekkoLocalInputLogRepeats = 0;
+        }
+        else
+        {
+            g_GekkoLocalInputLogRepeats++;
+        }
+
+        if (g_GekkoLogEnabled &&
+            (changed || g_GekkoLocalInputLogRepeats <= 20 || (g_GekkoLocalInputLogRepeats % 60) == 0))
+        {
+            std::ostringstream stream;
+            stream << "add_local_input local_player=" << player
+                   << " handle=" << handle
+                   << " physical_p" << (localOnlySession ? player : 1) << "=" << hex_input(input)
+                   << " repeat=" << g_GekkoLocalInputLogRepeats;
+            write_gekko_log(stream.str());
+        }
+        g_GekkoLastSubmittedInput = input;
     }
 
-    gekko_add_local_input(g_GekkoSession, g_GekkoLocalHandle, &input);
-
-    const bool changed = input != g_GekkoLastSubmittedInput;
-    if (changed)
-    {
-        g_GekkoLocalInputLogRepeats = 0;
-    }
-    else
-    {
-        g_GekkoLocalInputLogRepeats++;
-    }
-
-    if (g_GekkoLogEnabled &&
-        (changed || g_GekkoLocalInputLogRepeats <= 20 || (g_GekkoLocalInputLogRepeats % 60) == 0))
-    {
-        std::ostringstream stream;
-        stream << "add_local_input local_player=" << g_GekkoLocalPlayer
-               << " handle=" << g_GekkoLocalHandle
-               << " physical_p1=" << hex_input(input)
-               << " repeat=" << g_GekkoLocalInputLogRepeats;
-        write_gekko_log(stream.str());
-    }
-    g_GekkoLastSubmittedInput = input;
-    return true;
+    return submitted;
 }
 
 bool latch_gekko_input(const GekkoGameEvent* event)
@@ -402,6 +429,31 @@ bool latch_gekko_input(const GekkoGameEvent* event)
     }
     std::memcpy(g_GekkoLatchedInput.data(), event->data.adv.inputs, static_cast<size_t>(expectedBytes));
     g_GekkoHasLatchedInput = true;
+
+    if (g_GekkoDebugInputProvider != nullptr)
+    {
+        std::vector<uint32_t> debugInputs(static_cast<size_t>(g_GekkoPlayers), 0);
+        for (int player = 0; player < g_GekkoPlayers; player++)
+        {
+            std::memcpy(&debugInputs[static_cast<size_t>(player)],
+                g_GekkoLatchedInput.data() + (player * g_GekkoInputSize),
+                std::min(g_GekkoInputSize, static_cast<int>(sizeof(uint32_t))));
+        }
+
+        if (!g_GekkoDebugInputProvider(debugInputs.data(), g_GekkoPlayers, g_GekkoDebugUserData))
+        {
+            write_gekko_log("sync_input result=fail reason=debug_provider");
+            return false;
+        }
+
+        std::memset(g_GekkoLatchedInput.data(), 0, static_cast<size_t>(expectedBytes));
+        for (int player = 0; player < g_GekkoPlayers; player++)
+        {
+            std::memcpy(g_GekkoLatchedInput.data() + (player * g_GekkoInputSize),
+                &debugInputs[static_cast<size_t>(player)],
+                std::min(g_GekkoInputSize, static_cast<int>(sizeof(uint32_t))));
+        }
+    }
 
     if (g_GekkoLogEnabled &&
         (g_GekkoLogFrames < kGekkoMaxLoggedFrames || g_GekkoLatchedInput != g_GekkoLastLatchedInput))
@@ -494,6 +546,11 @@ int rollback_execute_begin_frame(void* userData)
     if (g_GekkoStopRequested.load(std::memory_order_relaxed))
     {
         write_gekko_log("begin_frame result=stop_requested");
+        return 0;
+    }
+    if (g_GekkoDebugBeginFrame != nullptr && !g_GekkoDebugBeginFrame(g_GekkoDebugUserData))
+    {
+        write_gekko_log("begin_frame result=fail reason=debug_hook");
         return 0;
     }
 
@@ -703,6 +760,16 @@ int rollback_execute_begin_frame(void* userData)
 
         if (hasRealAdvance)
         {
+            if (g_GekkoDebugFrameOutput >= 0)
+            {
+                CoreSetFrameOutput(g_GekkoDebugFrameOutput);
+                if (g_GekkoLogEnabled && g_GekkoLogFrames < kGekkoMaxLoggedFrames)
+                {
+                    std::ostringstream stream;
+                    stream << "debug_frame_output flags=" << g_GekkoDebugFrameOutput;
+                    write_gekko_log(stream.str());
+                }
+            }
             if (g_GekkoLogEnabled)
             {
                 const auto endTime = std::chrono::steady_clock::now();
@@ -740,6 +807,11 @@ int rollback_execute_end_frame(void* userData)
     if (!process_pending_saves())
     {
         write_gekko_log("end_frame result=fail reason=save");
+        return 0;
+    }
+    if (g_GekkoDebugEndFrame != nullptr && !g_GekkoDebugEndFrame(g_GekkoDebugUserData))
+    {
+        write_gekko_log("end_frame result=fail reason=debug_hook");
         return 0;
     }
     g_GekkoHasLatchedInput = false;
@@ -802,6 +874,7 @@ CORE_EXPORT bool rmgk_gekko::start_p2p_session(const char* gameName, int players
     g_GekkoInputSize = inputSize;
     g_GekkoLocalHandle = -1;
     g_GekkoRemoteHandle = -1;
+    g_GekkoLocalHandles.assign(static_cast<size_t>(players), -1);
     g_GekkoLatchedInput.assign(static_cast<size_t>(players * inputSize), 0);
     g_GekkoHasLatchedInput = false;
     g_GekkoPendingSaves.clear();
@@ -838,6 +911,7 @@ CORE_EXPORT bool rmgk_gekko::start_p2p_session(const char* gameName, int players
                 return false;
             }
             g_GekkoLocalHandle = handle;
+            g_GekkoLocalHandles[static_cast<size_t>(player - 1)] = handle;
             gekko_set_local_delay(g_GekkoSession, handle, static_cast<unsigned char>(clampedLocalDelay));
             if (g_GekkoLogEnabled)
             {
@@ -891,6 +965,98 @@ CORE_EXPORT bool rmgk_gekko::start_p2p_session(const char* gameName, int players
 #endif
 }
 
+CORE_EXPORT bool rmgk_gekko::start_local_session(const char* gameName, int players, int inputSize, int localDelay)
+{
+#ifndef RMGK_HAVE_GEKKONET
+    (void)gameName;
+    (void)players;
+    (void)inputSize;
+    (void)localDelay;
+    return false;
+#else
+    close_session();
+
+    g_GekkoLocalPlayer = 1;
+    g_GekkoStopRequested.store(false, std::memory_order_relaxed);
+    reset_gekko_log();
+
+    if (gameName == nullptr || players < 1 || inputSize != static_cast<int>(sizeof(uint32_t)))
+    {
+        write_gekko_log("start_local_session result=fail reason=invalid_params");
+        return false;
+    }
+
+    if (!gekko_create(&g_GekkoSession, GekkoGameSession))
+    {
+        write_gekko_log("gekko_create result=fail");
+        return false;
+    }
+
+    const int clampedLocalDelay = std::clamp(localDelay, 0, 10);
+    const int predictionWindow = std::clamp(clampedLocalDelay > 0 ? clampedLocalDelay : 1, 1, 4);
+
+    GekkoConfig config = {};
+    config.num_players = static_cast<unsigned char>(players);
+    config.max_spectators = 0;
+    config.input_prediction_window = static_cast<unsigned char>(predictionWindow);
+    config.input_size = static_cast<unsigned int>(inputSize);
+    config.state_size = kGekkoStateCapacity;
+    config.limited_saving = false;
+    config.desync_detection = true;
+    config.check_distance = 10;
+    gekko_start(g_GekkoSession, &config);
+    gekko_set_runahead(g_GekkoSession, 0);
+
+    g_GekkoPlayers = players;
+    g_GekkoInputSize = inputSize;
+    g_GekkoLocalHandle = -1;
+    g_GekkoRemoteHandle = -1;
+    g_GekkoLocalHandles.assign(static_cast<size_t>(players), -1);
+    g_GekkoLatchedInput.assign(static_cast<size_t>(players * inputSize), 0);
+    g_GekkoHasLatchedInput = false;
+    g_GekkoPendingSaves.clear();
+
+    for (int player = 1; player <= players; player++)
+    {
+        const int handle = gekko_add_actor(g_GekkoSession, GekkoLocalPlayer, nullptr);
+        if (handle < 0)
+        {
+            write_gekko_log("gekko_add_actor result=fail type=local");
+            close_session();
+            return false;
+        }
+        if (player == 1)
+        {
+            g_GekkoLocalHandle = handle;
+        }
+        g_GekkoLocalHandles[static_cast<size_t>(player - 1)] = handle;
+        gekko_set_local_delay(g_GekkoSession, handle, static_cast<unsigned char>(clampedLocalDelay));
+        if (g_GekkoLogEnabled)
+        {
+            std::ostringstream stream;
+            stream << "gekko_add_actor result=ok player=" << player << " type=local handle=" << handle;
+            write_gekko_log(stream.str());
+        }
+    }
+
+    if (g_GekkoLocalHandle < 0)
+    {
+        write_gekko_log("start_local_session result=fail reason=no_local_handle");
+        close_session();
+        return false;
+    }
+
+    if (!install_core_input_callback())
+    {
+        write_gekko_log("install_core_input_callback result=fail");
+        close_session();
+        return false;
+    }
+    write_gekko_log("start_local_session result=ok");
+    return true;
+#endif
+}
+
 CORE_EXPORT void rmgk_gekko::close_session()
 {
 #ifdef RMGK_HAVE_GEKKONET
@@ -907,10 +1073,16 @@ CORE_EXPORT void rmgk_gekko::close_session()
     g_GekkoLocalPlayer = 0;
     g_GekkoLocalHandle = -1;
     g_GekkoRemoteHandle = -1;
+    g_GekkoLocalHandles.clear();
     g_GekkoLatchedInput.clear();
     g_GekkoHasLatchedInput = false;
     g_GekkoExecuting.store(false, std::memory_order_relaxed);
     g_GekkoPendingSaves.clear();
+    g_GekkoDebugInputProvider = nullptr;
+    g_GekkoDebugBeginFrame = nullptr;
+    g_GekkoDebugEndFrame = nullptr;
+    g_GekkoDebugUserData = nullptr;
+    g_GekkoDebugFrameOutput = -1;
     {
         std::lock_guard<std::mutex> lock(g_GekkoClientReplayMutex);
         g_GekkoClientReplayMode = ClientInputReplayMode::Off;
@@ -995,6 +1167,30 @@ CORE_EXPORT bool rmgk_gekko::synchronize_input(void* values, int size, int playe
     (void)size;
     (void)players;
     return true;
+}
+
+CORE_EXPORT void rmgk_gekko::set_debug_hooks(InputProvider inputProvider, FrameCallback beginFrame, FrameCallback endFrame, void* userData)
+{
+#ifdef RMGK_HAVE_GEKKONET
+    g_GekkoDebugInputProvider = inputProvider;
+    g_GekkoDebugBeginFrame = beginFrame;
+    g_GekkoDebugEndFrame = endFrame;
+    g_GekkoDebugUserData = userData;
+#else
+    (void)inputProvider;
+    (void)beginFrame;
+    (void)endFrame;
+    (void)userData;
+#endif
+}
+
+CORE_EXPORT void rmgk_gekko::set_debug_frame_output(int flags)
+{
+#ifdef RMGK_HAVE_GEKKONET
+    g_GekkoDebugFrameOutput = flags;
+#else
+    (void)flags;
+#endif
 }
 
 CORE_EXPORT bool rmgk_gekko::toggle_client_input_replay()

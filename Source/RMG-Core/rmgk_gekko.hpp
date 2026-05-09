@@ -13,11 +13,17 @@
 #include "Emulation.hpp"
 #include "RollbackNetcode.hpp"
 
+#include <cstdint>
+
 class rmgk_gekko
 {
   public:
+    using InputProvider = bool (*)(uint32_t* inputs, int players, void* userData);
+    using FrameCallback = bool (*)(void* userData);
+
     static bool start_p2p_session(const char* gameName, int players, int inputSize,
         int localPlayer, unsigned short localPort, const char* remoteIp, unsigned short remotePort, int localDelay);
+    static bool start_local_session(const char* gameName, int players, int inputSize, int localDelay);
     static void close_session();
     static void request_stop();
     static bool execute();
@@ -25,6 +31,8 @@ class rmgk_gekko
     static bool install_core_input_callback();
     static void clear_core_input_callback();
     static bool synchronize_input(void* values, int size, int players);
+    static void set_debug_hooks(InputProvider inputProvider, FrameCallback beginFrame, FrameCallback endFrame, void* userData);
+    static void set_debug_frame_output(int flags);
     static bool toggle_client_input_replay();
 };
 

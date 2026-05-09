@@ -498,7 +498,7 @@ CORE_EXPORT bool CoreStartEmulation(std::filesystem::path n64rom, std::filesyste
 #ifdef NETPLAY
     // Apply deterministic settings AFTER all overlays for Kaillera netplay
     // This ensures user/game-specific settings don't override critical sync settings
-    if (netplay && (address == "KAILLERA" || address.rfind("GEKKO|", 0) == 0))
+    if (!netplay || (address == "KAILLERA" || address.rfind("GEKKO|", 0) == 0))
     {
         apply_kaillera_deterministic_settings();
     }
@@ -567,9 +567,39 @@ CORE_EXPORT bool CoreStartEmulation(std::filesystem::path n64rom, std::filesyste
     }
 #endif // NETPLAY
 
-    // only start emulation when initializing netplay
-    // is successful or if there's no netplay requested
-    if (!netplay || netplay_ret)
+    bool rollbackExecute = false;
+    if (!netplay)
+    {
+        if (!rmgk_gekko::set_deterministic(true))
+        {
+            m64p_ret = M64ERR_SYSTEM_FAIL;
+        }
+        else
+        {
+            CoreSettingsSetValue(SettingsID::Core_CPU_Emulator, 2);
+            netplay_ret = rmgk_gekko::start_local_session("rmgk-gekko-local",
+                2, static_cast<int>(sizeof(uint32_t)), 0);
+            rollbackExecute = netplay_ret;
+            if (!netplay_ret)
+            {
+                if (CoreGetError().empty())
+                {
+                    CoreSetError("CoreStartEmulation: local GekkoNet session initialization failed");
+                }
+                m64p_ret = M64ERR_SYSTEM_FAIL;
+            }
+        }
+    }
+#ifdef NETPLAY
+    else
+    {
+        rollbackExecute = address.rfind("GEKKO|", 0) == 0;
+    }
+#endif
+
+    // only start emulation when initializing netplay/local rollback
+    // is successful or if there's legacy netplay requested
+    if ((!netplay && rollbackExecute) || (netplay && netplay_ret))
     {
         // Register frame callback for frame counter (used by Kaillera)
         s_CurrentFrame = 0;
@@ -606,10 +636,6 @@ CORE_EXPORT bool CoreStartEmulation(std::filesystem::path n64rom, std::filesyste
         }
 #endif
 
-        bool rollbackExecute = false;
-#ifdef NETPLAY
-        rollbackExecute = address.rfind("GEKKO|", 0) == 0;
-#endif
         CoreRollbackSetVerboseStats(CoreSettingsGetBoolValue(SettingsID::Rollback_VerboseStats));
 
         if (rollbackExecute)
@@ -634,6 +660,11 @@ CORE_EXPORT bool CoreStartEmulation(std::filesystem::path n64rom, std::filesyste
                 error += m64p::Core.ErrorMessage(m64p_ret);
             }
         }
+    }
+
+    if (!netplay && rollbackExecute)
+    {
+        rmgk_gekko::close_session();
     }
 
 #ifdef NETPLAY
