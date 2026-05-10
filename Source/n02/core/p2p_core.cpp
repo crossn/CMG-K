@@ -87,6 +87,16 @@ static void p2p_poll_raw_socket_locked(){
 	}
 }
 
+static void p2p_clear_rollback_packets_locked(bool drain_socket){
+	if (!p2p_core_initialized || P2PCORE.connection == 0)
+		return;
+
+	if (drain_socket)
+		p2p_poll_raw_socket_locked();
+
+	P2PCORE.connection->clear_rollback_packets();
+}
+
 bool p2p_rollback_transport_send(const char *data, int len){
 	std::lock_guard<std::recursive_mutex> lock(p2p_transport_mutex);
 	if (!p2p_core_initialized || P2PCORE.connection == 0 || !P2PCORE.CONNECTED)
@@ -121,8 +131,7 @@ int p2p_rollback_transport_receive(char *data, int data_len, char *addr, int add
 
 void p2p_rollback_transport_clear(){
 	std::lock_guard<std::recursive_mutex> lock(p2p_transport_mutex);
-	if (p2p_core_initialized && P2PCORE.connection != 0)
-		P2PCORE.connection->clear_rollback_packets();
+	p2p_clear_rollback_packets_locked(true);
 }
 //===========================================================
 //===========================================================
@@ -377,6 +386,7 @@ void p2p_drop_game(){
 		// so old pre-game timestamps cannot trigger immediate false timeouts.
 		p2p_mark_lobby_ping_alive();
 		p2p_retransmit();
+		p2p_clear_rollback_packets_locked(false);
 
 		p2p_client_dropped_callback(P2PCORE.PEERNAME, P2PCORE.HOST? 2: 1);
 		p2p_client_dropped_callback(P2PCORE.USERNAME, P2PCORE.HOST? 1: 2);
@@ -482,6 +492,7 @@ bool p2p_rollback_process_control(){
 			P2PCORE.USERREADY = false;
 			P2PCORE.PEERREADY = false;
 			p2p_mark_lobby_ping_alive();
+			p2p_clear_rollback_packets_locked(false);
 			p2p_client_dropped_callback(P2PCORE.PEERNAME, P2PCORE.HOST? 2: 1);
 			p2p_client_dropped_callback(P2PCORE.USERNAME, P2PCORE.HOST? 1: 2);
 			p2p_end_game_callback();
@@ -493,6 +504,7 @@ bool p2p_rollback_process_control(){
 			P2PCORE.CONNECTED = false;
 			P2PCORE.last_ping_sent_time = 0;
 			P2PCORE.last_ping_echo_time = 0;
+			p2p_clear_rollback_packets_locked(false);
 			p2p_end_game_callback();
 			ended_game = true;
 			break;

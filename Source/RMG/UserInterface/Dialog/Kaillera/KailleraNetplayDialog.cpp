@@ -2764,10 +2764,6 @@ void KailleraNetplayDialog::connectRollbackSessionLaunch(KailleraP2PDialog& p2pD
 {
     connect(&p2pDialog, &KailleraP2PDialog::rollbackSessionReady, this,
         [this, &rollbackLaunched](QString game, QString remoteAddress, int localPort, int remotePort, int localPlayer, int frameDelay, int predictionWindow) {
-            if (rollbackLaunched)
-            {
-                return;
-            }
             rollbackLaunched = true;
             emit rollbackSessionPreparing();
             emit rollbackSessionRequested(game, remoteAddress, localPort, remotePort, localPlayer, frameDelay, predictionWindow);

@@ -1,7 +1,32 @@
 #include "backend.h"
 
 #include <cassert>
+#include <atomic>
+#include <chrono>
 #include <climits>
+#include <cstdint>
+
+namespace
+{
+    u16 GenerateSessionMagic()
+    {
+        static std::atomic<unsigned int> counter{1};
+
+        const auto now = std::chrono::steady_clock::now().time_since_epoch().count();
+        const unsigned int sequence = counter.fetch_add(1, std::memory_order_relaxed);
+        std::uintptr_t stack_addr = reinterpret_cast<std::uintptr_t>(&sequence);
+
+        std::uint64_t mixed = static_cast<std::uint64_t>(now);
+        mixed ^= static_cast<std::uint64_t>(sequence) * 0x9e3779b97f4a7c15ull;
+        mixed ^= static_cast<std::uint64_t>(stack_addr);
+        mixed ^= mixed >> 33;
+        mixed *= 0xff51afd7ed558ccdull;
+        mixed ^= mixed >> 33;
+
+        u16 magic = static_cast<u16>((mixed ^ (mixed >> 16) ^ (mixed >> 32) ^ (mixed >> 48)) & 0xffffu);
+        return magic == 0 ? 1 : magic;
+    }
+}
 
 // register poly types.
 namespace
@@ -19,11 +44,9 @@ Gekko::MessageSystem::MessageSystem()
 {
     _num_players = 0;
 	_input_size = 0;
-    _last_sent_network_check = 0;
+	_last_sent_network_check = 0;
 
-	// gen magic for session
-	std::srand((unsigned int)std::time(nullptr));
-	_session_magic = std::rand();
+	_session_magic = GenerateSessionMagic();
 
     session_events = SessionEventSystem();
 }
@@ -544,6 +567,11 @@ void Gekko::MessageSystem::OnSyncRequest(NetAddress& addr, NetPacket& pkt)
 
         for (auto& player : *current) {
             if (player->address.Equals(addr)) {
+                if (player->GetStatus() == Connected) {
+                    should_send++;
+                    continue;
+                }
+
                 player->session_magic = body->rng_data;
                 if (player->sync_num == 0) {
                     player->stats.last_sent_sync_message = now;

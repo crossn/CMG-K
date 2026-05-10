@@ -1093,7 +1093,7 @@ CORE_EXPORT bool rmgk_gekko::start_p2p_session(const char* gameName, int players
     g_GekkoStopRequested.store(false, std::memory_order_relaxed);
     reset_gekko_log();
 
-    if (gameName == nullptr || players < 2 || inputSize != static_cast<int>(sizeof(uint32_t)) ||
+    if (gameName == nullptr || players < 2 || players > 4 || inputSize != static_cast<int>(sizeof(uint32_t)) ||
         localPlayer < 1 || localPlayer > players || remoteIp == nullptr || remoteIp[0] == '\0' || remotePort == 0)
     {
         write_gekko_log("start_p2p_session result=fail reason=invalid_params");
@@ -1258,7 +1258,7 @@ CORE_EXPORT bool rmgk_gekko::start_local_session(const char* gameName, int playe
     g_GekkoStopRequested.store(false, std::memory_order_relaxed);
     reset_gekko_log();
 
-    if (gameName == nullptr || players < 1 || inputSize != static_cast<int>(sizeof(uint32_t)))
+    if (gameName == nullptr || players < 1 || players > 4 || inputSize != static_cast<int>(sizeof(uint32_t)))
     {
         write_gekko_log("start_local_session result=fail reason=invalid_params");
         return false;
@@ -1424,7 +1424,8 @@ CORE_EXPORT bool rmgk_gekko::set_deterministic(bool enabled)
 
 CORE_EXPORT bool rmgk_gekko::install_core_input_callback()
 {
-    return CoreRollbackSetInputCallback(rmgk_gekko_core_input_callback);
+    return CoreRollbackSetInputPlayers(g_GekkoPlayers) &&
+        CoreRollbackSetInputCallback(rmgk_gekko_core_input_callback);
 }
 
 CORE_EXPORT void rmgk_gekko::clear_core_input_callback()

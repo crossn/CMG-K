@@ -86,7 +86,8 @@ class p2p_message : public k_socket {
 		last_packet_addr = packet_addr;
 
 		if (is_rollback_packet(buff, bufflen)) {
-			queue_rollback_packet(buff, bufflen, packet_addr);
+			if (is_peer_packet(packet_addr))
+				queue_rollback_packet(buff, bufflen, packet_addr);
 			return true;
 		}
 

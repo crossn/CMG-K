@@ -4280,11 +4280,6 @@ void MainWindow::on_Kaillera_GameStarted(QString gameName, int playerNum, int to
 
 void MainWindow::on_Rollback_SessionRequested(QString gameName, QString remoteAddress, int localPort, int remotePort, int localPlayer, int frameDelay, int predictionWindow)
 {
-    if (this->ui_RollbackNetplayLaunchActive)
-    {
-        return;
-    }
-
     QString romFile = this->findRomByName(gameName);
     if (romFile.isEmpty())
     {
@@ -4301,6 +4296,11 @@ void MainWindow::on_Rollback_SessionRequested(QString gameName, QString remoteAd
             {
                 this->on_Rollback_SessionRequested(gameName, remoteAddress, localPort, remotePort, localPlayer, frameDelay, predictionWindow);
             });
+        return;
+    }
+
+    if (this->ui_RollbackNetplayLaunchActive)
+    {
         return;
     }
 
