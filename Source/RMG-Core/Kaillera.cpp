@@ -12,7 +12,7 @@
 #include "Settings.hpp"
 #include "Error.hpp"
 
-#if defined(_WIN32) && defined(NETPLAY)
+#ifdef NETPLAY
 
 #include "n02_client.h"
 #include "kailleraclient.h"
@@ -458,7 +458,7 @@ CORE_EXPORT bool CoreGetKailleraEffectiveRecordingDefault(void)
     return !s_RecordingStorageOverCap;
 }
 
-#else // !(_WIN32 && NETPLAY)
+#else // !NETPLAY
 
 // Stub implementations for platforms/builds without integrated Kaillera support
 
@@ -577,4 +577,4 @@ CORE_EXPORT bool CoreGetKailleraEffectiveRecordingDefault(void)
     return false;
 }
 
-#endif // defined(_WIN32) && defined(NETPLAY)
+#endif // NETPLAY

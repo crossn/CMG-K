@@ -10,7 +10,7 @@
 #include "KailleraP2PDialog.hpp"
 #include "KailleraTraversalConfig.hpp"
 
-#ifdef _WIN32
+#ifdef NETPLAY
 
 #include "../../KailleraUIBridge.hpp"
 
@@ -33,6 +33,12 @@
 
 #include <algorithm>
 #include <cstring>
+
+#include <chrono>
+static inline unsigned long monotonicTickCount() {
+    using namespace std::chrono;
+    return (unsigned long)duration_cast<milliseconds>(steady_clock::now().time_since_epoch()).count();
+}
 
 static const char* kSsrvHost = "kaillerareborn.2manygames.fr";
 static const int kSsrvPort = 27887;
@@ -421,7 +427,7 @@ static bool tryExtractIPv4AndPort(const QByteArray& s, QString& outIp, int& outP
 KailleraP2PDialog::KailleraP2PDialog(bool isHost, const QString& gameName,
                                      const QString& username,
                                      const QString& joinCode, QWidget* parent)
-    : QDialog(parent), m_isHost(isHost), m_gameName(gameName), m_username(username)
+    : QDialog(parent, Qt::Window), m_isHost(isHost), m_gameName(gameName), m_username(username)
 {
     if (m_isHost)
     {
@@ -1093,7 +1099,7 @@ void KailleraP2PDialog::travSendJoin()
     if (m_travJoinCode.isEmpty()) return;
     QByteArray msg = QByteArray(kN02TraversalProtocol) + "|JOIN|" +
                      m_travJoinCode.toUtf8() + "|" +
-                     QByteArray::number((quint32)GetTickCount());
+                     QByteArray::number((quint32)monotonicTickCount());
     travSendToServer(msg);
 }
 
@@ -1904,4 +1910,4 @@ void KailleraP2PDialog::onTravTimer()
     }
 }
 
-#endif // _WIN32
+#endif // NETPLAY

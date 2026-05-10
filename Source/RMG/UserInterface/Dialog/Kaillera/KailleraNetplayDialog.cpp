@@ -14,7 +14,7 @@
 #include "KailleraTableStyle.hpp"
 #include "KailleraWaitingGamesDialog.hpp"
 
-#ifdef _WIN32
+#ifdef NETPLAY
 
 #include "../../KailleraUIBridge.hpp"
 
@@ -65,6 +65,8 @@
 #include <QProxyStyle>
 #include <QStyledItemDelegate>
 #include <QStringList>
+#include <QMainWindow>
+#include <QPlainTextEdit>
 
 #include <chrono>
 #include <cstring>
@@ -74,8 +76,6 @@
 #include <future>
 #include <memory>
 #include <algorithm>
-
-#include <windows.h>
 
 static constexpr int kMaxP2PRecentEntries = 12;
 
@@ -1427,7 +1427,7 @@ static QString buildLauncherStyleSheet(const QString& theme)
 }
 
 KailleraNetplayDialog::KailleraNetplayDialog(QWidget* parent)
-    : QDialog(parent)
+    : QDialog(parent, Qt::Window)
 {
     setWindowIcon(QIcon(":Resource/Kaillera.svg"));
     m_netManager = new QNetworkAccessManager(this);
@@ -1924,12 +1924,13 @@ void KailleraNetplayDialog::loadSettings()
     std::string username = CoreSettingsGetStringValue(SettingsID::Kaillera_Username);
     if (username.empty())
     {
-        // Fallback to Windows username
-        char winUser[32];
-        DWORD size = sizeof(winUser);
-        if (GetUserNameA(winUser, &size))
+        // Fallback to OS username
+        QByteArray envUser = qgetenv("USER");
+        if (envUser.isEmpty())
+            envUser = qgetenv("USERNAME");
+        if (!envUser.isEmpty())
         {
-            username = winUser;
+            username = envUser.toStdString();
         }
         else
         {
@@ -3519,13 +3520,50 @@ void KailleraNetplayDialog::onServerRightClicked(QPoint pos)
     }
     else if (chosen == actTraceroute)
     {
-        // Extract IP (strip port)
         const QString ip = entry.host.split(':').first();
+#ifdef Q_OS_WIN
+        const QString traceCmd = QStringLiteral("tracert");
+#else
+        const QString traceCmd = QStringLiteral("traceroute");
+#endif
 
-        // Launch tracert in a new console window
-        QString cmd = "cmd.exe /c \"tracert " + ip + " & pause\"";
-        QByteArray cmdBytes = cmd.toLocal8Bit();
-        WinExec(cmdBytes.constData(), SW_SHOW);
+        auto* dlg = new QDialog(this);
+        dlg->setWindowTitle("Traceroute - " + ip);
+        dlg->setAttribute(Qt::WA_DeleteOnClose);
+        dlg->resize(600, 400);
+
+        auto* layout = new QVBoxLayout(dlg);
+        auto* output = new QPlainTextEdit(dlg);
+        output->setReadOnly(true);
+        QFont monoFont("monospace");
+        monoFont.setStyleHint(QFont::Monospace);
+        output->setFont(monoFont);
+        layout->addWidget(output);
+
+        auto* proc = new QProcess(dlg);
+        proc->setProcessChannelMode(QProcess::MergedChannels);
+        connect(proc, &QProcess::readyReadStandardOutput, dlg, [proc, output]() {
+            output->moveCursor(QTextCursor::End);
+            output->insertPlainText(QString::fromLocal8Bit(proc->readAllStandardOutput()));
+            output->ensureCursorVisible();
+        });
+        connect(proc, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
+                dlg, [output](int exitCode, QProcess::ExitStatus) {
+            output->moveCursor(QTextCursor::End);
+            output->insertPlainText(QString("\n--- Finished (exit code %1) ---\n").arg(exitCode));
+            output->ensureCursorVisible();
+        });
+        connect(proc, &QProcess::errorOccurred, dlg, [output](QProcess::ProcessError error) {
+            if (error == QProcess::FailedToStart) {
+                output->moveCursor(QTextCursor::End);
+                output->insertPlainText("Error: Could not start traceroute. Is it installed?\n");
+                output->ensureCursorVisible();
+            }
+        });
+
+        output->insertPlainText("$ " + traceCmd + " " + ip + "\n\n");
+        proc->start(traceCmd, QStringList() << ip);
+        dlg->show();
     }
 }
 
@@ -3780,8 +3818,19 @@ void KailleraNetplayDialog::onConnectServer()
             // Browser dialog handles disconnect/cleanup on close
 
             // Re-show the netplay dialog, unless the main window
-            // is closing (user clicked X on the emulator window)
-            if (parentWidget() && parentWidget()->isVisible())
+            // is closing (user clicked X on the emulator window).
+            // The dialog has no Qt parent (nullptr) to avoid Linux
+            // window-stacking issues, so check the active windows instead.
+            bool mainWindowAlive = false;
+            for (QWidget* w : QApplication::topLevelWidgets())
+            {
+                if (qobject_cast<QMainWindow*>(w) && w->isVisible())
+                {
+                    mainWindowAlive = true;
+                    break;
+                }
+            }
+            if (mainWindowAlive)
             {
                 show();
                 m_serverPingsSuspended = false;
@@ -4496,4 +4545,4 @@ void KailleraNetplayDialog::onP2PWaitingGames()
     onP2PJoin();
 }
 
-#endif // _WIN32
+#endif // NETPLAY

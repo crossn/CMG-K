@@ -10,7 +10,7 @@
 #include "KailleraWaitingGamesDialog.hpp"
 #include "KailleraTableStyle.hpp"
 
-#ifdef _WIN32
+#ifdef NETPLAY
 
 #include <RMG-Core/Settings.hpp>
 
@@ -303,4 +303,4 @@ void KailleraWaitingGamesDialog::onRowDoubleClicked(int row, int column)
     onConnect();
 }
 
-#endif // _WIN32
+#endif // NETPLAY

@@ -95,7 +95,9 @@ if (TARGET n02)
     target_include_directories(RMG-Core PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/../n02
     )
-    target_link_options(RMG-Core PRIVATE -Wl,--export-all-symbols)
+    if (WIN32)
+        target_link_options(RMG-Core PRIVATE -Wl,--export-all-symbols)
+    endif()
 endif()
 
 target_include_directories(RMG-Core PRIVATE 
