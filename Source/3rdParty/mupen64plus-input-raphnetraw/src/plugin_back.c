@@ -94,6 +94,8 @@ struct rawChannel {
 static struct rawChannel g_channels[MAX_CHANNELS] = { };
 static int g_n_channels = 0;
 
+static int pb_commandIsValid(int Control, unsigned char *Command);
+
 int pb_init(pb_debugFunc debugFn)
 {
 	DebugMessage = debugFn;
@@ -296,6 +298,35 @@ int pb_controllerCommand(int Control, unsigned char *Command)
 	timing(1, NULL);
 #endif
 	return 0;
+}
+
+int pb_getKeys(int Control, unsigned int *Keys)
+{
+	unsigned char command[7] = { 0x01, 0x04, 0x01, 0x00, 0x00, 0x00, 0x00 };
+	unsigned char *rx = command + 3;
+
+	if (!Keys) {
+		return 0;
+	}
+
+	*Keys = 0;
+
+	if (!pb_commandIsValid(Control, command)) {
+		return 0;
+	}
+
+	pb_readController(Control, command);
+	pb_readController(-1, NULL);
+
+	if ((command[1] & (BIO_RX_LEN_TIMEDOUT | BIO_RX_LEN_PARTIAL)) || ((command[1] & BIO_RXTX_MASK) < 4)) {
+		return 0;
+	}
+
+	*Keys = ((unsigned int)rx[0])
+		| ((unsigned int)rx[1] << 8)
+		| ((unsigned int)rx[2] << 16)
+		| ((unsigned int)rx[3] << 24);
+	return 1;
 }
 
 static int pb_performIo(void)

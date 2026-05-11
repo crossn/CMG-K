@@ -1,4 +1,4 @@
-# RMG-K (Rosalie's Mupen GUI - Kaillera)
+# RMG-Gekkonet (Rosalie's Mupen GUI - Gekkonet)
 
 Rosalie's Mupen GUI is a free and open-source mupen64plus front-end written in C++.
 

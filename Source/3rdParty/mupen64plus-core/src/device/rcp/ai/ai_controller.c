@@ -23,6 +23,12 @@
 
 #include <string.h>
 
+#ifdef USE_SDL3
+#include <SDL3/SDL.h>
+#else
+#include <SDL.h>
+#endif
+
 #include "backends/api/audio_out_backend.h"
 #include "device/memory/memory.h"
 #include "device/r4300/r4300_core.h"
@@ -30,10 +36,52 @@
 #include "device/rcp/ri/ri_controller.h"
 #include "device/rcp/vi/vi_controller.h"
 #include "device/rdram/rdram.h"
+#include "main/main.h"
 
 
 #define AI_STATUS_BUSY UINT32_C(0x40000000)
 #define AI_STATUS_FULL UINT32_C(0x80000000)
+
+struct ai_rollback_stats
+{
+    uint64_t set_frequency_count;
+    uint64_t set_frequency_us;
+    uint64_t push_samples_count;
+    uint64_t push_samples_us;
+    uint64_t fifo_pop_count;
+    uint64_t fifo_pop_us;
+    uint64_t raise_interrupt_count;
+    uint64_t raise_interrupt_us;
+};
+
+static struct ai_rollback_stats l_AiRollbackStats;
+
+static uint64_t ai_rollback_now_us(void)
+{
+    uint64_t counter = SDL_GetPerformanceCounter();
+    uint64_t frequency = SDL_GetPerformanceFrequency();
+    return (counter / frequency) * 1000000ULL + ((counter % frequency) * 1000000ULL) / frequency;
+}
+
+void ai_rollback_stats_reset(void)
+{
+    memset(&l_AiRollbackStats, 0, sizeof(l_AiRollbackStats));
+}
+
+void ai_rollback_stats_fill(m64p_rollback_run_frame_stats* stats)
+{
+    if (stats == NULL)
+        return;
+
+    stats->ai_set_frequency_count = l_AiRollbackStats.set_frequency_count;
+    stats->ai_set_frequency_us = l_AiRollbackStats.set_frequency_us;
+    stats->ai_push_samples_count = l_AiRollbackStats.push_samples_count;
+    stats->ai_push_samples_us = l_AiRollbackStats.push_samples_us;
+    stats->ai_fifo_pop_count = l_AiRollbackStats.fifo_pop_count;
+    stats->ai_fifo_pop_us = l_AiRollbackStats.fifo_pop_us;
+    stats->ai_raise_interrupt_count = l_AiRollbackStats.raise_interrupt_count;
+    stats->ai_raise_interrupt_us = l_AiRollbackStats.raise_interrupt_us;
+}
 
 
 static uint32_t get_remaining_dma_length(struct ai_controller* ai)
@@ -79,8 +127,13 @@ static void do_dma(struct ai_controller* ai, struct ai_dma* dma)
             ? 44100 /* default sample rate */
             : ai->vi->clock / (1 + ai->regs[AI_DACRATE_REG]);
 
-        ai->iaout->set_frequency(ai->aout, frequency);
-
+        if (!main_rollback_hidden_frame_active())
+        {
+            uint64_t begin = ai_rollback_now_us();
+            ai->iaout->set_frequency(ai->aout, frequency);
+            l_AiRollbackStats.set_frequency_count++;
+            l_AiRollbackStats.set_frequency_us += ai_rollback_now_us() - begin;
+        }
         ai->samples_format_changed = 0;
     }
 
@@ -176,7 +229,13 @@ void read_ai_regs(void* opaque, uint32_t address, uint32_t* value)
         {
             unsigned int diff = ai->fifo[0].length - ai->last_read;
             unsigned char *p = (unsigned char*)&ai->ri->rdram->dram[ai->fifo[0].address/4];
-            ai->iaout->push_samples(ai->aout, p + diff, ai->last_read - *value);
+            if (main_frame_audio_enabled())
+            {
+                uint64_t begin = ai_rollback_now_us();
+                ai->iaout->push_samples(ai->aout, p + diff, ai->last_read - *value);
+                l_AiRollbackStats.push_samples_count++;
+                l_AiRollbackStats.push_samples_us += ai_rollback_now_us() - begin;
+            }
             ai->last_read = *value;
         }
     }
@@ -230,11 +289,27 @@ void ai_end_of_dma_event(void* opaque)
     {
         unsigned int diff = ai->fifo[0].length - ai->last_read;
         unsigned char *p = (unsigned char*)&ai->ri->rdram->dram[ai->fifo[0].address/4];
-        ai->iaout->push_samples(ai->aout, p + diff, ai->last_read);
+        if (main_frame_audio_enabled())
+        {
+            uint64_t begin = ai_rollback_now_us();
+            ai->iaout->push_samples(ai->aout, p + diff, ai->last_read);
+            l_AiRollbackStats.push_samples_count++;
+            l_AiRollbackStats.push_samples_us += ai_rollback_now_us() - begin;
+        }
         ai->last_read = 0;
     }
 
-    fifo_pop(ai);
-    raise_rcp_interrupt(ai->mi, MI_INTR_AI);
-}
+    {
+        uint64_t begin = ai_rollback_now_us();
+        l_AiRollbackStats.fifo_pop_count++;
+        fifo_pop(ai);
+        l_AiRollbackStats.fifo_pop_us += ai_rollback_now_us() - begin;
+    }
 
+    {
+        uint64_t begin = ai_rollback_now_us();
+        l_AiRollbackStats.raise_interrupt_count++;
+        raise_rcp_interrupt(ai->mi, MI_INTR_AI);
+        l_AiRollbackStats.raise_interrupt_us += ai_rollback_now_us() - begin;
+    }
+}

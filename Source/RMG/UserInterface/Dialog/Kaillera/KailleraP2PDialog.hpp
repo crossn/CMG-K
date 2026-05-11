@@ -36,6 +36,7 @@ public:
 
 signals:
     void peerNicknameResolved(QString nickname);
+    void rollbackSessionReady(QString gameName, QString remoteAddress, int localPort, int remotePort, int localPlayer, int frameDelay, int predictionWindow);
 
 protected:
     void reject() override;
@@ -62,8 +63,21 @@ private slots:
     void onTravTimer();
 
 private:
+    enum class GameLayer
+    {
+        Standard,
+        Rollback
+    };
+
     void setupUI();
     void connectSignals();
+    void cleanupSessionForClose();
+    void setGameLayer(GameLayer layer, bool announceToPeer, bool resetReady);
+    void applyGameLayerUI();
+    void sendGameLayer();
+    void resetReadyState();
+    bool parseGameLayerMessage(const QString& message, GameLayer& layer) const;
+    bool isRollbackMode() const;
 
     // NAT traversal helpers
     void travSendToServer(const QByteArray& msg);
@@ -87,6 +101,9 @@ private:
     QString buildEnlistAppName();
 
     bool m_isHost;
+    GameLayer m_gameLayer = GameLayer::Standard;
+    bool m_rollbackGameActive = false;
+    bool m_closeCleanupDone = false;
     bool m_ready = false;
     QString m_gameName;
     QString m_username;
@@ -105,10 +122,17 @@ private:
     QCheckBox* m_recordCheck = nullptr;
     QCheckBox* m_enlistCheck = nullptr;
     QLabel* m_pingLabel = nullptr;
+    QPushButton* m_standardLayerButton = nullptr;
+    QPushButton* m_rollbackLayerButton = nullptr;
 
     // Host group
     QGroupBox* m_hostGroup = nullptr;
+    QLabel* m_gameLayerStatusLabel = nullptr;
+    QLabel* m_frameDelayLabel = nullptr;
+    QWidget* m_frameDelayRow = nullptr;
     QComboBox* m_frameDelayCombo = nullptr;
+    QWidget* m_predictionWindowRow = nullptr;
+    QComboBox* m_predictionWindowCombo = nullptr;
     QLineEdit* m_connectCodeEdit = nullptr;
     QAction* m_copyAction = nullptr;
 

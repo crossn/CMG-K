@@ -101,6 +101,10 @@ enum class SettingsID
     Kaillera_FfmpegPath,
     Kaillera_ExportLabelPorts,
 
+    // Rollback Settings
+    Rollback_VerboseStats,
+    Rollback_EnableLocalTesting,
+
     // Core Plugin Settings
     Core_GFX_Plugin,
     Core_AUDIO_Plugin,

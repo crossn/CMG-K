@@ -71,6 +71,13 @@ if (WIN32)
     set(SDL3NET_LDLIBS "${SDL3NET_LDLIBS} -liphlpapi -lws2_32")
 endif (WIN32)
 
+if(EXISTS "${CMAKE_SOURCE_DIR}/GekkoNet-main/GekkoLib/CMakeLists.txt")
+    set(BUILD_SHARED_LIBS OFF CACHE BOOL "Build vendored GekkoNet as a static library" FORCE)
+    set(BUILD_DOCS OFF CACHE BOOL "Disable GekkoNet docs" FORCE)
+    set(NO_ASIO_BUILD OFF CACHE BOOL "Build GekkoNet with ASIO networking" FORCE)
+    add_subdirectory("${CMAKE_SOURCE_DIR}/GekkoNet-main/GekkoLib" "${CMAKE_BINARY_DIR}/GekkoNet")
+endif()
+
 ExternalProject_Add(mupen64plus-core
     SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/mupen64plus-core/
 

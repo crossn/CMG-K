@@ -29,6 +29,8 @@
 
 #include <future>
 
+class KailleraP2PDialog;
+
 struct ServerEntry {
     QString name;
     QString host; // "ip:port"
@@ -46,6 +48,10 @@ class KailleraNetplayDialog : public QDialog
 public:
     explicit KailleraNetplayDialog(QWidget* parent = nullptr);
     ~KailleraNetplayDialog() override;
+
+signals:
+    void rollbackSessionPreparing();
+    void rollbackSessionRequested(QString gameName, QString remoteAddress, int localPort, int remotePort, int localPlayer, int frameDelay, int predictionWindow);
 
 private slots:
     void onStateMachineTimer();
@@ -120,6 +126,7 @@ private:
     void handleP2PWaitingGamesReply(QNetworkReply* reply);
     void populateP2PWaitingGames(const QByteArray& data);
     void useP2PWaitingGameRow(int row, bool connectNow);
+    void connectRollbackSessionLaunch(KailleraP2PDialog& p2pDialog, bool& rollbackLaunched);
 
     // State machine timer (replaces blocking KSSDFA loop)
     QTimer* m_stateMachineTimer = nullptr;

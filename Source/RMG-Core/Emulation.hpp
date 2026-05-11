@@ -34,6 +34,25 @@ bool CoreResumeEmulation(void);
 // advances emulation by one frame (must be paused)
 bool CoreAdvanceFrame(void);
 
+// advances emulation by several frames
+bool CoreAdvanceFrames(int frames);
+
+enum CoreFrameOutputFlags
+{
+    CoreFrameOutput_None   = 0,
+    CoreFrameOutput_Video  = 1 << 0,
+    CoreFrameOutput_Audio  = 1 << 1,
+    CoreFrameOutput_Pacing = 1 << 2,
+    CoreFrameOutput_Input  = 1 << 3,
+    CoreFrameOutput_All    = CoreFrameOutput_Video | CoreFrameOutput_Audio | CoreFrameOutput_Pacing | CoreFrameOutput_Input
+};
+
+// configures frame side effects used by normal, hidden, and rollback frames
+bool CoreSetFrameOutput(int flags);
+
+// advances emulation by several frames using per-call frame side effects
+bool CoreRunFrames(int frames, int flags);
+
 // resets emulation
 bool CoreResetEmulation(bool hard);
 
@@ -42,6 +61,9 @@ bool CoreIsEmulationRunning(void);
 
 // returns whether emulation is paused
 bool CoreIsEmulationPaused(void);
+
+// returns whether synchronized netplay is active
+bool CoreIsSynchronizedNetplayActive(void);
 
 // returns current VI (vertical interrupt) frame count
 // used for synchronization in netplay/Kaillera
