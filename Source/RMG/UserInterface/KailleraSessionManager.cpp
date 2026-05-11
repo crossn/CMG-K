@@ -89,6 +89,10 @@ bool KailleraSessionManager::showServerDialog()
     // brought to the front or fullscreened.
     KailleraNetplayDialog dialog(nullptr);
     dialog.setWindowModality(Qt::NonModal);
+    QObject::connect(&dialog, &KailleraNetplayDialog::rollbackSessionPreparing,
+                     this, &KailleraSessionManager::rollbackSessionPreparing);
+    QObject::connect(&dialog, &KailleraNetplayDialog::rollbackSessionRequested,
+                     this, &KailleraSessionManager::rollbackSessionRequested);
     dialog.show();
 
     QEventLoop loop;

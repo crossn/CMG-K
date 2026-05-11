@@ -36,6 +36,26 @@
 
 struct r4300_core;
 
+struct new_dynarec_rollback_stats
+{
+    uint64_t recompile_count;
+    uint64_t recompile_us;
+    uint64_t invalidate_us;
+    uint64_t full_invalidate_count;
+    uint64_t range_invalidate_count;
+    uint64_t block_invalidate_count;
+    uint64_t verify_dirty_count;
+    uint64_t verify_dirty_us;
+    uint64_t get_addr_count;
+    uint64_t get_addr_us;
+    uint64_t get_addr_ht_count;
+    uint64_t get_addr_32_count;
+    uint64_t dynamic_linker_count;
+    uint64_t dynamic_linker_us;
+    uint64_t dynamic_linker_ds_count;
+    uint64_t dynamic_linker_ds_us;
+};
+
 /* This struct contains "hot" variables used by the new_dynarec
  *
  * For the ARM version, care has been taken to place struct members at offsets within LDR/STR offsets ranges.
@@ -90,8 +110,11 @@ extern unsigned int stop_after_jal;
 extern unsigned int using_tlb;
 
 void invalidate_cached_code_new_dynarec(struct r4300_core* r4300, uint32_t address, size_t size);
+void new_dynarec_rollback_stats_reset(void);
+void new_dynarec_rollback_stats_get(struct new_dynarec_rollback_stats* stats);
 void new_dynarec_init(void);
 void new_dyna_start(void);
+void new_dyna_resume(void);
 void new_dynarec_cleanup(void);
 
 #endif /* M64P_DEVICE_R4300_NEW_DYNAREC_H */

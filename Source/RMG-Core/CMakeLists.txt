@@ -33,6 +33,8 @@ set(RMG_CORE_SOURCES
     RomHeader.cpp
     Emulation.cpp
     SaveState.cpp
+    RollbackNetcode.cpp
+    rmgk_gekko.cpp
     Callback.cpp
     Settings.cpp
     Archive.cpp
@@ -63,6 +65,11 @@ endif(PORTABLE_INSTALL)
 
 add_library(RMG-Core SHARED ${RMG_CORE_SOURCES})
 
+if(TARGET GekkoNet)
+    target_compile_definitions(RMG-Core PRIVATE RMGK_HAVE_GEKKONET)
+    target_link_libraries(RMG-Core PRIVATE GekkoNet)
+endif()
+
 if(UNIX)
     target_link_libraries(RMG-Core PRIVATE dl)
 endif(UNIX)
@@ -82,7 +89,8 @@ target_link_libraries(RMG-Core PRIVATE
 # --export-all-symbols forces the linker to export n02 functions from
 # RMG-Core.dll even though CORE_EXPORT (__declspec(dllexport)) triggers
 # selective export mode.
-if (NETPLAY)
+if (TARGET n02)
+    target_compile_definitions(RMG-Core PRIVATE RMGK_HAVE_P2P_TRANSPORT)
     target_link_libraries(RMG-Core PRIVATE n02)
     target_include_directories(RMG-Core PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}/../n02

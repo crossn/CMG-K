@@ -295,6 +295,17 @@ EXPORT void CALL ControllerCommand(int Control, unsigned char *Command)
 
 EXPORT void CALL GetKeys( int Control, BUTTONS *Keys )
 {
+	unsigned int value = 0;
+
+	if (!Keys) {
+		return;
+	}
+
+	Keys->Value = 0;
+
+	if (pb_getKeys(EMU_2_ADAP_PORT(Control), &value)) {
+		Keys->Value = value;
+	}
 }
 
 EXPORT void CALL RomClosed(void)

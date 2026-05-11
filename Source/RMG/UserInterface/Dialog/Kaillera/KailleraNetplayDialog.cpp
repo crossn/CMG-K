@@ -1525,7 +1525,7 @@ void KailleraNetplayDialog::setupUI()
         launcherTabBar->setModernMode(theme == "Modern");
     }
     m_tabWidget->addTab(createServerTab(), "Server");
-    m_tabWidget->addTab(createP2PTab(), "Peer to Peer");
+    m_tabWidget->addTab(createP2PTab(), "Peer to Peer (rollback)");
     connect(m_tabWidget, &QTabWidget::currentChanged, this, &KailleraNetplayDialog::onTabChanged);
     mainLayout->addWidget(m_tabWidget, 1);
 }
@@ -2761,6 +2761,17 @@ QString KailleraNetplayDialog::currentP2PStaticCodeOwnerToken() const
         CoreSettingsGetStringValue(SettingsID::Kaillera_P2PStaticCodeOwnerToken)).trimmed();
 }
 
+void KailleraNetplayDialog::connectRollbackSessionLaunch(KailleraP2PDialog& p2pDialog, bool& rollbackLaunched)
+{
+    connect(&p2pDialog, &KailleraP2PDialog::rollbackSessionReady, this,
+        [this, &rollbackLaunched](QString game, QString remoteAddress, int localPort, int remotePort, int localPlayer, int frameDelay, int predictionWindow) {
+            rollbackLaunched = true;
+            emit rollbackSessionPreparing();
+            emit rollbackSessionRequested(game, remoteAddress, localPort, remotePort, localPlayer, frameDelay, predictionWindow);
+        },
+        Qt::DirectConnection);
+}
+
 static void releaseOldTraversalReservation(QWidget* parent, const QString& ownerToken)
 {
     if (ownerToken.isEmpty())
@@ -3902,8 +3913,10 @@ void KailleraNetplayDialog::onP2PHost()
 
         hide();
 
+        bool rollbackLaunched = false;
         QString username = QString::fromUtf8(usernameBytes);
         KailleraP2PDialog p2pDialog(true, gameName, username, QString(), nullptr);
+        connectRollbackSessionLaunch(p2pDialog, rollbackLaunched);
         p2pDialog.show();
 
         QEventLoop loop;
@@ -3913,6 +3926,12 @@ void KailleraNetplayDialog::onP2PHost()
         if (stateTimerWasRunning && m_stateMachineTimer != nullptr)
         {
             m_stateMachineTimer->start(1);
+        }
+
+        if (rollbackLaunched)
+        {
+            accept();
+            return;
         }
 
         show();
@@ -4065,6 +4084,8 @@ void KailleraNetplayDialog::onP2PJoin()
                         updateP2PStoredNickname(normalizedCode, nickname);
                     },
                     Qt::QueuedConnection);
+            bool rollbackLaunched = false;
+            connectRollbackSessionLaunch(p2pDialog, rollbackLaunched);
             p2pDialog.show();
 
             QEventLoop loop;
@@ -4074,6 +4095,12 @@ void KailleraNetplayDialog::onP2PJoin()
             if (stateTimerWasRunning && m_stateMachineTimer != nullptr)
             {
                 m_stateMachineTimer->start(1);
+            }
+
+            if (rollbackLaunched)
+            {
+                accept();
+                return;
             }
 
             show();
@@ -4106,6 +4133,8 @@ void KailleraNetplayDialog::onP2PJoin()
                             updateP2PStoredNickname(addrText, nickname);
                         },
                         Qt::QueuedConnection);
+                bool rollbackLaunched = false;
+                connectRollbackSessionLaunch(p2pDialog, rollbackLaunched);
                 p2pDialog.show();
 
                 QEventLoop loop;
@@ -4115,6 +4144,12 @@ void KailleraNetplayDialog::onP2PJoin()
                 if (stateTimerWasRunning && m_stateMachineTimer != nullptr)
                 {
                     m_stateMachineTimer->start(1);
+                }
+
+                if (rollbackLaunched)
+                {
+                    accept();
+                    return;
                 }
 
                 show();

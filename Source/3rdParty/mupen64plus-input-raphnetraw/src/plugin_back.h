@@ -13,10 +13,10 @@ typedef void (*pb_debugFunc)(int level, const char *message, ...);
 int pb_init(pb_debugFunc debugFn);
 int pb_shutdown(void);
 int pb_scanControllers(void);
+int pb_getKeys(int Control, unsigned int *Keys);
 int pb_readController(int Control, unsigned char *Command);
 int pb_controllerCommand(int Control, unsigned char *Command);
 int pb_romOpen(void);
 int pb_romClosed(void);
 
 #endif // _plugin_back_h__
-

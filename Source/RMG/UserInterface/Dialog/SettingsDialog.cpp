@@ -16,6 +16,8 @@
 #include <QRegularExpressionValidator>
 #include <QCryptographicHash>
 #include <QRegularExpression>
+#include <QVBoxLayout>
+#include <QHBoxLayout>
 #include <QFileDialog>
 #include <QColorDialog>
 #include <QDirIterator>
@@ -199,7 +201,8 @@ enum class SettingsDialogTab
     Plugin     = 11,
     Directory  = 12,
     N64DD      = 13,
-    Invalid    = 14
+    Rollback   = 14,
+    Invalid    = 15
 };
 
 
@@ -223,6 +226,15 @@ SettingsDialog::SettingsDialog(QWidget *parent, QString file) : QDialog(parent)
     setupDirectoryChangeButtonIcon(this->changeSaveStateDirButton);
     setupDirectoryChangeButtonIcon(this->changeSaveSramDirButton);
     setupDirectoryChangeButtonIcon(this->changeKailleraRecordsDirectoryButton);
+
+    QWidget* rollbackTab = new QWidget(this->tabWidget);
+    QVBoxLayout* rollbackLayout = new QVBoxLayout(rollbackTab);
+    this->rollbackVerboseStatsCheckBox = new QCheckBox("Enable verbose rollback stats messaging", rollbackTab);
+    this->rollbackEnableLocalTestingCheckBox = new QCheckBox("Use rollback engine for local play", rollbackTab);
+    rollbackLayout->addWidget(this->rollbackVerboseStatsCheckBox);
+    rollbackLayout->addWidget(this->rollbackEnableLocalTestingCheckBox);
+    rollbackLayout->addStretch();
+    this->tabWidget->addTab(rollbackTab, "Rollback");
 
     this->setIconsForEmulationInfoText();
 
@@ -556,6 +568,9 @@ void SettingsDialog::restoreDefaults(int stackedWidgetIndex)
     case SettingsDialogTab::N64DD:
         this->loadDefault64DDSettings();
         break;
+    case SettingsDialogTab::Rollback:
+        this->loadDefaultRollbackSettings();
+        break;
     }
 }
 
@@ -612,6 +627,9 @@ void SettingsDialog::loadSettings(int stackedWidgetIndex)
         break;
     case SettingsDialogTab::N64DD:
         this->load64DDSettings();
+        break;
+    case SettingsDialogTab::Rollback:
+        this->loadRollbackSettings();
         break;
     }
 }
@@ -935,6 +953,12 @@ void SettingsDialog::loadInterfaceNetplaySettings(void)
     // this->netplayDispatcherUrlLineEdit->setText(QString::fromStdString(CoreSettingsGetStringValue(SettingsID::Netplay_DispatcherUrl)));
 }
 
+void SettingsDialog::loadRollbackSettings(void)
+{
+    this->rollbackVerboseStatsCheckBox->setChecked(CoreSettingsGetBoolValue(SettingsID::Rollback_VerboseStats));
+    this->rollbackEnableLocalTestingCheckBox->setChecked(CoreSettingsGetBoolValue(SettingsID::Rollback_EnableLocalTesting));
+}
+
 void SettingsDialog::loadDefaultCoreSettings(void)
 {
     bool disableExtraMem = CoreSettingsGetDefaultBoolValue(SettingsID::CoreOverlay_DisableExtraMem);
@@ -1141,6 +1165,12 @@ void SettingsDialog::loadDefaultInterfaceNetplaySettings(void)
     // this->netplayDispatcherUrlLineEdit->setText(QString::fromStdString(CoreSettingsGetDefaultStringValue(SettingsID::Netplay_DispatcherUrl)));
 }
 
+void SettingsDialog::loadDefaultRollbackSettings(void)
+{
+    this->rollbackVerboseStatsCheckBox->setChecked(CoreSettingsGetDefaultBoolValue(SettingsID::Rollback_VerboseStats));
+    this->rollbackEnableLocalTestingCheckBox->setChecked(CoreSettingsGetDefaultBoolValue(SettingsID::Rollback_EnableLocalTesting));
+}
+
 void SettingsDialog::saveSettings(void)
 {
     this->saveCoreSettings();
@@ -1162,6 +1192,7 @@ void SettingsDialog::saveSettings(void)
     this->saveInterfaceLogSettings();
     this->saveInterfaceOSDSettings();
     this->saveInterfaceNetplaySettings();
+    this->saveRollbackSettings();
     CoreSettingsSave();
 }
 
@@ -1400,6 +1431,12 @@ void SettingsDialog::saveInterfaceNetplaySettings(void)
     // Kaillera uses built-in server list, no need for custom URLs
     // CoreSettingsSetValue(SettingsID::Netplay_ServerJsonUrl, this->netplayServerUrlLineEdit->text().toStdString());
     // CoreSettingsSetValue(SettingsID::Netplay_DispatcherUrl, this->netplayDispatcherUrlLineEdit->text().toStdString());
+}
+
+void SettingsDialog::saveRollbackSettings(void)
+{
+    CoreSettingsSetValue(SettingsID::Rollback_VerboseStats, this->rollbackVerboseStatsCheckBox->isChecked());
+    CoreSettingsSetValue(SettingsID::Rollback_EnableLocalTesting, this->rollbackEnableLocalTestingCheckBox->isChecked());
 }
 
 void SettingsDialog::commonHotkeySettings(SettingsDialogAction action)
