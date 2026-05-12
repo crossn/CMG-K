@@ -218,6 +218,7 @@ void init_r4300(struct r4300_core* r4300, struct memory* mem, struct mi_controll
 void poweron_r4300(struct r4300_core* r4300);
 
 void run_r4300(struct r4300_core* r4300);
+int run_r4300_current(struct r4300_core* r4300);
 
 int64_t* r4300_regs(struct r4300_core* r4300);
 int64_t* r4300_mult_hi(struct r4300_core* r4300);
@@ -246,11 +247,13 @@ int r4300_write_aligned_dword(struct r4300_core* r4300, uint32_t address, uint64
  * all cached code.
  */
 void invalidate_r4300_cached_code(struct r4300_core* r4300, uint32_t address, size_t size);
+void r4300_cached_code_rollback_stats_reset(void);
+void r4300_cached_code_rollback_stats_get(uint64_t* full_invalidate_count, uint64_t* range_invalidate_count);
 
 /* Jump to the given address. This works for all r4300 emulator, but is slower.
  * Use this for common code which can be executed from any r4300 emulator. */
 void generic_jump_to(struct r4300_core* r4300, unsigned int address);
 
-void savestates_load_set_pc(struct r4300_core* r4300, uint32_t pc);
+void savestates_load_set_pc(struct r4300_core* r4300, uint32_t pc, int invalidate_cached_code);
 
 #endif

@@ -33,6 +33,7 @@ void p2p_fodipp_callback(char * host);
 
 int p2p_modify_play_values(void *values, int size);
 int p2p_core_get_port();
+bool p2p_core_get_peer_endpoint(char *ip, int ip_len, int *port);
 void p2p_hosted_game_callback(char * game);
 void p2p_ping_callback(int PING);
 
@@ -40,6 +41,11 @@ void p2p_send_ssrv_packet(char * cmd, int len, char * host, int port);
 void p2p_ssrv_packet_recv_callback(char *cmd, int len, void*sadr);
 
 void p2p_send_ssrv_packet(char * cmd, int len, void * sadr);
+
+bool p2p_rollback_transport_send(const char *data, int len);
+int p2p_rollback_transport_receive(char *data, int data_len, char *addr, int addr_len);
+void p2p_rollback_transport_clear();
+bool p2p_rollback_process_control();
 
 
 void p2p_peer_left_callback();

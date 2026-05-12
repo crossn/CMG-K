@@ -61,6 +61,128 @@ typedef void (*m64p_frame_callback)(unsigned int FrameIndex);
 typedef void (*m64p_input_callback)(void);
 typedef void (*m64p_audio_callback)(void);
 typedef void (*m64p_vi_callback)(void);
+typedef int (*m64p_rollback_input_callback)(void* values, int size, int players);
+typedef struct {
+  void *values;
+  int size;
+  int players;
+} m64p_rollback_input_sample;
+typedef struct {
+  void *user_data;
+  int (*begin_frame)(void *user_data);
+  int (*end_frame)(void *user_data);
+} m64p_rollback_execute_callbacks;
+typedef struct {
+  uint64_t total_us;
+  uint64_t r4300_us;
+  uint64_t vi_us;
+  uint64_t new_frame_us;
+  uint64_t cheats_us;
+  uint64_t pacing_us;
+  uint64_t input_us;
+  uint64_t pause_us;
+  uint64_t netplay_us;
+  uint64_t dynarec_recompile_count;
+  uint64_t dynarec_recompile_us;
+  uint64_t dynarec_invalidate_us;
+  uint64_t dynarec_full_invalidate_count;
+  uint64_t dynarec_range_invalidate_count;
+  uint64_t dynarec_block_invalidate_count;
+  uint64_t dynarec_verify_dirty_count;
+  uint64_t dynarec_verify_dirty_us;
+  uint64_t dynarec_get_addr_count;
+  uint64_t dynarec_get_addr_us;
+  uint64_t dynarec_get_addr_ht_count;
+  uint64_t dynarec_get_addr_32_count;
+  uint64_t dynarec_dynamic_linker_count;
+  uint64_t dynarec_dynamic_linker_us;
+  uint64_t dynarec_dynamic_linker_ds_count;
+  uint64_t dynarec_dynamic_linker_ds_us;
+  uint64_t cached_code_full_invalidate_count;
+  uint64_t cached_code_range_invalidate_count;
+  uint64_t interrupt_count;
+  uint64_t interrupt_us;
+  uint64_t interrupt_max_us;
+  uint64_t interrupt_vi_count;
+  uint64_t interrupt_vi_us;
+  uint64_t interrupt_compare_count;
+  uint64_t interrupt_compare_us;
+  uint64_t interrupt_check_count;
+  uint64_t interrupt_check_us;
+  uint64_t interrupt_si_count;
+  uint64_t interrupt_si_us;
+  uint64_t interrupt_pi_count;
+  uint64_t interrupt_pi_us;
+  uint64_t interrupt_ai_count;
+  uint64_t interrupt_ai_us;
+  uint64_t interrupt_sp_count;
+  uint64_t interrupt_sp_us;
+  uint64_t interrupt_dp_count;
+  uint64_t interrupt_dp_us;
+  uint64_t interrupt_rsp_dma_count;
+  uint64_t interrupt_rsp_dma_us;
+  uint64_t interrupt_rsp_task_count;
+  uint64_t interrupt_rsp_task_us;
+  uint64_t ai_set_frequency_count;
+  uint64_t ai_set_frequency_us;
+  uint64_t ai_push_samples_count;
+  uint64_t ai_push_samples_us;
+  uint64_t ai_fifo_pop_count;
+  uint64_t ai_fifo_pop_us;
+  uint64_t ai_raise_interrupt_count;
+  uint64_t ai_raise_interrupt_us;
+  uint32_t emumode;
+  uint32_t interrupt_max_type;
+  uint32_t cp0_count_before;
+  uint32_t cp0_count_after;
+  uint32_t next_interrupt_before;
+  uint32_t next_interrupt_after;
+  uint32_t pc_before;
+  uint32_t pc_after;
+  uint32_t current_frame_before;
+  uint32_t current_frame_after;
+  uint32_t dynarec_pcaddr_before;
+  uint32_t dynarec_pcaddr_after;
+  uint32_t cp0_last_addr_before;
+  uint32_t cp0_last_addr_after;
+  uint32_t load_before_pc;
+  uint32_t load_before_cp0_count;
+  uint32_t load_before_next_interrupt;
+  uint32_t load_before_current_frame;
+  uint32_t load_probe_pc;
+  uint32_t load_probe_cp0_count;
+  uint32_t load_probe_next_interrupt;
+  uint32_t load_probe_current_frame;
+  uint32_t hidden_begin_pc;
+  uint32_t hidden_begin_cp0_count;
+  uint32_t hidden_begin_next_interrupt;
+  uint32_t hidden_begin_current_frame;
+  uint32_t resume_probe_pc;
+  uint32_t resume_probe_cp0_count;
+  uint32_t resume_probe_next_interrupt;
+  uint32_t resume_probe_current_frame;
+  int32_t  dynarec_cycle_count_before;
+  int32_t  dynarec_cycle_count_after;
+  int32_t  dynarec_pending_exception_before;
+  int32_t  dynarec_pending_exception_after;
+  int32_t  dynarec_stop_before;
+  int32_t  dynarec_stop_after;
+  int32_t  load_before_cycle_count;
+  int32_t  load_before_pending_exception;
+  int32_t  load_before_stop;
+  int32_t  load_probe_cycle_count;
+  int32_t  load_probe_pending_exception;
+  int32_t  load_probe_stop;
+  int32_t  hidden_begin_cycle_count;
+  int32_t  hidden_begin_pending_exception;
+  int32_t  hidden_begin_stop;
+  int32_t  resume_probe_cycle_count;
+  int32_t  resume_probe_pending_exception;
+  int32_t  resume_probe_stop;
+  int32_t  delay_slot_before;
+  int32_t  delay_slot_after;
+  int      output_flags;
+} m64p_rollback_run_frame_stats;
 
 typedef enum {
   M64TYPE_INT = 1,
@@ -171,8 +293,38 @@ typedef enum {
   M64CMD_PIF_OPEN,
   M64CMD_ROM_SET_SETTINGS,
   M64CMD_DISK_OPEN,
-  M64CMD_DISK_CLOSE
+  M64CMD_DISK_CLOSE,
+  M64CMD_RUN_FRAMES,
+  M64CMD_ROLLBACK_SAVE_STATE,
+  M64CMD_ROLLBACK_LOAD_STATE,
+  M64CMD_ROLLBACK_FREE_STATE,
+  M64CMD_ROLLBACK_SET_INPUT_CALLBACK,
+  M64CMD_ROLLBACK_SET_INPUT_PLAYERS,
+  M64CMD_ROLLBACK_SET_DETERMINISTIC,
+  M64CMD_ROLLBACK_SAMPLE_INPUT,
+  M64CMD_ROLLBACK_EXECUTE,
+  M64CMD_ROLLBACK_RUN_FRAME,
+  M64CMD_ROLLBACK_GET_RUN_FRAME_STATS,
+  M64CMD_ROLLBACK_SET_VERBOSE_STATS,
+  M64CMD_ROLLBACK_SET_TIMESYNC_SCALE,
+  M64CMD_FRAME_OUTPUT_SET
 } m64p_command;
+
+typedef enum {
+  M64FRAME_OUTPUT_VIDEO  = 1 << 0,
+  M64FRAME_OUTPUT_AUDIO  = 1 << 1,
+  M64FRAME_OUTPUT_PACING = 1 << 2,
+  M64FRAME_OUTPUT_INPUT  = 1 << 3,
+  M64FRAME_OUTPUT_ALL    = M64FRAME_OUTPUT_VIDEO | M64FRAME_OUTPUT_AUDIO | M64FRAME_OUTPUT_PACING | M64FRAME_OUTPUT_INPUT,
+  M64FRAME_OUTPUT_NONE   = 0
+} m64p_frame_output_flags;
+
+typedef struct {
+  unsigned char* buffer;
+  int            len;
+  int            checksum;
+  int            frame;
+} m64p_rollback_state;
 
 typedef struct {
   uint32_t address;
@@ -459,4 +611,3 @@ typedef struct {
 } m64p_video_extension_functions;
 
 #endif /* define M64P_TYPES_H */
-
