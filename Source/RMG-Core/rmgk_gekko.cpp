@@ -1249,6 +1249,159 @@ CORE_EXPORT bool rmgk_gekko::start_p2p_session(const char* gameName, int players
 #endif
 }
 
+CORE_EXPORT bool rmgk_gekko::start_lobby_session(const char* gameName, int players, int inputSize,
+    int localPlayer, unsigned short localPort, const char* remoteIp, unsigned short remotePort, int localDelay, int predictionWindow)
+{
+#ifndef RMGK_HAVE_GEKKONET
+    (void)gameName;
+    (void)players;
+    (void)inputSize;
+    (void)localPlayer;
+    (void)localPort;
+    (void)remoteIp;
+    (void)remotePort;
+    (void)localDelay;
+    (void)predictionWindow;
+    return false;
+#else
+    close_session();
+
+    g_GekkoLocalPlayer = localPlayer;
+    g_GekkoStopRequested.store(false, std::memory_order_relaxed);
+    reset_gekko_log();
+
+    if (gameName == nullptr || players < 2 || players > 4 || inputSize != static_cast<int>(sizeof(uint32_t)) ||
+        localPlayer < 1 || localPlayer > players || remoteIp == nullptr || remoteIp[0] == '\0' || remotePort == 0)
+    {
+        write_gekko_log("start_lobby_session result=fail reason=invalid_params");
+        return false;
+    }
+
+    if (!gekko_create(&g_GekkoSession, GekkoGameSession))
+    {
+        write_gekko_log("gekko_create result=fail");
+        return false;
+    }
+
+    const int clampedLocalDelay = std::clamp(localDelay, 0, 10);
+    const int clampedPredictionWindow = std::clamp(predictionWindow, 1, 10);
+
+    GekkoConfig config = {};
+    config.num_players = static_cast<unsigned char>(players);
+    config.max_spectators = 0;
+    config.input_prediction_window = static_cast<unsigned char>(clampedPredictionWindow);
+    config.input_size = static_cast<unsigned int>(inputSize);
+    config.state_size = kGekkoStateCapacity;
+    config.limited_saving = false;
+    config.desync_detection = true;
+    config.check_distance = 10;
+    gekko_start(g_GekkoSession, &config);
+
+    // Use GekkoNet's built-in UDP adapter directly — the lobby doesn't
+    // initialize n02's P2P core, so the n02-based transport used by
+    // start_p2p_session would have no socket to ride on. The lobby's
+    // anchor socket was released just before this call so the OS port
+    // is free for gekko_default_adapter to bind.
+    try
+    {
+        gekko_net_adapter_set(g_GekkoSession, gekko_default_adapter(localPort));
+    }
+    catch (const std::exception& e)
+    {
+        std::ostringstream stream;
+        stream << "start_lobby_session result=fail reason=adapter local_port=" << localPort
+               << " error=" << e.what();
+        write_gekko_log(stream.str());
+        CoreSetError("GekkoNet adapter initialization failed: " + std::string(e.what()));
+        close_session();
+        return false;
+    }
+
+    gekko_set_runahead(g_GekkoSession, 0);
+
+    g_GekkoPlayers = players;
+    g_GekkoInputSize = inputSize;
+    g_GekkoLocalHandle = -1;
+    g_GekkoRemoteHandle = -1;
+    g_GekkoPlayerHandles.assign(static_cast<size_t>(players), -1);
+    g_GekkoLocalHandles.assign(static_cast<size_t>(players), -1);
+    g_GekkoLatchedInput.assign(static_cast<size_t>(players * inputSize), 0);
+    g_GekkoHasLatchedInput = false;
+    g_GekkoPendingSaves.clear();
+
+    if (g_GekkoLogEnabled)
+    {
+        std::ostringstream stream;
+        stream << "start_lobby_session game=" << gameName
+               << " players=" << players
+               << " input_size=" << inputSize
+               << " local_player=" << localPlayer
+               << " local_port=" << localPort
+               << " remote_ip=" << remoteIp
+               << " remote_port=" << remotePort
+               << " local_delay=" << localDelay
+               << " clamped_local_delay=" << clampedLocalDelay
+               << " prediction_window=" << predictionWindow
+               << " clamped_prediction_window=" << clampedPredictionWindow
+               << " transport=gekko_default_udp";
+        write_gekko_log(stream.str());
+    }
+
+    std::string remoteAddress = std::string(remoteIp) + ":" + std::to_string(remotePort);
+    for (int player = 1; player <= players; player++)
+    {
+        if (player == localPlayer)
+        {
+            const int handle = gekko_add_actor(g_GekkoSession, GekkoLocalPlayer, nullptr);
+            if (handle < 0)
+            {
+                write_gekko_log("gekko_add_actor result=fail type=local");
+                close_session();
+                return false;
+            }
+            g_GekkoLocalHandle = handle;
+            g_GekkoPlayerHandles[static_cast<size_t>(player - 1)] = handle;
+            g_GekkoLocalHandles[static_cast<size_t>(player - 1)] = handle;
+            gekko_set_local_delay(g_GekkoSession, handle, static_cast<unsigned char>(clampedLocalDelay));
+        }
+        else
+        {
+            GekkoNetAddress address = {};
+            address.data = remoteAddress.data();
+            address.size = static_cast<unsigned int>(remoteAddress.size());
+            const int handle = gekko_add_actor(g_GekkoSession, GekkoRemotePlayer, &address);
+            if (handle < 0)
+            {
+                write_gekko_log("gekko_add_actor result=fail type=remote");
+                close_session();
+                return false;
+            }
+            if (g_GekkoRemoteHandle < 0)
+            {
+                g_GekkoRemoteHandle = handle;
+            }
+            g_GekkoPlayerHandles[static_cast<size_t>(player - 1)] = handle;
+        }
+    }
+
+    if (g_GekkoLocalHandle < 0)
+    {
+        write_gekko_log("start_lobby_session result=fail reason=no_local_handle");
+        close_session();
+        return false;
+    }
+
+    if (!install_core_input_callback())
+    {
+        write_gekko_log("install_core_input_callback result=fail");
+        close_session();
+        return false;
+    }
+    write_gekko_log("install_core_input_callback result=ok");
+    return true;
+#endif
+}
+
 CORE_EXPORT bool rmgk_gekko::start_local_session(const char* gameName, int players, int inputSize, int localDelay)
 {
 #ifndef RMGK_HAVE_GEKKONET

@@ -154,6 +154,7 @@
      <string>Netplay</string>
     </property>
     <addaction name="action_Netplay_BrowseSessions"/>
+    <addaction name="action_Rollback_Lobby"/>
    </widget>
    <widget class="QMenu" name="menuRollback">
     <property name="title">
@@ -654,6 +655,14 @@
    </property>
    <property name="text">
     <string>Start Netplay</string>
+   </property>
+  </action>
+  <action name="action_Rollback_Lobby">
+   <property name="icon">
+    <iconset theme="group-line"/>
+   </property>
+   <property name="text">
+    <string>Rollback Lobby...</string>
    </property>
   </action>
   <action name="action_View_Search">

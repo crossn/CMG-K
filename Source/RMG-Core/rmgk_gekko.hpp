@@ -23,6 +23,11 @@ class rmgk_gekko
 
     static bool start_p2p_session(const char* gameName, int players, int inputSize,
         int localPlayer, unsigned short localPort, const char* remoteIp, unsigned short remotePort, int localDelay, int predictionWindow);
+    // Lobby variant: uses GekkoNet's built-in UDP adapter directly instead of
+    // riding on n02's P2P socket. Same signature as start_p2p_session so the
+    // call site is identical; only the transport differs.
+    static bool start_lobby_session(const char* gameName, int players, int inputSize,
+        int localPlayer, unsigned short localPort, const char* remoteIp, unsigned short remotePort, int localDelay, int predictionWindow);
     static bool start_local_session(const char* gameName, int players, int inputSize, int localDelay);
     static void close_session();
     static void request_stop();

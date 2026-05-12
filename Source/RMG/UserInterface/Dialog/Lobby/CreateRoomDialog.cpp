@@ -1,0 +1,275 @@
+/*
+ * Rosalie's Mupen GUI - https://github.com/Rosalie241/RMG
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 3.
+ */
+#ifdef NETPLAY
+
+#include "CreateRoomDialog.hpp"
+
+#include <QVBoxLayout>
+#include <QHBoxLayout>
+#include <QFormLayout>
+#include <QGroupBox>
+#include <QLineEdit>
+#include <QComboBox>
+#include <QSpinBox>
+#include <QCheckBox>
+#include <QPushButton>
+#include <QLabel>
+#include <QDialogButtonBox>
+#include <QSettings>
+#include <QFileInfo>
+#include <QVariantMap>
+
+using namespace UserInterface::Dialog;
+
+CreateRoomDialog::CreateRoomDialog(const QString& defaultUsername,
+                                   const QMap<QString, CoreRomSettings>& roms,
+                                   QWidget* parent)
+    : QDialog(parent)
+{
+    setWindowTitle("Create Room");
+    setModal(true);
+    buildUi(defaultUsername);
+    populateRoms(roms);
+    loadDefaults();
+    validateInput();
+}
+
+void CreateRoomDialog::buildUi(const QString& defaultUsername)
+{
+    auto* root = new QVBoxLayout(this);
+
+    auto* form = new QFormLayout;
+
+    m_nameEdit = new QLineEdit(this);
+    m_nameEdit->setMaxLength(48);
+    if (!defaultUsername.isEmpty())
+        m_nameEdit->setText(QString("%1's Room").arg(defaultUsername));
+    else
+        m_nameEdit->setPlaceholderText("My Room");
+    form->addRow("Room name:", m_nameEdit);
+
+    m_romCombo = new QComboBox(this);
+    m_romCombo->setEditable(false);
+    m_romCombo->setSizeAdjustPolicy(QComboBox::AdjustToContents);
+    form->addRow("Game:", m_romCombo);
+
+    m_maxPlayersSpin = new QSpinBox(this);
+    m_maxPlayersSpin->setRange(2, 4);
+    m_maxPlayersSpin->setValue(2);
+    m_maxPlayersSpin->setSuffix(" players");
+    form->addRow("Max players:", m_maxPlayersSpin);
+
+    root->addLayout(form);
+
+    auto* rollbackGrp = new QGroupBox("Rollback settings", this);
+    auto* rb = new QFormLayout(rollbackGrp);
+
+    m_delaySpin = new QSpinBox(this);
+    m_delaySpin->setRange(0, 9);
+    m_delaySpin->setValue(2);
+    m_delaySpin->setToolTip("Frames of input delay added before sending to peer.\n"
+                            "Higher delay = fewer rollbacks but more input latency.\n"
+                            "Recommended: 2 for ~80ms RTT, 3-4 for ~150ms RTT.\n"
+                            "\n"
+                            "Applies to all players in the room — host sets this once.");
+    rb->addRow("Frame delay:", m_delaySpin);
+
+    m_predictionSpin = new QSpinBox(this);
+    m_predictionSpin->setRange(0, 9);
+    m_predictionSpin->setValue(7);
+    m_predictionSpin->setToolTip("Maximum frames the rollback engine may predict ahead.\n"
+                                  "Higher prediction = more network tolerance.\n"
+                                  "Recommended: 7 (matches Slippi default).\n"
+                                  "\n"
+                                  "Applies to all players in the room.");
+    rb->addRow("Prediction window:", m_predictionSpin);
+
+    root->addWidget(rollbackGrp);
+
+    // Optional password (collapsed by default)
+    auto* pwRow = new QHBoxLayout;
+    m_passwordCheck = new QCheckBox("Password-protect this room", this);
+    pwRow->addWidget(m_passwordCheck);
+    pwRow->addStretch();
+    root->addLayout(pwRow);
+
+    m_passwordEdit = new QLineEdit(this);
+    m_passwordEdit->setPlaceholderText("Room password");
+    m_passwordEdit->setEnabled(false);
+    m_passwordEdit->setVisible(false);
+    root->addWidget(m_passwordEdit);
+
+    m_statusLabel = new QLabel(this);
+    m_statusLabel->setStyleSheet("color: gray;");
+    m_statusLabel->setWordWrap(true);
+    root->addWidget(m_statusLabel);
+
+    auto* btns = new QDialogButtonBox(this);
+    m_createButton = btns->addButton("Create", QDialogButtonBox::AcceptRole);
+    m_cancelButton = btns->addButton(QDialogButtonBox::Cancel);
+    m_createButton->setDefault(true); // explicitly: Enter = Create when focus is on Create
+    m_cancelButton->setAutoDefault(false);
+    m_cancelButton->setDefault(false);
+    connect(m_cancelButton, &QPushButton::clicked, this, &QDialog::reject);
+    connect(m_createButton, &QPushButton::clicked, this, &CreateRoomDialog::onCreateClicked);
+    root->addWidget(btns);
+
+    // Validation hooks
+    connect(m_nameEdit,      &QLineEdit::textChanged, this, &CreateRoomDialog::validateInput);
+    connect(m_romCombo,      QOverload<int>::of(&QComboBox::currentIndexChanged), this, &CreateRoomDialog::validateInput);
+    connect(m_passwordCheck, &QCheckBox::toggled,     this, &CreateRoomDialog::onPasswordToggled);
+    connect(m_passwordEdit,  &QLineEdit::textChanged, this, &CreateRoomDialog::validateInput);
+}
+
+void CreateRoomDialog::populateRoms(const QMap<QString, CoreRomSettings>& roms)
+{
+    m_romCombo->clear();
+    if (roms.isEmpty())
+    {
+        m_romCombo->addItem("No ROMs in your library — add some first");
+        m_romCombo->setEnabled(false);
+        return;
+    }
+
+    // Sort by display name for predictable ordering.
+    QList<QString> filePaths = roms.keys();
+    QMap<QString, QString> sortedByName; // name → file
+    for (const auto& file : filePaths)
+    {
+        const auto& settings = roms.value(file);
+        const QString display = displayGameName(QString::fromStdString(settings.GoodName), file);
+        // Append file path as suffix to keep duplicate display names unique.
+        sortedByName.insert(display + "\x01" + file, file);
+    }
+
+    for (auto it = sortedByName.constBegin(); it != sortedByName.constEnd(); ++it)
+    {
+        const QString file = it.value();
+        const auto& settings = roms.value(file);
+        const QString display = displayGameName(QString::fromStdString(settings.GoodName), file);
+
+        QVariantMap data;
+        data["name"] = display;
+        data["md5"]  = QString::fromStdString(settings.MD5);
+        data["file"] = file;
+        m_romCombo->addItem(display, data);
+    }
+}
+
+QString CreateRoomDialog::displayGameName(const QString& goodName, const QString& filePath)
+{
+    QString name = goodName.trimmed();
+    if (name.isEmpty() || name.endsWith("(unknown rom)") || name.endsWith("(unknown disk)"))
+    {
+        name = QFileInfo(filePath).fileName();
+    }
+    // Strip "(unknown rom)" suffix even from otherwise-named entries, matches
+    // what the Kaillera dialog does.
+    const QString suffix = " (unknown rom)";
+    if (name.endsWith(suffix))
+        name.chop(suffix.length());
+    return name;
+}
+
+void CreateRoomDialog::onPasswordToggled(bool enabled)
+{
+    m_passwordEdit->setEnabled(enabled);
+    m_passwordEdit->setVisible(enabled);
+    if (!enabled)
+        m_passwordEdit->clear();
+    adjustSize();
+    validateInput();
+}
+
+void CreateRoomDialog::validateInput()
+{
+    const QString name = m_nameEdit->text().trimmed();
+    const bool   hasRom = m_romCombo->isEnabled() && !m_romCombo->currentData().isNull();
+    const bool passwordRequired = m_passwordCheck->isChecked();
+    const QString pwd  = m_passwordEdit->text();
+
+    QString reason;
+    if (name.isEmpty())
+        reason = "Room name is required.";
+    else if (!hasRom)
+        reason = "Add a ROM to your library before creating a room.";
+    else if (passwordRequired && pwd.isEmpty())
+        reason = "Password cannot be empty when enabled.";
+
+    m_statusLabel->setText(reason);
+    m_createButton->setEnabled(reason.isEmpty());
+}
+
+void CreateRoomDialog::onCreateClicked()
+{
+    // Capture form values.
+    m_name = m_nameEdit->text().trimmed();
+    const QVariantMap romData = m_romCombo->currentData().toMap();
+    m_romName    = romData.value("name").toString();
+    m_romMd5     = romData.value("md5").toString();
+    m_romRegion  = ""; // baked into the ROM; resolved later via md5 lookup
+    m_maxPlayers = m_maxPlayersSpin->value();
+    m_delay      = m_delaySpin->value();
+    m_prediction = m_predictionSpin->value();
+    m_password   = m_passwordCheck->isChecked() ? m_passwordEdit->text() : QString();
+
+    saveDefaults();
+    setFormEnabled(false);
+    m_statusLabel->setText("Creating room...");
+    emit createRequested();
+}
+
+void CreateRoomDialog::showCreateFailure(const QString& reason)
+{
+    setFormEnabled(true);
+    QString human = reason;
+    if (reason == "already_in_room") human = "You're already in a room. Leave it first.";
+    else if (reason == "invalid_payload") human = "Server rejected the room settings.";
+    m_statusLabel->setText(QString("Couldn't create room: %1").arg(human));
+}
+
+void CreateRoomDialog::setFormEnabled(bool enabled)
+{
+    m_nameEdit->setEnabled(enabled);
+    m_romCombo->setEnabled(enabled);
+    m_maxPlayersSpin->setEnabled(enabled);
+    m_delaySpin->setEnabled(enabled);
+    m_predictionSpin->setEnabled(enabled);
+    m_passwordCheck->setEnabled(enabled);
+    m_passwordEdit->setEnabled(enabled && m_passwordCheck->isChecked());
+    m_createButton->setEnabled(enabled);
+}
+
+void CreateRoomDialog::loadDefaults()
+{
+    QSettings s;
+    s.beginGroup("Lobby/CreateRoom");
+    if (s.contains("Rom"))
+    {
+        const QString preferred = s.value("Rom").toString();
+        const int idx = m_romCombo->findText(preferred);
+        if (idx >= 0)
+            m_romCombo->setCurrentIndex(idx);
+    }
+    if (s.contains("MaxPlayers")) m_maxPlayersSpin->setValue(s.value("MaxPlayers").toInt());
+    if (s.contains("Delay"))      m_delaySpin->setValue(s.value("Delay").toInt());
+    if (s.contains("Prediction")) m_predictionSpin->setValue(s.value("Prediction").toInt());
+    s.endGroup();
+}
+
+void CreateRoomDialog::saveDefaults()
+{
+    QSettings s;
+    s.beginGroup("Lobby/CreateRoom");
+    s.setValue("Rom",        m_romName);
+    s.setValue("MaxPlayers", m_maxPlayers);
+    s.setValue("Delay",      m_delay);
+    s.setValue("Prediction", m_prediction);
+    s.endGroup();
+}
+
+#endif // NETPLAY

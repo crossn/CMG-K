@@ -66,13 +66,22 @@ extern "C" {
 
 static bool parse_gekko_address(const std::string& address, std::string& remoteAddress, int& remotePort, int& frameDelay, int& predictionWindow)
 {
-    constexpr const char* prefix = "GEKKO|";
-    if (address.rfind(prefix, 0) != 0)
+    // Accepts both GEKKO| (P2P/n02-transport) and LOBBY| (default UDP adapter).
+    // The body of both addresses is identical — only the transport selection
+    // differs, and that's handled by the caller.
+    size_t remoteStart = 0;
+    if (address.rfind("GEKKO|", 0) == 0)
+    {
+        remoteStart = std::char_traits<char>::length("GEKKO|");
+    }
+    else if (address.rfind("LOBBY|", 0) == 0)
+    {
+        remoteStart = std::char_traits<char>::length("LOBBY|");
+    }
+    else
     {
         return false;
     }
-
-    const size_t remoteStart = std::char_traits<char>::length(prefix);
     const size_t portSeparator = address.find('|', remoteStart);
     if (portSeparator == std::string::npos)
     {
@@ -431,7 +440,7 @@ CORE_EXPORT bool CoreStartEmulation(std::filesystem::path n64rom, std::filesyste
 
 #ifdef NETPLAY
     // Apply RSP plugin override and reload plugins BEFORE ROM open
-    if (netplay && (address == "KAILLERA" || address.rfind("GEKKO|", 0) == 0))
+    if (netplay && (address == "KAILLERA" || address.rfind("GEKKO|", 0) == 0 || address.rfind("LOBBY|", 0) == 0))
     {
         apply_kaillera_rsp_override();
         CoreApplyPluginSettings();  // Force reload with HLE RSP
@@ -515,7 +524,7 @@ CORE_EXPORT bool CoreStartEmulation(std::filesystem::path n64rom, std::filesyste
 #ifdef NETPLAY
     // Apply deterministic settings AFTER all overlays for synchronized netplay or
     // explicit local rollback testing.
-    if (localRollbackEnabled || (netplay && (address == "KAILLERA" || address.rfind("GEKKO|", 0) == 0)))
+    if (localRollbackEnabled || (netplay && (address == "KAILLERA" || address.rfind("GEKKO|", 0) == 0 || address.rfind("LOBBY|", 0) == 0)))
     {
         apply_kaillera_deterministic_settings();
     }
@@ -540,8 +549,9 @@ CORE_EXPORT bool CoreStartEmulation(std::filesystem::path n64rom, std::filesyste
                 netplay_ret = true;
             }
         }
-        else if (address.rfind("GEKKO|", 0) == 0)
+        else if (address.rfind("GEKKO|", 0) == 0 || address.rfind("LOBBY|", 0) == 0)
         {
+            const bool isLobby = address.rfind("LOBBY|", 0) == 0;
             std::string remoteAddress;
             int remotePort = 0;
             int frameDelay = 0;
@@ -560,9 +570,18 @@ CORE_EXPORT bool CoreStartEmulation(std::filesystem::path n64rom, std::filesyste
             else
             {
                 CoreSettingsSetValue(SettingsID::Core_CPU_Emulator, 2);
-                netplay_ret = rmgk_gekko::start_p2p_session("rmgk-gekko",
-                    2, static_cast<int>(sizeof(uint32_t)), player, static_cast<unsigned short>(port),
-                    remoteAddress.c_str(), static_cast<unsigned short>(remotePort), frameDelay, predictionWindow);
+                if (isLobby)
+                {
+                    netplay_ret = rmgk_gekko::start_lobby_session("rmgk-gekko",
+                        2, static_cast<int>(sizeof(uint32_t)), player, static_cast<unsigned short>(port),
+                        remoteAddress.c_str(), static_cast<unsigned short>(remotePort), frameDelay, predictionWindow);
+                }
+                else
+                {
+                    netplay_ret = rmgk_gekko::start_p2p_session("rmgk-gekko",
+                        2, static_cast<int>(sizeof(uint32_t)), player, static_cast<unsigned short>(port),
+                        remoteAddress.c_str(), static_cast<unsigned short>(remotePort), frameDelay, predictionWindow);
+                }
                 if (!netplay_ret)
                 {
                     if (CoreGetError().empty())
@@ -611,7 +630,7 @@ CORE_EXPORT bool CoreStartEmulation(std::filesystem::path n64rom, std::filesyste
 #ifdef NETPLAY
     else
     {
-        rollbackExecute = address.rfind("GEKKO|", 0) == 0;
+        rollbackExecute = address.rfind("GEKKO|", 0) == 0 || address.rfind("LOBBY|", 0) == 0;
     }
 #endif
 
@@ -694,7 +713,7 @@ CORE_EXPORT bool CoreStartEmulation(std::filesystem::path n64rom, std::filesyste
             // Don't shutdown Kaillera here - keep connection alive for restart
             // Kaillera will be shutdown when user leaves the server dialog
         }
-        else if (address.rfind("GEKKO|", 0) == 0)
+        else if (address.rfind("GEKKO|", 0) == 0 || address.rfind("LOBBY|", 0) == 0)
         {
             rmgk_gekko::close_session();
         }

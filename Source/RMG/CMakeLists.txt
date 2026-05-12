@@ -112,6 +112,10 @@ if (NETPLAY)
         UserInterface/Dialog/Kaillera/KailleraOptionsDialog.cpp
         UserInterface/Dialog/Kaillera/KailleraP2PDialog.cpp
         UserInterface/Dialog/Kaillera/KailleraWaitingGamesDialog.cpp
+        UserInterface/Dialog/Lobby/LobbyClient.cpp
+        UserInterface/Dialog/Lobby/LobbyConnectDialog.cpp
+        UserInterface/Dialog/Lobby/CreateRoomDialog.cpp
+        UserInterface/Dialog/Lobby/RollbackLobbyDialog.cpp
         UserInterface/Dialog/Netplay/NetplayCommon.cpp
         UserInterface/Dialog/Netplay/CreateNetplaySessionDialog.cpp
         UserInterface/Dialog/Netplay/CreateNetplaySessionDialog.ui

@@ -38,6 +38,10 @@ class EmulationThread : public QThread
     void SetDiskFile(QString);
     void SetNetplay(QString address, int port, int player);
     void SetGekkoNetplay(QString remoteAddress, int localPort, int remotePort, int localPlayer, int frameDelay, int predictionWindow);
+    // Lobby variant: identical params, but the resulting address asks
+    // CoreStartEmulation to use start_lobby_session (default UDP adapter)
+    // instead of start_p2p_session (n02 transport).
+    void SetLobbyNetplay(QString remoteAddress, int localPort, int remotePort, int localPlayer, int frameDelay, int predictionWindow);
 
     void run(void) override;
 

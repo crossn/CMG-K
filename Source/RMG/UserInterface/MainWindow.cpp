@@ -9,6 +9,8 @@
  */
 #include "MainWindow.hpp"
 
+#include <cstdio>
+
 #include "UserInterface/Dialog/AboutDialog.hpp"
 #include "Dialog/Cheats/CheatsDialog.hpp"
 #include "Dialog/SettingsDialog.hpp"
@@ -1542,6 +1544,13 @@ MainWindow::~MainWindow()
     CoreRollbackFreeGameState(g_RollbackDebugReplay.initialState);
     CoreRollbackFreeGameState(g_RollbackDebugReplay.finalState);
     FreeRollbackDebugStressCheckpoints();
+#ifdef NETPLAY
+    if (this->rollbackLobbyDialog != nullptr)
+    {
+        delete this->rollbackLobbyDialog;
+        this->rollbackLobbyDialog = nullptr;
+    }
+#endif
 }
 
 bool MainWindow::Init(QApplication* app, bool showUI, bool launchROM)
@@ -3067,6 +3076,9 @@ void MainWindow::connectActionSignals(void)
     connect(this->action_View_Search, &QAction::triggered, this, &MainWindow::on_Action_View_Search);
 
     connect(this->action_Netplay_BrowseSessions, &QAction::triggered, this, &MainWindow::on_Action_Netplay_BrowseSessions);
+#ifdef NETPLAY
+    connect(this->action_Rollback_Lobby, &QAction::triggered, this, &MainWindow::on_Action_Rollback_Lobby);
+#endif
 
     connect(this->action_Help_Github, &QAction::triggered, this, &MainWindow::on_Action_Help_Github);
     connect(this->action_Help_About, &QAction::triggered, this, &MainWindow::on_Action_Help_About);
@@ -4271,6 +4283,37 @@ void MainWindow::on_Action_Netplay_ViewSession(void)
 #endif
 }
 
+void MainWindow::on_Action_Rollback_Lobby(void)
+{
+#ifdef NETPLAY
+    if (this->rollbackLobbyDialog == nullptr)
+    {
+        // No parent — the lobby is its own top-level window with independent
+        // Z-order and taskbar entry, so the emulator can come to the
+        // foreground when running. Lifetime is managed in MainWindow::~.
+        this->rollbackLobbyDialog = new Dialog::RollbackLobbyDialog(nullptr);
+        this->rollbackLobbyDialog->setAttribute(Qt::WA_DeleteOnClose, false);
+        // Route the lobby's match-ready signal to the lobby-specific slot.
+        // That slot calls SetLobbyNetplay (LOBBY| address prefix) so
+        // CoreStartEmulation uses GekkoNet's default UDP adapter instead
+        // of the n02-backed P2P transport.
+        connect(this->rollbackLobbyDialog, &Dialog::RollbackLobbyDialog::matchReady,
+                this, &MainWindow::on_Lobby_SessionRequested);
+        // "Close Game" button (or peer-drop) → tear down emulation locally.
+        connect(this->rollbackLobbyDialog, &Dialog::RollbackLobbyDialog::closeMatchRequested,
+                this, [this]() {
+                    if (this->emulationThread && this->emulationThread->isRunning())
+                        CoreStopEmulation();
+                });
+    }
+    // Refresh ROM library on every open so newly-added games show up.
+    this->rollbackLobbyDialog->setRomLibrary(this->ui_Widget_RomBrowser->GetModelData());
+    this->rollbackLobbyDialog->show();
+    this->rollbackLobbyDialog->raise();
+    this->rollbackLobbyDialog->activateWindow();
+#endif
+}
+
 #ifdef NETPLAY
 void MainWindow::on_Kaillera_GameStarted(QString gameName, int playerNum, int totalPlayers)
 {
@@ -4314,7 +4357,27 @@ void MainWindow::on_Kaillera_GameStarted(QString gameName, int playerNum, int to
 
 void MainWindow::on_Rollback_SessionRequested(QString gameName, QString remoteAddress, int localPort, int remotePort, int localPlayer, int frameDelay, int predictionWindow)
 {
+    {
+        char buf[512];
+        std::snprintf(buf, sizeof(buf),
+            "Lobby→Session: game='%s' remote=%s:%d localPort=%d slot=%d delay=%d pred=%d emuRunning=%d launchActive=%d",
+            gameName.toUtf8().constData(),
+            remoteAddress.toUtf8().constData(),
+            remotePort, localPort, localPlayer, frameDelay, predictionWindow,
+            int(this->emulationThread && this->emulationThread->isRunning()),
+            int(this->ui_RollbackNetplayLaunchActive));
+        CoreAddCallbackMessage(CoreDebugMessageType::Info, buf);
+    }
+
     QString romFile = this->findRomByName(gameName);
+    {
+        char buf[1024];
+        std::snprintf(buf, sizeof(buf),
+            "Lobby→Session findRomByName('%s') => '%s'",
+            gameName.toUtf8().constData(),
+            romFile.toUtf8().constData());
+        CoreAddCallbackMessage(CoreDebugMessageType::Info, buf);
+    }
     if (romFile.isEmpty())
     {
         this->showErrorMessage("ROM Not Found",
@@ -4324,6 +4387,8 @@ void MainWindow::on_Rollback_SessionRequested(QString gameName, QString remoteAd
 
     if (this->emulationThread->isRunning())
     {
+        CoreAddCallbackMessage(CoreDebugMessageType::Info,
+            "Lobby→Session: emulation thread running — stopping and retrying");
         CoreStopEmulation();
         QTimer::singleShot(50, this,
             [this, gameName, remoteAddress, localPort, remotePort, localPlayer, frameDelay, predictionWindow]()
@@ -4335,6 +4400,8 @@ void MainWindow::on_Rollback_SessionRequested(QString gameName, QString remoteAd
 
     if (this->ui_RollbackNetplayLaunchActive)
     {
+        CoreAddCallbackMessage(CoreDebugMessageType::Info,
+            "Lobby→Session: launch already active — bailing out");
         return;
     }
 
@@ -4346,7 +4413,69 @@ void MainWindow::on_Rollback_SessionRequested(QString gameName, QString remoteAd
         this->ui_CheckVideoSizeTimerId = 0;
     }
 
+    CoreAddCallbackMessage(CoreDebugMessageType::Info,
+        "Lobby→Session: launching emulation thread (rollback session)");
     this->emulationThread->SetGekkoNetplay(remoteAddress, localPort, remotePort, localPlayer, frameDelay, predictionWindow);
+    this->launchEmulationThread(romFile, "", false, -1, true);
+}
+
+// Lobby-driven session start. Same flow as on_Rollback_SessionRequested
+// but routes through SetLobbyNetplay so CoreStartEmulation picks the
+// LOBBY| branch and uses GekkoNet's built-in UDP transport instead of
+// the n02 P2P transport (which the lobby never initializes).
+void MainWindow::on_Lobby_SessionRequested(QString gameName, QString remoteAddress, int localPort, int remotePort, int localPlayer, int frameDelay, int predictionWindow)
+{
+    {
+        char buf[512];
+        std::snprintf(buf, sizeof(buf),
+            "Lobby→LobbySession: game='%s' remote=%s:%d localPort=%d slot=%d delay=%d pred=%d emuRunning=%d launchActive=%d",
+            gameName.toUtf8().constData(),
+            remoteAddress.toUtf8().constData(),
+            remotePort, localPort, localPlayer, frameDelay, predictionWindow,
+            int(this->emulationThread && this->emulationThread->isRunning()),
+            int(this->ui_RollbackNetplayLaunchActive));
+        CoreAddCallbackMessage(CoreDebugMessageType::Info, buf);
+    }
+
+    QString romFile = this->findRomByName(gameName);
+    if (romFile.isEmpty())
+    {
+        this->showErrorMessage("ROM Not Found",
+            "Could not find ROM: " + gameName + "\n\nPlease add it to your ROM directory and refresh the list.");
+        return;
+    }
+
+    if (this->emulationThread->isRunning())
+    {
+        CoreAddCallbackMessage(CoreDebugMessageType::Info,
+            "Lobby→LobbySession: emulation thread running — stopping and retrying");
+        CoreStopEmulation();
+        QTimer::singleShot(50, this,
+            [this, gameName, remoteAddress, localPort, remotePort, localPlayer, frameDelay, predictionWindow]()
+            {
+                this->on_Lobby_SessionRequested(gameName, remoteAddress, localPort, remotePort, localPlayer, frameDelay, predictionWindow);
+            });
+        return;
+    }
+
+    if (this->ui_RollbackNetplayLaunchActive)
+    {
+        CoreAddCallbackMessage(CoreDebugMessageType::Info,
+            "Lobby→LobbySession: launch already active — bailing out");
+        return;
+    }
+
+    this->ui_RollbackNetplayLaunchActive = true;
+
+    if (this->ui_CheckVideoSizeTimerId != 0)
+    {
+        this->killTimer(this->ui_CheckVideoSizeTimerId);
+        this->ui_CheckVideoSizeTimerId = 0;
+    }
+
+    CoreAddCallbackMessage(CoreDebugMessageType::Info,
+        "Lobby→LobbySession: launching emulation thread (lobby UDP transport)");
+    this->emulationThread->SetLobbyNetplay(remoteAddress, localPort, remotePort, localPlayer, frameDelay, predictionWindow);
     this->launchEmulationThread(romFile, "", false, -1, true);
 }
 
@@ -4730,6 +4859,15 @@ void MainWindow::on_Emulation_Started(void)
 
     this->ui_MessageBoxList.clear();
     this->ui_DebugCallbackErrors.clear();
+
+#ifdef NETPLAY
+    if (this->rollbackLobbyDialog != nullptr)
+    {
+        // No-op if no lobby-driven match is awaiting (Kaillera / solo paths
+        // also fire this signal; the dialog gates internally).
+        this->rollbackLobbyDialog->notifyEmulationStarted();
+    }
+#endif
 }
 
 void MainWindow::on_Emulation_Finished(bool ret, QString error)
@@ -4748,6 +4886,12 @@ void MainWindow::on_Emulation_Finished(bool ret, QString error)
     this->ui_RollbackLivePumpActive = false;
     this->ui_RollbackNetplayRoomActive = false;
     this->ui_RollbackNetplayLaunchActive = false;
+
+    if (this->rollbackLobbyDialog != nullptr)
+    {
+        // No-op when no lobby-driven match is in progress.
+        this->rollbackLobbyDialog->notifyEmulationFinished();
+    }
 #endif // NETPLAY
 
     if (!ret)

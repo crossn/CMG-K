@@ -23,6 +23,7 @@
 
 #ifdef NETPLAY
 #include "Dialog/Netplay/NetplaySessionDialog.hpp"
+#include "Dialog/Lobby/RollbackLobbyDialog.hpp"
 #include "KailleraSessionManager.hpp"
 #endif // NETPLAY
 #include "Dialog/LogDialog.hpp"
@@ -142,6 +143,7 @@ class MainWindow : public QMainWindow, private Ui::MainWindow
     Dialog::LogDialog logDialog;
 #ifdef NETPLAY
     Dialog::NetplaySessionDialog* netplaySessionDialog = nullptr;
+    Dialog::RollbackLobbyDialog* rollbackLobbyDialog = nullptr;
     KailleraSessionManager* kailleraSessionManager = nullptr;
     bool ui_AutoStartNetplayOnStartupPending = false;
     bool ui_NetplayChatInputActive = false;
@@ -278,6 +280,7 @@ class MainWindow : public QMainWindow, private Ui::MainWindow
     void on_Action_Netplay_CreateSession(void);
     void on_Action_Netplay_BrowseSessions(void);
     void on_Action_Netplay_ViewSession(void);
+    void on_Action_Rollback_Lobby(void);
 
 #ifdef NETPLAY
     void on_Kaillera_GameStarted(QString gameName, int playerNum, int totalPlayers);
@@ -286,6 +289,7 @@ class MainWindow : public QMainWindow, private Ui::MainWindow
     void on_Kaillera_GameEnded(void);
     void on_Kaillera_RecordingFileClosed(void);
     void on_Rollback_SessionRequested(QString gameName, QString remoteAddress, int localPort, int remotePort, int localPlayer, int frameDelay, int predictionWindow);
+    void on_Lobby_SessionRequested(QString gameName, QString remoteAddress, int localPort, int remotePort, int localPlayer, int frameDelay, int predictionWindow);
     void on_RomBrowser_RomListRefreshFinished(bool canceled);
 #endif
 
