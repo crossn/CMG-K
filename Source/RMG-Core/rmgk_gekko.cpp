@@ -21,6 +21,10 @@
 #endif
 #endif
 
+// Recording hooks live in n02. The rollback flow needs to append per-frame
+// synced inputs to the open .krec because it bypasses n02's normal frame loop.
+#include "n02_client.h"
+
 #include <algorithm>
 #include <atomic>
 #include <chrono>
@@ -564,6 +568,14 @@ bool latch_gekko_input(const GekkoGameEvent* event)
                 &debugInputs[static_cast<size_t>(player)],
                 std::min(g_GekkoInputSize, static_cast<int>(sizeof(uint32_t))));
         }
+    }
+
+    // Mirror the per-frame input record that modifyPlayValues normally writes
+    // for non-rollback Kaillera/P2P play. Only commit on settled frames —
+    // rolled-back / run-ahead frames are speculative and would double-record.
+    if (!event->data.adv.rolling_back && !event->data.adv.running_ahead)
+    {
+        n02::recordingWriteInputs(g_GekkoLatchedInput.data(), static_cast<int>(g_GekkoLatchedInput.size()));
     }
 
     if (g_GekkoLogEnabled &&
