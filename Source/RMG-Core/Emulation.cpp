@@ -26,6 +26,8 @@
 
 #include "m64p/Api.hpp"
 
+#include <vector>
+
 // Windows/POSIX dynamic loading
 #ifdef _WIN32
 #include <windows.h>
@@ -66,22 +68,15 @@ extern "C" {
 
 static bool parse_gekko_address(const std::string& address, std::string& remoteAddress, int& remotePort, int& frameDelay, int& predictionWindow)
 {
-    // Accepts both GEKKO| (P2P/n02-transport) and LOBBY| (default UDP adapter).
-    // The body of both addresses is identical — only the transport selection
-    // differs, and that's handled by the caller.
-    size_t remoteStart = 0;
-    if (address.rfind("GEKKO|", 0) == 0)
-    {
-        remoteStart = std::char_traits<char>::length("GEKKO|");
-    }
-    else if (address.rfind("LOBBY|", 0) == 0)
-    {
-        remoteStart = std::char_traits<char>::length("LOBBY|");
-    }
-    else
+    // GEKKO| (P2P / n02-transport) carries a single remote peer.
+    // Format: GEKKO|remoteIp|remotePort|delay[|prediction]
+    constexpr const char* prefix = "GEKKO|";
+    if (address.rfind(prefix, 0) != 0)
     {
         return false;
     }
+
+    const size_t remoteStart = std::char_traits<char>::length(prefix);
     const size_t portSeparator = address.find('|', remoteStart);
     if (portSeparator == std::string::npos)
     {
@@ -115,6 +110,91 @@ static bool parse_gekko_address(const std::string& address, std::string& remoteA
     }
 
     return !remoteAddress.empty() && remotePort > 0 && remotePort <= 65535 && frameDelay >= 0 && predictionWindow >= 1;
+}
+
+// LOBBY| carries N-1 remote peers, each with its own slot and endpoint, so
+// 3-/4-player rollback sessions can wire each remote actor to a distinct peer.
+// Format: LOBBY|<delay>|<prediction>|<slot>,<ip>,<port>|<slot>,<ip>,<port>...
+static bool parse_lobby_address(const std::string& address, int& frameDelay, int& predictionWindow,
+    std::vector<LobbyRemotePeer>& remotes)
+{
+    remotes.clear();
+
+    constexpr const char* prefix = "LOBBY|";
+    if (address.rfind(prefix, 0) != 0)
+    {
+        return false;
+    }
+
+    // Tokenize on '|' starting after the prefix.
+    std::vector<std::string> tokens;
+    size_t pos = std::char_traits<char>::length(prefix);
+    while (pos <= address.size())
+    {
+        const size_t next = address.find('|', pos);
+        if (next == std::string::npos)
+        {
+            tokens.push_back(address.substr(pos));
+            break;
+        }
+        tokens.push_back(address.substr(pos, next - pos));
+        pos = next + 1;
+    }
+
+    // Need at least: delay, prediction, and one peer entry.
+    if (tokens.size() < 3)
+    {
+        return false;
+    }
+
+    try
+    {
+        frameDelay = std::stoi(tokens[0]);
+        predictionWindow = std::stoi(tokens[1]);
+    }
+    catch (...)
+    {
+        return false;
+    }
+    if (frameDelay < 0 || predictionWindow < 1)
+    {
+        return false;
+    }
+
+    for (size_t i = 2; i < tokens.size(); i++)
+    {
+        const std::string& tok = tokens[i];
+        const size_t firstComma = tok.find(',');
+        if (firstComma == std::string::npos)
+        {
+            return false;
+        }
+        const size_t secondComma = tok.find(',', firstComma + 1);
+        if (secondComma == std::string::npos)
+        {
+            return false;
+        }
+        LobbyRemotePeer peer{};
+        try
+        {
+            peer.slot = std::stoi(tok.substr(0, firstComma));
+            peer.ip = tok.substr(firstComma + 1, secondComma - firstComma - 1);
+            const int parsedPort = std::stoi(tok.substr(secondComma + 1));
+            if (parsedPort <= 0 || parsedPort > 65535 || peer.ip.empty() ||
+                peer.slot < 1 || peer.slot > 4)
+            {
+                return false;
+            }
+            peer.port = static_cast<unsigned short>(parsedPort);
+        }
+        catch (...)
+        {
+            return false;
+        }
+        remotes.push_back(std::move(peer));
+    }
+
+    return !remotes.empty();
 }
 
 //
@@ -549,9 +629,8 @@ CORE_EXPORT bool CoreStartEmulation(std::filesystem::path n64rom, std::filesyste
                 netplay_ret = true;
             }
         }
-        else if (address.rfind("GEKKO|", 0) == 0 || address.rfind("LOBBY|", 0) == 0)
+        else if (address.rfind("GEKKO|", 0) == 0)
         {
-            const bool isLobby = address.rfind("LOBBY|", 0) == 0;
             std::string remoteAddress;
             int remotePort = 0;
             int frameDelay = 0;
@@ -570,18 +649,44 @@ CORE_EXPORT bool CoreStartEmulation(std::filesystem::path n64rom, std::filesyste
             else
             {
                 CoreSettingsSetValue(SettingsID::Core_CPU_Emulator, 2);
-                if (isLobby)
+                netplay_ret = rmgk_gekko::start_p2p_session("rmgk-gekko",
+                    2, static_cast<int>(sizeof(uint32_t)), player, static_cast<unsigned short>(port),
+                    remoteAddress.c_str(), static_cast<unsigned short>(remotePort), frameDelay, predictionWindow);
+                if (!netplay_ret)
                 {
-                    netplay_ret = rmgk_gekko::start_lobby_session("rmgk-gekko",
-                        2, static_cast<int>(sizeof(uint32_t)), player, static_cast<unsigned short>(port),
-                        remoteAddress.c_str(), static_cast<unsigned short>(remotePort), frameDelay, predictionWindow);
+                    if (CoreGetError().empty())
+                    {
+                        CoreSetError("CoreStartEmulation: GekkoNet session initialization failed");
+                    }
+                    m64p_ret = M64ERR_SYSTEM_FAIL;
                 }
-                else
-                {
-                    netplay_ret = rmgk_gekko::start_p2p_session("rmgk-gekko",
-                        2, static_cast<int>(sizeof(uint32_t)), player, static_cast<unsigned short>(port),
-                        remoteAddress.c_str(), static_cast<unsigned short>(remotePort), frameDelay, predictionWindow);
-                }
+            }
+        }
+        else if (address.rfind("LOBBY|", 0) == 0)
+        {
+            int frameDelay = 0;
+            int predictionWindow = 4;
+            std::vector<LobbyRemotePeer> remotes;
+            if (!parse_lobby_address(address, frameDelay, predictionWindow, remotes))
+            {
+                CoreSetError("CoreStartEmulation: invalid Lobby session parameters");
+                m64p_ret = M64ERR_INPUT_INVALID;
+                netplay_ret = false;
+            }
+            else if (!rmgk_gekko::set_deterministic(true))
+            {
+                m64p_ret = M64ERR_SYSTEM_FAIL;
+                netplay_ret = false;
+            }
+            else
+            {
+                CoreSettingsSetValue(SettingsID::Core_CPU_Emulator, 2);
+                const int totalPlayers = static_cast<int>(remotes.size()) + 1;
+                netplay_ret = rmgk_gekko::start_lobby_session("rmgk-gekko",
+                    totalPlayers, static_cast<int>(sizeof(uint32_t)),
+                    player, static_cast<unsigned short>(port),
+                    remotes.data(), static_cast<int>(remotes.size()),
+                    frameDelay, predictionWindow);
                 if (!netplay_ret)
                 {
                     if (CoreGetError().empty())

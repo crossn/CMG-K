@@ -62,10 +62,16 @@ void EmulationThread::SetGekkoNetplay(QString remoteAddress, int localPort, int 
     this->player = localPlayer;
 }
 
-void EmulationThread::SetLobbyNetplay(QString remoteAddress, int localPort, int remotePort, int localPlayer, int frameDelay, int predictionWindow)
+void EmulationThread::SetLobbyNetplay(QStringList remotePeers, int localPort, int localPlayer, int frameDelay, int predictionWindow)
 {
-    this->address = "LOBBY|" + remoteAddress + "|" + QString::number(remotePort) + "|" +
-        QString::number(frameDelay) + "|" + QString::number(predictionWindow);
+    // Format: LOBBY|<delay>|<prediction>|<slot>,<ip>,<port>|<slot>,<ip>,<port>...
+    // Each entry in remotePeers is already pre-formatted as "<slot>,<ip>,<port>".
+    QString built = "LOBBY|" + QString::number(frameDelay) + "|" + QString::number(predictionWindow);
+    for (const QString& peer : remotePeers)
+    {
+        built += "|" + peer;
+    }
+    this->address = built;
     this->port = localPort;
     this->player = localPlayer;
 }

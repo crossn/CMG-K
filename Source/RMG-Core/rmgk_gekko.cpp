@@ -1250,7 +1250,9 @@ CORE_EXPORT bool rmgk_gekko::start_p2p_session(const char* gameName, int players
 }
 
 CORE_EXPORT bool rmgk_gekko::start_lobby_session(const char* gameName, int players, int inputSize,
-    int localPlayer, unsigned short localPort, const char* remoteIp, unsigned short remotePort, int localDelay, int predictionWindow)
+    int localPlayer, unsigned short localPort,
+    const LobbyRemotePeer* remotes, int numRemotes,
+    int localDelay, int predictionWindow)
 {
 #ifndef RMGK_HAVE_GEKKONET
     (void)gameName;
@@ -1258,8 +1260,8 @@ CORE_EXPORT bool rmgk_gekko::start_lobby_session(const char* gameName, int playe
     (void)inputSize;
     (void)localPlayer;
     (void)localPort;
-    (void)remoteIp;
-    (void)remotePort;
+    (void)remotes;
+    (void)numRemotes;
     (void)localDelay;
     (void)predictionWindow;
     return false;
@@ -1271,10 +1273,25 @@ CORE_EXPORT bool rmgk_gekko::start_lobby_session(const char* gameName, int playe
     reset_gekko_log();
 
     if (gameName == nullptr || players < 2 || players > 4 || inputSize != static_cast<int>(sizeof(uint32_t)) ||
-        localPlayer < 1 || localPlayer > players || remoteIp == nullptr || remoteIp[0] == '\0' || remotePort == 0)
+        localPlayer < 1 || localPlayer > players || remotes == nullptr || numRemotes != players - 1)
     {
         write_gekko_log("start_lobby_session result=fail reason=invalid_params");
         return false;
+    }
+
+    // Validate per-remote endpoints and slot uniqueness before we touch GekkoNet.
+    bool slotSeen[5] = { false, false, false, false, false }; // index 1..4
+    slotSeen[localPlayer] = true;
+    for (int i = 0; i < numRemotes; i++)
+    {
+        const LobbyRemotePeer& peer = remotes[i];
+        if (peer.slot < 1 || peer.slot > players || peer.slot == localPlayer ||
+            peer.ip.empty() || peer.port == 0 || slotSeen[peer.slot])
+        {
+            write_gekko_log("start_lobby_session result=fail reason=bad_remote_peer");
+            return false;
+        }
+        slotSeen[peer.slot] = true;
     }
 
     if (!gekko_create(&g_GekkoSession, GekkoGameSession))
@@ -1337,17 +1354,28 @@ CORE_EXPORT bool rmgk_gekko::start_lobby_session(const char* gameName, int playe
                << " input_size=" << inputSize
                << " local_player=" << localPlayer
                << " local_port=" << localPort
-               << " remote_ip=" << remoteIp
-               << " remote_port=" << remotePort
                << " local_delay=" << localDelay
                << " clamped_local_delay=" << clampedLocalDelay
                << " prediction_window=" << predictionWindow
                << " clamped_prediction_window=" << clampedPredictionWindow
-               << " transport=gekko_default_udp";
+               << " transport=gekko_default_udp"
+               << " num_remotes=" << numRemotes;
+        for (int i = 0; i < numRemotes; i++)
+        {
+            stream << " remote[" << i << "]=slot" << remotes[i].slot
+                   << "@" << remotes[i].ip << ":" << remotes[i].port;
+        }
         write_gekko_log(stream.str());
     }
 
-    std::string remoteAddress = std::string(remoteIp) + ":" + std::to_string(remotePort);
+    // Pre-build per-remote endpoint strings. These need to outlive the
+    // gekko_add_actor calls because GekkoNetAddress.data is a raw pointer.
+    std::vector<std::string> remoteAddrStrings(static_cast<size_t>(numRemotes));
+    for (int i = 0; i < numRemotes; i++)
+    {
+        remoteAddrStrings[static_cast<size_t>(i)] = remotes[i].ip + ":" + std::to_string(remotes[i].port);
+    }
+
     for (int player = 1; player <= players; player++)
     {
         if (player == localPlayer)
@@ -1366,9 +1394,26 @@ CORE_EXPORT bool rmgk_gekko::start_lobby_session(const char* gameName, int playe
         }
         else
         {
+            // Find the remote entry that owns this slot.
+            int remoteIndex = -1;
+            for (int i = 0; i < numRemotes; i++)
+            {
+                if (remotes[i].slot == player)
+                {
+                    remoteIndex = i;
+                    break;
+                }
+            }
+            if (remoteIndex < 0)
+            {
+                write_gekko_log("gekko_add_actor result=fail type=remote reason=no_endpoint_for_slot");
+                close_session();
+                return false;
+            }
+            std::string& addrString = remoteAddrStrings[static_cast<size_t>(remoteIndex)];
             GekkoNetAddress address = {};
-            address.data = remoteAddress.data();
-            address.size = static_cast<unsigned int>(remoteAddress.size());
+            address.data = addrString.data();
+            address.size = static_cast<unsigned int>(addrString.size());
             const int handle = gekko_add_actor(g_GekkoSession, GekkoRemotePlayer, &address);
             if (handle < 0)
             {

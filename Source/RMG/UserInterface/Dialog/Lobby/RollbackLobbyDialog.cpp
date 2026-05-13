@@ -979,26 +979,23 @@ void RollbackLobbyDialog::onMatchBegin(quint64 matchId, const QList<LobbyClient:
     if (m_inRoomSettings)
         m_inRoomSettings->setText("Connecting to peers...");
 
-    // Pick local + remote out of the peer list. For now we only support
-    // 2-player sessions; the first non-self peer is the "remote".
+    // Pick the local peer; collect every non-self peer with its slot/ip/port.
     const quint64 selfId = m_client->selfUserId();
     LobbyClient::LobbyMatchPeer local{};
-    LobbyClient::LobbyMatchPeer remote{};
-    bool foundLocal = false, foundRemote = false;
+    bool foundLocal = false;
+    QStringList remotePeers;
     for (const auto& p : peers)
     {
         if (p.userId == selfId)
         {
             local = p;
             foundLocal = true;
+            continue;
         }
-        else if (!foundRemote)
-        {
-            remote = p;
-            foundRemote = true;
-        }
+        // "<slot>,<ip>,<port>" — matches the LOBBY| address peer-entry format.
+        remotePeers << QString("%1,%2,%3").arg(p.slot).arg(p.publicIp).arg(p.publicPort);
     }
-    if (!foundLocal || !foundRemote)
+    if (!foundLocal || remotePeers.isEmpty())
     {
         appendChatLine(CHANNEL_ROOM, "<span style='color:red;'>MATCH_BEGIN missing local or remote peer — aborting</span>");
         return;
@@ -1010,12 +1007,12 @@ void RollbackLobbyDialog::onMatchBegin(quint64 matchId, const QList<LobbyClient:
     m_client->releaseUdpAnchor();
 
     {
-        char buf[512];
+        char buf[640];
         std::snprintf(buf, sizeof(buf),
-            "Lobby→matchReady (deferred 100ms): game='%s' remote=%s:%u localPort=%u slot=%d delay=%d pred=%d",
+            "Lobby→matchReady (deferred 100ms): game='%s' peers=%d (%s) localPort=%u slot=%d delay=%d pred=%d",
             m_currentRoomGame.toUtf8().constData(),
-            remote.publicIp.toUtf8().constData(),
-            unsigned(remote.publicPort),
+            int(remotePeers.size()),
+            remotePeers.join("; ").toUtf8().constData(),
             unsigned(localPort),
             local.slot,
             m_currentRoomDelay,
@@ -1027,14 +1024,12 @@ void RollbackLobbyDialog::onMatchBegin(quint64 matchId, const QList<LobbyClient:
     // GekkoNet attempts to bind it. 100ms is plenty on Windows for an UDP
     // socket teardown to complete; without this delay the bind races.
     const QString gameName  = m_currentRoomGame;
-    const QString remoteIp  = remote.publicIp;
-    const int remotePortInt = int(remote.publicPort);
     const int localPortInt  = int(localPort);
     const int slot          = local.slot;
     const int delay         = m_currentRoomDelay;
     const int prediction    = m_currentRoomPrediction;
-    QTimer::singleShot(100, this, [this, gameName, remoteIp, localPortInt, remotePortInt, slot, delay, prediction]() {
-        emit matchReady(gameName, remoteIp, localPortInt, remotePortInt, slot, delay, prediction);
+    QTimer::singleShot(100, this, [this, gameName, remotePeers, localPortInt, slot, delay, prediction]() {
+        emit matchReady(gameName, remotePeers, localPortInt, slot, delay, prediction);
     });
 }
 

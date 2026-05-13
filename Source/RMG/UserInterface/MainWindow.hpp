@@ -34,6 +34,7 @@
 #endif // UPDATER
 #include <QGuiApplication>
 #include <QStackedWidget>
+#include <QStringList>
 #include <QCloseEvent>
 #include <QShowEvent>
 #include <QMainWindow>
@@ -289,7 +290,7 @@ class MainWindow : public QMainWindow, private Ui::MainWindow
     void on_Kaillera_GameEnded(void);
     void on_Kaillera_RecordingFileClosed(void);
     void on_Rollback_SessionRequested(QString gameName, QString remoteAddress, int localPort, int remotePort, int localPlayer, int frameDelay, int predictionWindow);
-    void on_Lobby_SessionRequested(QString gameName, QString remoteAddress, int localPort, int remotePort, int localPlayer, int frameDelay, int predictionWindow);
+    void on_Lobby_SessionRequested(QString gameName, QStringList remotePeers, int localPort, int localPlayer, int frameDelay, int predictionWindow);
     void on_RomBrowser_RomListRefreshFinished(bool canceled);
 #endif
 

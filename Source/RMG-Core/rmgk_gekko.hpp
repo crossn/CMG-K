@@ -14,6 +14,18 @@
 #include "RollbackNetcode.hpp"
 
 #include <cstdint>
+#include <string>
+
+// Describes one remote peer in a lobby-driven session. Each non-local
+// slot needs its own endpoint — GekkoNet's gekko_add_actor takes a
+// per-actor address, and in a 3-/4-player room every remote talks to
+// a different peer.
+struct LobbyRemotePeer
+{
+    int slot = 0;              // 1-indexed N64 controller slot
+    std::string ip;            // IPv4 dotted quad
+    unsigned short port = 0;
+};
 
 class rmgk_gekko
 {
@@ -24,10 +36,13 @@ class rmgk_gekko
     static bool start_p2p_session(const char* gameName, int players, int inputSize,
         int localPlayer, unsigned short localPort, const char* remoteIp, unsigned short remotePort, int localDelay, int predictionWindow);
     // Lobby variant: uses GekkoNet's built-in UDP adapter directly instead of
-    // riding on n02's P2P socket. Same signature as start_p2p_session so the
-    // call site is identical; only the transport differs.
+    // riding on n02's P2P socket. Takes an explicit list of remote peers
+    // (slot + endpoint) so 3-/4-player sessions can wire each remote actor
+    // to its own peer address.
     static bool start_lobby_session(const char* gameName, int players, int inputSize,
-        int localPlayer, unsigned short localPort, const char* remoteIp, unsigned short remotePort, int localDelay, int predictionWindow);
+        int localPlayer, unsigned short localPort,
+        const LobbyRemotePeer* remotes, int numRemotes,
+        int localDelay, int predictionWindow);
     static bool start_local_session(const char* gameName, int players, int inputSize, int localDelay);
     static void close_session();
     static void request_stop();

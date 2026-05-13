@@ -14,6 +14,7 @@
 #include <QDialog>
 #include <QHash>
 #include <QMap>
+#include <QStringList>
 
 #include <RMG-Core/RomSettings.hpp>
 
@@ -54,12 +55,14 @@ public:
     void notifyEmulationFinished();
 
 signals:
-    // Fired when the server has issued MATCH_BEGIN and we've extracted the
-    // local-vs-remote params. Signature deliberately matches
-    // MainWindow::on_Rollback_SessionRequested so it can be connected directly.
-    void matchReady(QString gameName, QString remoteAddress,
-                    int localPort, int remotePort,
-                    int localPlayer, int frameDelay, int predictionWindow);
+    // Fired when the server has issued MATCH_BEGIN. Carries every non-local
+    // peer's endpoint (slot/ip/port) so 3-/4-player sessions can wire each
+    // remote actor to its own peer address. Each entry in remotePeers is
+    // pre-formatted as "<slot>,<ip>,<port>" — matches the LOBBY| address
+    // peer-entry format consumed by CoreStartEmulation.
+    void matchReady(QString gameName, QStringList remotePeers,
+                    int localPort, int localPlayer,
+                    int frameDelay, int predictionWindow);
 
     // Fired when the user clicks "Close Game" mid-match or when a peer drops.
     // MainWindow connects this to stop emulation cleanly.

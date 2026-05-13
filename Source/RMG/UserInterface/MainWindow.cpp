@@ -4423,15 +4423,17 @@ void MainWindow::on_Rollback_SessionRequested(QString gameName, QString remoteAd
 // but routes through SetLobbyNetplay so CoreStartEmulation picks the
 // LOBBY| branch and uses GekkoNet's built-in UDP transport instead of
 // the n02 P2P transport (which the lobby never initializes).
-void MainWindow::on_Lobby_SessionRequested(QString gameName, QString remoteAddress, int localPort, int remotePort, int localPlayer, int frameDelay, int predictionWindow)
+// remotePeers contains N-1 entries, each pre-formatted as "<slot>,<ip>,<port>".
+void MainWindow::on_Lobby_SessionRequested(QString gameName, QStringList remotePeers, int localPort, int localPlayer, int frameDelay, int predictionWindow)
 {
     {
-        char buf[512];
+        char buf[640];
         std::snprintf(buf, sizeof(buf),
-            "Lobby→LobbySession: game='%s' remote=%s:%d localPort=%d slot=%d delay=%d pred=%d emuRunning=%d launchActive=%d",
+            "Lobby→LobbySession: game='%s' peers=%d (%s) localPort=%d slot=%d delay=%d pred=%d emuRunning=%d launchActive=%d",
             gameName.toUtf8().constData(),
-            remoteAddress.toUtf8().constData(),
-            remotePort, localPort, localPlayer, frameDelay, predictionWindow,
+            int(remotePeers.size()),
+            remotePeers.join("; ").toUtf8().constData(),
+            localPort, localPlayer, frameDelay, predictionWindow,
             int(this->emulationThread && this->emulationThread->isRunning()),
             int(this->ui_RollbackNetplayLaunchActive));
         CoreAddCallbackMessage(CoreDebugMessageType::Info, buf);
@@ -4451,9 +4453,9 @@ void MainWindow::on_Lobby_SessionRequested(QString gameName, QString remoteAddre
             "Lobby→LobbySession: emulation thread running — stopping and retrying");
         CoreStopEmulation();
         QTimer::singleShot(50, this,
-            [this, gameName, remoteAddress, localPort, remotePort, localPlayer, frameDelay, predictionWindow]()
+            [this, gameName, remotePeers, localPort, localPlayer, frameDelay, predictionWindow]()
             {
-                this->on_Lobby_SessionRequested(gameName, remoteAddress, localPort, remotePort, localPlayer, frameDelay, predictionWindow);
+                this->on_Lobby_SessionRequested(gameName, remotePeers, localPort, localPlayer, frameDelay, predictionWindow);
             });
         return;
     }
@@ -4475,7 +4477,7 @@ void MainWindow::on_Lobby_SessionRequested(QString gameName, QString remoteAddre
 
     CoreAddCallbackMessage(CoreDebugMessageType::Info,
         "Lobby→LobbySession: launching emulation thread (lobby UDP transport)");
-    this->emulationThread->SetLobbyNetplay(remoteAddress, localPort, remotePort, localPlayer, frameDelay, predictionWindow);
+    this->emulationThread->SetLobbyNetplay(remotePeers, localPort, localPlayer, frameDelay, predictionWindow);
     this->launchEmulationThread(romFile, "", false, -1, true);
 }
 
