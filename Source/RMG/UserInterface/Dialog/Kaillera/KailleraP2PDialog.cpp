@@ -999,15 +999,20 @@ void KailleraP2PDialog::applyGameLayerUI()
         m_frameDelayLabel->setText(rollback ? "Local Input Delay:" : "Frame Delay:");
     }
 
+    // Frame delay is baked into the GekkoNet (or Kaillera) session at start —
+    // changing it mid-game has no effect until the next session, so lock the
+    // row down for the duration of an active game.
+    const bool inGame = (rollback && m_rollbackGameActive) || n02::isGameRunning();
+
     if (m_frameDelayRow != nullptr)
     {
         m_frameDelayRow->setVisible(true);
-        m_frameDelayRow->setEnabled(m_isHost || rollback);
+        m_frameDelayRow->setEnabled((m_isHost || rollback) && !inGame);
     }
     if (m_predictionWindowRow != nullptr)
     {
         m_predictionWindowRow->setVisible(true);
-        m_predictionWindowRow->setEnabled(rollback);
+        m_predictionWindowRow->setEnabled(rollback && !inGame);
     }
 }
 
@@ -1565,6 +1570,7 @@ void KailleraP2PDialog::onGameStarted(QString game, int player, int maxPlayers)
         }
 
         m_rollbackGameActive = true;
+        applyGameLayerUI();
         m_chat->append("<span style='color:green;'>" + timestamp() + "Rollback game started: " + game.toHtmlEscaped() + "</span>");
         emit rollbackSessionReady(game, QString::fromUtf8(peerIp), localP2PPort, peerP2PPort, player, frameDelay, predictionWindow);
         return;
@@ -1573,6 +1579,7 @@ void KailleraP2PDialog::onGameStarted(QString game, int player, int maxPlayers)
     (void)player;
     (void)maxPlayers;
     m_chat->append("<span style='color:green;'>" + timestamp() + "Game started: " + game.toHtmlEscaped() + "</span>");
+    applyGameLayerUI();
 }
 
 void KailleraP2PDialog::onGameEnded()
@@ -1584,6 +1591,7 @@ void KailleraP2PDialog::onGameEnded()
         m_rollbackGameActive = false;
         m_ready = false;
         if (m_btnReady) m_btnReady->setChecked(false);
+        applyGameLayerUI();
         if (wasActive || wasReady)
         {
             m_chat->append("<span style='color:" + QString(QApplication::palette().window().color().value() < 128 ? "cornflowerblue" : "darkblue") + ";'>" + timestamp() + "Game ended.</span>");
@@ -1601,6 +1609,7 @@ void KailleraP2PDialog::onGameEnded()
     CoreStopEmulation();
     m_ready = false;
     if (m_btnReady) m_btnReady->setChecked(false);
+    applyGameLayerUI();
     m_chat->append("<span style='color:" + QString(QApplication::palette().window().color().value() < 128 ? "cornflowerblue" : "darkblue") + ";'>" + timestamp() + "Game ended.</span>");
 }
 
