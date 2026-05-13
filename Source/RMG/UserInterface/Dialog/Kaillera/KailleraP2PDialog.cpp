@@ -672,8 +672,9 @@ void KailleraP2PDialog::setupUI()
     connect(m_frameDelayCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this](int index) {
         if (isRollbackMode())
         {
+            // Rollback dropdown lists delays 1..9, so persisted value = index + 1.
             QSettings settings("RMG-K", "n02");
-            settings.setValue("Rollback_FrameDelay", index);
+            settings.setValue("Rollback_FrameDelay", index + 1);
         }
         else
         {
@@ -965,17 +966,19 @@ void KailleraP2PDialog::applyGameLayerUI()
         m_frameDelayCombo->clear();
         if (rollback)
         {
-            for (int delay = 0; delay <= 9; delay++)
+            // 0-frame delay is intentionally excluded until the host-side
+            // baseline-rollback crash is solved; start the list at 1.
+            for (int delay = 1; delay <= 9; delay++)
             {
                 m_frameDelayCombo->addItem(delay == 1 ? "1 frame" : QString("%1 frames").arg(delay));
             }
             QSettings settings("RMG-K", "n02");
             int rollbackDelay = settings.value("Rollback_FrameDelay", 2).toInt();
-            if (rollbackDelay < 0 || rollbackDelay > 9)
+            if (rollbackDelay < 1 || rollbackDelay > 9)
             {
                 rollbackDelay = 2;
             }
-            m_frameDelayCombo->setCurrentIndex(rollbackDelay);
+            m_frameDelayCombo->setCurrentIndex(rollbackDelay - 1);
         }
         else
         {
@@ -1556,7 +1559,7 @@ void KailleraP2PDialog::onGameStarted(QString game, int player, int maxPlayers)
         char peerIp[128] = {};
         int peerP2PPort = 0;
         const int localP2PPort = p2p_core_get_port();
-        const int frameDelay = (m_frameDelayCombo != nullptr) ? m_frameDelayCombo->currentIndex() : 0;
+        const int frameDelay = (m_frameDelayCombo != nullptr) ? m_frameDelayCombo->currentIndex() + 1 : 1;
         const int predictionWindow = (m_predictionWindowCombo != nullptr) ? m_predictionWindowCombo->currentIndex() + 1 : 4;
         if (!p2p_core_get_peer_endpoint(peerIp, sizeof(peerIp), &peerP2PPort))
         {
