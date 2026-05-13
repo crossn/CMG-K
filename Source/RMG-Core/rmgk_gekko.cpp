@@ -23,7 +23,9 @@
 
 // Recording hooks live in n02. The rollback flow needs to append per-frame
 // synced inputs to the open .krec because it bypasses n02's normal frame loop.
+#ifdef RMGK_HAVE_P2P_TRANSPORT
 #include "n02_client.h"
+#endif
 
 #include <algorithm>
 #include <atomic>
@@ -573,10 +575,12 @@ bool latch_gekko_input(const GekkoGameEvent* event)
     // Mirror the per-frame input record that modifyPlayValues normally writes
     // for non-rollback Kaillera/P2P play. Only commit on settled frames —
     // rolled-back / run-ahead frames are speculative and would double-record.
+#ifdef RMGK_HAVE_P2P_TRANSPORT
     if (!event->data.adv.rolling_back && !event->data.adv.running_ahead)
     {
         n02::recordingWriteInputs(g_GekkoLatchedInput.data(), static_cast<int>(g_GekkoLatchedInput.size()));
     }
+#endif
 
     if (g_GekkoLogEnabled &&
         (g_GekkoLogFrames < kGekkoMaxLoggedFrames || g_GekkoLatchedInput != g_GekkoLastLatchedInput))
