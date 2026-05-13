@@ -1012,7 +1012,7 @@ void KailleraP2PDialog::applyGameLayerUI()
     if (m_predictionWindowRow != nullptr)
     {
         m_predictionWindowRow->setVisible(true);
-        m_predictionWindowRow->setEnabled(rollback);
+        m_predictionWindowRow->setEnabled(rollback && !inGame);
     }
 }
 
