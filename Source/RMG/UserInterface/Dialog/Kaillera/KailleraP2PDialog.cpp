@@ -672,8 +672,9 @@ void KailleraP2PDialog::setupUI()
     connect(m_frameDelayCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this](int index) {
         if (isRollbackMode())
         {
+            // Rollback dropdown lists delays 1..9, so persisted value = index + 1.
             QSettings settings("RMG-K", "n02");
-            settings.setValue("Rollback_FrameDelay", index);
+            settings.setValue("Rollback_FrameDelay", index + 1);
         }
         else
         {
@@ -965,17 +966,19 @@ void KailleraP2PDialog::applyGameLayerUI()
         m_frameDelayCombo->clear();
         if (rollback)
         {
-            for (int delay = 0; delay <= 9; delay++)
+            // 0-frame delay is intentionally excluded until the host-side
+            // baseline-rollback crash is solved; start the list at 1.
+            for (int delay = 1; delay <= 9; delay++)
             {
                 m_frameDelayCombo->addItem(delay == 1 ? "1 frame" : QString("%1 frames").arg(delay));
             }
             QSettings settings("RMG-K", "n02");
             int rollbackDelay = settings.value("Rollback_FrameDelay", 2).toInt();
-            if (rollbackDelay < 0 || rollbackDelay > 9)
+            if (rollbackDelay < 1 || rollbackDelay > 9)
             {
                 rollbackDelay = 2;
             }
-            m_frameDelayCombo->setCurrentIndex(rollbackDelay);
+            m_frameDelayCombo->setCurrentIndex(rollbackDelay - 1);
         }
         else
         {
@@ -999,15 +1002,20 @@ void KailleraP2PDialog::applyGameLayerUI()
         m_frameDelayLabel->setText(rollback ? "Local Input Delay:" : "Frame Delay:");
     }
 
+    // Frame delay is baked into the GekkoNet (or Kaillera) session at start —
+    // changing it mid-game has no effect until the next session, so lock the
+    // row down for the duration of an active game.
+    const bool inGame = (rollback && m_rollbackGameActive) || n02::isGameRunning();
+
     if (m_frameDelayRow != nullptr)
     {
         m_frameDelayRow->setVisible(true);
-        m_frameDelayRow->setEnabled(m_isHost || rollback);
+        m_frameDelayRow->setEnabled((m_isHost || rollback) && !inGame);
     }
     if (m_predictionWindowRow != nullptr)
     {
         m_predictionWindowRow->setVisible(true);
-        m_predictionWindowRow->setEnabled(rollback);
+        m_predictionWindowRow->setEnabled(rollback && !inGame);
     }
 }
 
@@ -1171,7 +1179,7 @@ bool KailleraP2PDialog::travTryFallbackConnect(const QString& reason)
 
     m_chat->append("<span style='color:green;'>" + timestamp() +
                    "NAT traversal: " + reason.toHtmlEscaped() +
-                   ". Falling back to " + ip + ":" + QString::number(port) + "</span>");
+                   ". Falling back to direct connect</span>");
 
     QByteArray ipBytes = ip.toUtf8();
     if (!p2p_core_connect(ipBytes.data(), port))
@@ -1375,7 +1383,7 @@ void KailleraP2PDialog::onSsrvPacketReceived(QByteArray cmd, QByteArray saddr)
             int hostPort = atoi(parts[4]);
 
             m_chat->append("<span style='color:green;'>" + timestamp() +
-                           "NAT traversal: got host " + hostIp + ":" + QString::number(hostPort) + "</span>");
+                           "NAT traversal: got host endpoint</span>");
 
             m_travJoinToken = token;
             m_travJoinHostIp = hostIp;
@@ -1419,7 +1427,7 @@ void KailleraP2PDialog::onSsrvPacketReceived(QByteArray cmd, QByteArray saddr)
             if (!m_travLiveToken.isEmpty() && token != m_travLiveToken) return;
 
             m_chat->append("<span style='color:green;'>" + timestamp() +
-                           "NAT traversal: peer " + peerIp + ":" + QString::number(peerPort) + "</span>");
+                           "NAT traversal: got peer endpoint</span>");
 
             m_travHostPeerIp = peerIp;
             m_travHostPeerPort = peerPort;
@@ -1551,7 +1559,7 @@ void KailleraP2PDialog::onGameStarted(QString game, int player, int maxPlayers)
         char peerIp[128] = {};
         int peerP2PPort = 0;
         const int localP2PPort = p2p_core_get_port();
-        const int frameDelay = (m_frameDelayCombo != nullptr) ? m_frameDelayCombo->currentIndex() : 0;
+        const int frameDelay = (m_frameDelayCombo != nullptr) ? m_frameDelayCombo->currentIndex() + 1 : 1;
         const int predictionWindow = (m_predictionWindowCombo != nullptr) ? m_predictionWindowCombo->currentIndex() + 1 : 4;
         if (!p2p_core_get_peer_endpoint(peerIp, sizeof(peerIp), &peerP2PPort))
         {
@@ -1565,6 +1573,7 @@ void KailleraP2PDialog::onGameStarted(QString game, int player, int maxPlayers)
         }
 
         m_rollbackGameActive = true;
+        applyGameLayerUI();
         m_chat->append("<span style='color:green;'>" + timestamp() + "Rollback game started: " + game.toHtmlEscaped() + "</span>");
         emit rollbackSessionReady(game, QString::fromUtf8(peerIp), localP2PPort, peerP2PPort, player, frameDelay, predictionWindow);
         return;
@@ -1573,6 +1582,7 @@ void KailleraP2PDialog::onGameStarted(QString game, int player, int maxPlayers)
     (void)player;
     (void)maxPlayers;
     m_chat->append("<span style='color:green;'>" + timestamp() + "Game started: " + game.toHtmlEscaped() + "</span>");
+    applyGameLayerUI();
 }
 
 void KailleraP2PDialog::onGameEnded()
@@ -1584,6 +1594,7 @@ void KailleraP2PDialog::onGameEnded()
         m_rollbackGameActive = false;
         m_ready = false;
         if (m_btnReady) m_btnReady->setChecked(false);
+        applyGameLayerUI();
         if (wasActive || wasReady)
         {
             m_chat->append("<span style='color:" + QString(QApplication::palette().window().color().value() < 128 ? "cornflowerblue" : "darkblue") + ";'>" + timestamp() + "Game ended.</span>");
@@ -1601,6 +1612,7 @@ void KailleraP2PDialog::onGameEnded()
     CoreStopEmulation();
     m_ready = false;
     if (m_btnReady) m_btnReady->setChecked(false);
+    applyGameLayerUI();
     m_chat->append("<span style='color:" + QString(QApplication::palette().window().color().value() < 128 ? "cornflowerblue" : "darkblue") + ";'>" + timestamp() + "Game ended.</span>");
 }
 

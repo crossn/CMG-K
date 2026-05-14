@@ -1594,7 +1594,6 @@ bool MainWindow::Init(QApplication* app, bool showUI, bool launchROM)
     // connect signals early due to pending debug callbacks
     connect(coreCallBacks, &CoreCallbacks::OnCoreDebugCallback, this, &MainWindow::on_Core_DebugCallback);
     connect(coreCallBacks, &CoreCallbacks::OnCoreStateCallback, this, &MainWindow::on_Core_StateCallback);
-    connect(app, &QGuiApplication::applicationStateChanged, this, &MainWindow::on_QGuiApplication_applicationStateChanged);
 
     if (!this->coreCallBacks->Init())
     {
@@ -3426,39 +3425,6 @@ void MainWindow::on_EventFilter_FileDropped(QDropEvent *event)
     this->launchEmulationThread(file, "", refreshRomList, -1, false, true);
 }
 
-void MainWindow::on_QGuiApplication_applicationStateChanged(Qt::ApplicationState state)
-{
-    bool isRunning = CoreIsEmulationRunning();
-    bool isPaused = CoreIsEmulationPaused();
-
-    bool pauseOnFocusLoss = CoreSettingsGetBoolValue(SettingsID::GUI_PauseEmulationOnFocusLoss);
-    bool resumeOnFocus = CoreSettingsGetBoolValue(SettingsID::GUI_ResumeEmulationOnFocus);
-
-    switch (state)
-    {
-        default:
-            break;
-
-        case Qt::ApplicationState::ApplicationInactive:
-        {
-            // Don't pause during synchronized netplay.
-            if (pauseOnFocusLoss && isRunning && !isPaused && !CoreIsSynchronizedNetplayActive())
-            {
-                this->on_Action_System_Pause();
-                this->ui_ManuallyPaused = false;
-            }
-        } break;
-
-        case Qt::ApplicationState::ApplicationActive:
-        {
-            if (resumeOnFocus && isPaused && !this->ui_ManuallyPaused)
-            {
-                this->on_Action_System_Pause();
-            }
-        } break;
-    }
-}
-
 #ifdef UPDATER
 
 namespace
@@ -3720,7 +3686,6 @@ void MainWindow::on_Action_System_Pause(void)
     }
 
     this->updateUI(true, (!isPaused && ret));
-    this->ui_ManuallyPaused = true;
 }
 
 void MainWindow::on_Action_System_Screenshot(void)
