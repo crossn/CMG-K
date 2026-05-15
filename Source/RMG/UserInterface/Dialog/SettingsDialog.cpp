@@ -16,6 +16,8 @@
 #include <QRegularExpressionValidator>
 #include <QCryptographicHash>
 #include <QRegularExpression>
+#include <QVBoxLayout>
+#include <QHBoxLayout>
 #include <QFileDialog>
 #include <QColorDialog>
 #include <QDirIterator>
@@ -199,7 +201,8 @@ enum class SettingsDialogTab
     Plugin     = 11,
     Directory  = 12,
     N64DD      = 13,
-    Invalid    = 14
+    Rollback   = 14,
+    Invalid    = 15
 };
 
 
@@ -216,11 +219,22 @@ SettingsDialog::SettingsDialog(QWidget *parent, QString file) : QDialog(parent)
         const QString currentTheme = selectedThemeValue(this->themeComboBox);
         populateThemeCombo(this->themeComboBox, collectAvailableThemeOptions(), checked, currentTheme);
     });
+    connect(this->osdEnabledCheckBox, &QCheckBox::toggled, this, &SettingsDialog::updateOSDSettingsEnabledState);
+    connect(this->osdChatEnabledCheckBox, &QCheckBox::toggled, this, &SettingsDialog::updateOSDSettingsEnabledState);
 
     setupDirectoryChangeButtonIcon(this->changeScreenShotDirButton);
     setupDirectoryChangeButtonIcon(this->changeSaveStateDirButton);
     setupDirectoryChangeButtonIcon(this->changeSaveSramDirButton);
     setupDirectoryChangeButtonIcon(this->changeKailleraRecordsDirectoryButton);
+
+    QWidget* rollbackTab = new QWidget(this->tabWidget);
+    QVBoxLayout* rollbackLayout = new QVBoxLayout(rollbackTab);
+    this->rollbackVerboseStatsCheckBox = new QCheckBox("Enable verbose rollback stats messaging", rollbackTab);
+    this->rollbackEnableLocalTestingCheckBox = new QCheckBox("Use rollback engine for local play", rollbackTab);
+    rollbackLayout->addWidget(this->rollbackVerboseStatsCheckBox);
+    rollbackLayout->addWidget(this->rollbackEnableLocalTestingCheckBox);
+    rollbackLayout->addStretch();
+    this->tabWidget->addTab(rollbackTab, "Rollback");
 
     this->setIconsForEmulationInfoText();
 
@@ -554,6 +568,9 @@ void SettingsDialog::restoreDefaults(int stackedWidgetIndex)
     case SettingsDialogTab::N64DD:
         this->loadDefault64DDSettings();
         break;
+    case SettingsDialogTab::Rollback:
+        this->loadDefaultRollbackSettings();
+        break;
     }
 }
 
@@ -610,6 +627,9 @@ void SettingsDialog::loadSettings(int stackedWidgetIndex)
         break;
     case SettingsDialogTab::N64DD:
         this->load64DDSettings();
+        break;
+    case SettingsDialogTab::Rollback:
+        this->loadRollbackSettings();
         break;
     }
 }
@@ -823,8 +843,6 @@ void SettingsDialog::loadInterfaceGeneralSettings(void)
 
 void SettingsDialog::loadInterfaceEmulationSettings(void)
 {
-    this->pauseEmulationOnFocusCheckbox->setChecked(CoreSettingsGetBoolValue(SettingsID::GUI_PauseEmulationOnFocusLoss));
-    this->resumeEmulationOnFocusCheckBox->setChecked(CoreSettingsGetBoolValue(SettingsID::GUI_ResumeEmulationOnFocus));
     this->hideCursorCheckBox->setChecked(CoreSettingsGetBoolValue(SettingsID::GUI_HideCursorInEmulation));
     this->hideCursorFullscreenCheckBox->setChecked(CoreSettingsGetBoolValue(SettingsID::GUI_HideCursorInFullscreenEmulation));
     this->automaticFullscreenCheckbox->setChecked(CoreSettingsGetBoolValue(SettingsID::GUI_AutomaticFullscreen));
@@ -890,12 +908,14 @@ void SettingsDialog::loadInterfaceLogSettings(void)
 void SettingsDialog::loadInterfaceOSDSettings(void)
 {
     this->osdEnabledCheckBox->setChecked(CoreSettingsGetBoolValue(SettingsID::GUI_OnScreenDisplayEnabled));
+    this->osdChatEnabledCheckBox->setChecked(CoreSettingsGetBoolValue(SettingsID::GUI_OnScreenDisplayChatEnabled));
     this->osdLocationComboBox->setCurrentIndex(CoreSettingsGetIntValue(SettingsID::GUI_OnScreenDisplayLocation));
     this->osdVerticalPaddingSpinBox->setValue(CoreSettingsGetIntValue(SettingsID::GUI_OnScreenDisplayPaddingY));
     this->osdHorizontalPaddingSpinBox->setValue(CoreSettingsGetIntValue(SettingsID::GUI_OnScreenDisplayPaddingX));
     this->osdDurationSpinBox->setValue(CoreSettingsGetIntValue(SettingsID::GUI_OnScreenDisplayDuration));
     this->osdScaleDoubleSpinBox->setValue(CoreSettingsGetFloatValue(SettingsID::GUI_OnScreenDisplayScale));
     this->osdMaxMessagesSpinBox->setValue(CoreSettingsGetIntValue(SettingsID::GUI_OnScreenDisplayMaxMessages));
+    this->osdKailleraPortLabelsCheckBox->setChecked(CoreSettingsGetBoolValue(SettingsID::GUI_OnScreenDisplayKailleraPortLabels));
 
     std::vector<int> backgroundColor = CoreSettingsGetIntListValue(SettingsID::GUI_OnScreenDisplayBackgroundColor);
     std::vector<int> textColor = CoreSettingsGetIntListValue(SettingsID::GUI_OnScreenDisplayTextColor);
@@ -910,6 +930,8 @@ void SettingsDialog::loadInterfaceOSDSettings(void)
         this->currentTextColor = QColor(textColor.at(0), textColor.at(1), textColor.at(2), textColor.at(3));
         this->chooseColor(this->changeTextColorButton, &this->currentTextColor, true);
     }
+
+    this->updateOSDSettingsEnabledState();
 }
 
 void SettingsDialog::loadInterfaceNetplaySettings(void)
@@ -927,6 +949,12 @@ void SettingsDialog::loadInterfaceNetplaySettings(void)
     // Kaillera uses built-in server list, no need for custom URLs
     // this->netplayServerUrlLineEdit->setText(QString::fromStdString(CoreSettingsGetStringValue(SettingsID::Netplay_ServerJsonUrl)));
     // this->netplayDispatcherUrlLineEdit->setText(QString::fromStdString(CoreSettingsGetStringValue(SettingsID::Netplay_DispatcherUrl)));
+}
+
+void SettingsDialog::loadRollbackSettings(void)
+{
+    this->rollbackVerboseStatsCheckBox->setChecked(CoreSettingsGetBoolValue(SettingsID::Rollback_VerboseStats));
+    this->rollbackEnableLocalTestingCheckBox->setChecked(CoreSettingsGetBoolValue(SettingsID::Rollback_EnableLocalTesting));
 }
 
 void SettingsDialog::loadDefaultCoreSettings(void)
@@ -1067,8 +1095,6 @@ void SettingsDialog::loadDefaultInterfaceGeneralSettings(void)
 
 void SettingsDialog::loadDefaultInterfaceEmulationSettings(void)
 {
-    this->pauseEmulationOnFocusCheckbox->setChecked(CoreSettingsGetDefaultBoolValue(SettingsID::GUI_PauseEmulationOnFocusLoss));
-    this->resumeEmulationOnFocusCheckBox->setChecked(CoreSettingsGetDefaultBoolValue(SettingsID::GUI_ResumeEmulationOnFocus));
     this->hideCursorCheckBox->setChecked(CoreSettingsGetDefaultBoolValue(SettingsID::GUI_HideCursorInEmulation));
     this->hideCursorFullscreenCheckBox->setChecked(CoreSettingsGetDefaultBoolValue(SettingsID::GUI_HideCursorInFullscreenEmulation));
     this->automaticFullscreenCheckbox->setChecked(CoreSettingsGetDefaultBoolValue(SettingsID::GUI_AutomaticFullscreen));
@@ -1101,12 +1127,14 @@ void SettingsDialog::loadDefaultInterfaceLogSettings(void)
 void SettingsDialog::loadDefaultInterfaceOSDSettings(void)
 {
     this->osdEnabledCheckBox->setChecked(CoreSettingsGetDefaultBoolValue(SettingsID::GUI_OnScreenDisplayEnabled));
+    this->osdChatEnabledCheckBox->setChecked(CoreSettingsGetDefaultBoolValue(SettingsID::GUI_OnScreenDisplayChatEnabled));
     this->osdLocationComboBox->setCurrentIndex(CoreSettingsGetDefaultIntValue(SettingsID::GUI_OnScreenDisplayLocation));
     this->osdVerticalPaddingSpinBox->setValue(CoreSettingsGetDefaultIntValue(SettingsID::GUI_OnScreenDisplayPaddingY));
     this->osdHorizontalPaddingSpinBox->setValue(CoreSettingsGetDefaultIntValue(SettingsID::GUI_OnScreenDisplayPaddingX));
     this->osdDurationSpinBox->setValue(CoreSettingsGetDefaultIntValue(SettingsID::GUI_OnScreenDisplayDuration));
     this->osdScaleDoubleSpinBox->setValue(CoreSettingsGetDefaultFloatValue(SettingsID::GUI_OnScreenDisplayScale));
     this->osdMaxMessagesSpinBox->setValue(CoreSettingsGetDefaultIntValue(SettingsID::GUI_OnScreenDisplayMaxMessages));
+    this->osdKailleraPortLabelsCheckBox->setChecked(CoreSettingsGetDefaultBoolValue(SettingsID::GUI_OnScreenDisplayKailleraPortLabels));
 
     const std::vector<int> backgroundColor = CoreSettingsGetDefaultIntListValue(SettingsID::GUI_OnScreenDisplayBackgroundColor);
     const std::vector<int> textColor = CoreSettingsGetDefaultIntListValue(SettingsID::GUI_OnScreenDisplayTextColor);
@@ -1121,6 +1149,8 @@ void SettingsDialog::loadDefaultInterfaceOSDSettings(void)
         this->currentTextColor = QColor(textColor.at(0), textColor.at(1), textColor.at(2), textColor.at(3));
         this->chooseColor(this->changeTextColorButton, &this->currentTextColor, true);
     }
+
+    this->updateOSDSettingsEnabledState();
 }
 
 void SettingsDialog::loadDefaultInterfaceNetplaySettings(void)
@@ -1129,6 +1159,12 @@ void SettingsDialog::loadDefaultInterfaceNetplaySettings(void)
     // Kaillera uses built-in server list, no need for custom URLs
     // this->netplayServerUrlLineEdit->setText(QString::fromStdString(CoreSettingsGetDefaultStringValue(SettingsID::Netplay_ServerJsonUrl)));
     // this->netplayDispatcherUrlLineEdit->setText(QString::fromStdString(CoreSettingsGetDefaultStringValue(SettingsID::Netplay_DispatcherUrl)));
+}
+
+void SettingsDialog::loadDefaultRollbackSettings(void)
+{
+    this->rollbackVerboseStatsCheckBox->setChecked(CoreSettingsGetDefaultBoolValue(SettingsID::Rollback_VerboseStats));
+    this->rollbackEnableLocalTestingCheckBox->setChecked(CoreSettingsGetDefaultBoolValue(SettingsID::Rollback_EnableLocalTesting));
 }
 
 void SettingsDialog::saveSettings(void)
@@ -1152,6 +1188,7 @@ void SettingsDialog::saveSettings(void)
     this->saveInterfaceLogSettings();
     this->saveInterfaceOSDSettings();
     this->saveInterfaceNetplaySettings();
+    this->saveRollbackSettings();
     CoreSettingsSave();
 }
 
@@ -1335,8 +1372,6 @@ void SettingsDialog::saveInterfaceEmulationSettings(void)
 {
     CoreSettingsSetValue(SettingsID::GUI_HideCursorInEmulation, this->hideCursorCheckBox->isChecked());
     CoreSettingsSetValue(SettingsID::GUI_HideCursorInFullscreenEmulation, this->hideCursorFullscreenCheckBox->isChecked());
-    CoreSettingsSetValue(SettingsID::GUI_PauseEmulationOnFocusLoss, this->pauseEmulationOnFocusCheckbox->isChecked());
-    CoreSettingsSetValue(SettingsID::GUI_ResumeEmulationOnFocus, this->resumeEmulationOnFocusCheckBox->isChecked());
     CoreSettingsSetValue(SettingsID::GUI_AutomaticFullscreen, this->automaticFullscreenCheckbox->isChecked());
 #ifdef _WIN32
     CoreSettingsSetValue(SettingsID::GUI_ExclusiveFullscreen, this->exclusiveFullscreenCheckBox->isChecked());
@@ -1364,12 +1399,14 @@ void SettingsDialog::saveInterfaceLogSettings(void)
 void SettingsDialog::saveInterfaceOSDSettings(void)
 {
     CoreSettingsSetValue(SettingsID::GUI_OnScreenDisplayEnabled, this->osdEnabledCheckBox->isChecked());
+    CoreSettingsSetValue(SettingsID::GUI_OnScreenDisplayChatEnabled, this->osdChatEnabledCheckBox->isChecked());
     CoreSettingsSetValue(SettingsID::GUI_OnScreenDisplayLocation, this->osdLocationComboBox->currentIndex());
     CoreSettingsSetValue(SettingsID::GUI_OnScreenDisplayPaddingY, this->osdVerticalPaddingSpinBox->value());
     CoreSettingsSetValue(SettingsID::GUI_OnScreenDisplayPaddingX, this->osdHorizontalPaddingSpinBox->value());
     CoreSettingsSetValue(SettingsID::GUI_OnScreenDisplayDuration, this->osdDurationSpinBox->value());
     CoreSettingsSetValue(SettingsID::GUI_OnScreenDisplayScale, static_cast<float>(this->osdScaleDoubleSpinBox->value()));
     CoreSettingsSetValue(SettingsID::GUI_OnScreenDisplayMaxMessages, this->osdMaxMessagesSpinBox->value());
+    CoreSettingsSetValue(SettingsID::GUI_OnScreenDisplayKailleraPortLabels, this->osdKailleraPortLabelsCheckBox->isChecked());
     CoreSettingsSetValue(SettingsID::GUI_OnScreenDisplayBackgroundColor, std::vector<int>({ this->currentBackgroundColor.red(),
                                                                                             this->currentBackgroundColor.green(),
                                                                                             this->currentBackgroundColor.blue(),
@@ -1388,6 +1425,12 @@ void SettingsDialog::saveInterfaceNetplaySettings(void)
     // Kaillera uses built-in server list, no need for custom URLs
     // CoreSettingsSetValue(SettingsID::Netplay_ServerJsonUrl, this->netplayServerUrlLineEdit->text().toStdString());
     // CoreSettingsSetValue(SettingsID::Netplay_DispatcherUrl, this->netplayDispatcherUrlLineEdit->text().toStdString());
+}
+
+void SettingsDialog::saveRollbackSettings(void)
+{
+    CoreSettingsSetValue(SettingsID::Rollback_VerboseStats, this->rollbackVerboseStatsCheckBox->isChecked());
+    CoreSettingsSetValue(SettingsID::Rollback_EnableLocalTesting, this->rollbackEnableLocalTestingCheckBox->isChecked());
 }
 
 void SettingsDialog::commonHotkeySettings(SettingsDialogAction action)
@@ -1698,6 +1741,17 @@ void SettingsDialog::updateKailleraRecordingCapControls(void)
 
     this->kailleraRecordingCapEnabledCheckBox->setEnabled(recordingByDefault);
     this->kailleraRecordingCapMBSpinBox->setEnabled(recordingByDefault && capEnabled);
+}
+
+void SettingsDialog::updateOSDSettingsEnabledState(void)
+{
+    const bool osdEnabled = this->osdEnabledCheckBox->isChecked();
+    const bool chatEnabled = this->osdChatEnabledCheckBox->isChecked();
+
+    this->osdGlobalSettingsGroupBox->setEnabled(osdEnabled);
+    this->osdChatEnabledCheckBox->setEnabled(osdEnabled);
+    this->osdChatSettingsGroupBox->setEnabled(osdEnabled && chatEnabled);
+    this->osdKailleraPortLabelsCheckBox->setEnabled(osdEnabled);
 }
 
 void SettingsDialog::chooseDirectory(QLineEdit *lineEdit, QString caption)

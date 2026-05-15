@@ -155,10 +155,25 @@
     </property>
     <addaction name="action_Netplay_BrowseSessions"/>
    </widget>
+   <widget class="QMenu" name="menuRollback">
+    <property name="title">
+     <string>Debug</string>
+    </property>
+    <addaction name="action_Rollback_SaveState"/>
+    <addaction name="action_Rollback_LoadState"/>
+    <addaction name="separator"/>
+    <addaction name="action_Rollback_StartDebugReplay"/>
+    <addaction name="action_Rollback_VerifyDebugReplay"/>
+    <addaction name="action_Rollback_VerifyDebugReplayWithGraphics"/>
+    <addaction name="action_Rollback_StressDebugReplay"/>
+    <addaction name="separator"/>
+    <addaction name="action_Rollback_ClientInputReplay"/>
+   </widget>
    <addaction name="menuSystem"/>
    <addaction name="menuSettings"/>
    <addaction name="menuView"/>
    <addaction name="menuNetplay"/>
+   <addaction name="menuRollback"/>
    <addaction name="menuHelp"/>
   </widget>
   <widget class="QStatusBar" name="statusbar"/>
@@ -647,6 +662,65 @@
      </property>
    <property name="text">
     <string>Search</string>
+   </property>
+  </action>
+  <action name="action_Rollback_SaveState">
+   <property name="icon">
+    <iconset theme="save-3-line"/>
+   </property>
+   <property name="text">
+    <string>&amp;Save Rollback State</string>
+   </property>
+  </action>
+  <action name="action_Rollback_LoadState">
+   <property name="icon">
+    <iconset theme="folder-open-line"/>
+   </property>
+   <property name="text">
+    <string>&amp;Load Rollback State</string>
+   </property>
+  </action>
+  <action name="action_Rollback_StartDebugReplay">
+   <property name="icon">
+    <iconset theme="record-circle-line"/>
+   </property>
+   <property name="text">
+    <string>Start Recording Debug Replay</string>
+   </property>
+  </action>
+  <action name="action_Rollback_VerifyDebugReplay">
+   <property name="icon">
+    <iconset theme="check-double-line"/>
+   </property>
+   <property name="text">
+    <string>Verify Debug Replay (Fast Forward)</string>
+   </property>
+  </action>
+  <action name="action_Rollback_VerifyDebugReplayWithGraphics">
+   <property name="icon">
+    <iconset theme="movie-line"/>
+   </property>
+   <property name="text">
+    <string>Verify Debug Replay (with Graphics)</string>
+   </property>
+  </action>
+  <action name="action_Rollback_StressDebugReplay">
+   <property name="icon">
+    <iconset theme="repeat-line"/>
+   </property>
+   <property name="text">
+    <string>Stress Debug Replay (Rollback 2 Every 5)</string>
+   </property>
+  </action>
+  <action name="action_Rollback_ClientInputReplay">
+   <property name="checkable">
+    <bool>true</bool>
+   </property>
+   <property name="icon">
+    <iconset theme="record-circle-line"/>
+   </property>
+   <property name="text">
+    <string>Client Record/Replay 600 Inputs</string>
    </property>
   </action>
  </widget>

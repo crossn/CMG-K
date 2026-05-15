@@ -73,6 +73,7 @@ static bool l_InputPluginSwitchRequested = false;
 #define SETTING_SECTION_INPUT       SETTING_SECTION_GUI  " - Input Plugin"
 #define SETTING_SECTION_GCA         SETTING_SECTION_GUI  " - GameCube Adapter Input Plugin"
 #define SETTING_SECTION_KAILLERA    SETTING_SECTION_GUI  " Kaillera"
+#define SETTING_SECTION_ROLLBACK    SETTING_SECTION_GUI  " Rollback"
 #define SETTING_SECTION_RSP         "Rsp-HLE"
 
 // retrieves l_Setting from settingId
@@ -94,12 +95,6 @@ static l_Setting get_setting(SettingsID settingId)
         break;
     case SettingsID::GUI_StatusbarMessageDuration:
         setting = {SETTING_SECTION_GUI, "StatusbarMessageDuration", 3};
-        break;
-    case SettingsID::GUI_PauseEmulationOnFocusLoss:
-        setting = {SETTING_SECTION_GUI, "PauseEmulationOnFocusLoss", true};
-        break;
-    case SettingsID::GUI_ResumeEmulationOnFocus:
-        setting = {SETTING_SECTION_GUI, "ResumeEmulationOnFocus", true};
         break;
     case SettingsID::GUI_AutomaticFullscreen:
         setting = {SETTING_SECTION_GUI, "AutomaticFullscreen", false};
@@ -158,6 +153,12 @@ static l_Setting get_setting(SettingsID settingId)
     case SettingsID::GUI_OnScreenDisplayMaxMessages:
         setting = {SETTING_SECTION_GUI, "OnScreenDisplayMaxMessages", 5};
         break;
+    case SettingsID::GUI_OnScreenDisplayChatEnabled:
+        setting = {SETTING_SECTION_GUI, "OnScreenDisplayChatEnabled", true};
+        break;
+    case SettingsID::GUI_OnScreenDisplayKailleraPortLabels:
+        setting = {SETTING_SECTION_GUI, "OnScreenDisplayKailleraPortLabels", false};
+        break;
     case SettingsID::GUI_AutoStartNetplayOnStartup:
         setting = {SETTING_SECTION_GUI, "AutoStartNetplayOnStartup", false};
         break;
@@ -206,7 +207,7 @@ static l_Setting get_setting(SettingsID settingId)
         break;
 
     case SettingsID::Kaillera_ActiveMode:
-        setting = {SETTING_SECTION_KAILLERA, "ActiveMode", 1}; // 0=P2P, 1=Server, 2=Playback
+        setting = {SETTING_SECTION_KAILLERA, "ActiveMode", 0}; // 0=P2P, 1=Server, 2=Playback
         break;
     case SettingsID::Kaillera_Username:
         setting = {SETTING_SECTION_KAILLERA, "Username", std::string("Player")};
@@ -318,6 +319,22 @@ static l_Setting get_setting(SettingsID settingId)
         break;
     case SettingsID::Kaillera_P2PLastGame:
         setting = {SETTING_SECTION_KAILLERA, "P2PLastGame", std::string("")};
+        break;
+    case SettingsID::Kaillera_P2PShowOnPublicList:
+        setting = {SETTING_SECTION_KAILLERA, "P2PShowOnPublicList", true};
+        break;
+    case SettingsID::Kaillera_FfmpegPath:
+        setting = {SETTING_SECTION_KAILLERA, "FfmpegPath", std::string("")};
+        break;
+    case SettingsID::Kaillera_ExportLabelPorts:
+        setting = {SETTING_SECTION_KAILLERA, "ExportLabelPorts", true};
+        break;
+
+    case SettingsID::Rollback_VerboseStats:
+        setting = {SETTING_SECTION_ROLLBACK, "VerboseStats", false};
+        break;
+    case SettingsID::Rollback_EnableLocalTesting:
+        setting = {SETTING_SECTION_ROLLBACK, "EnableLocalTesting", true};
         break;
 
     case SettingsID::Core_GFX_Plugin:

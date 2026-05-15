@@ -165,7 +165,7 @@ void vi_vertical_interrupt_event(void* opaque)
     struct vi_controller* vi = (struct vi_controller*)opaque;
     if (vi->dp->do_on_unfreeze & DELAY_DP_INT)
         vi->dp->do_on_unfreeze |= DELAY_UPDATESCREEN;
-    else
+    else if (main_frame_video_enabled())
         gfx.updateScreen();
 
     /* allow main module to do things on VI event */
@@ -182,4 +182,3 @@ void vi_vertical_interrupt_event(void* opaque)
     /* trigger interrupt */
     raise_rcp_interrupt(vi->mi, MI_INTR_VI);
 }
-

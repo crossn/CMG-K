@@ -14,6 +14,8 @@
 #include "EventFilter.hpp"
 #include "Callbacks.hpp"
 
+#include <RMG-Core/RollbackNetcode.hpp>
+
 #include "Widget/RomBrowser/RomBrowserWidget.hpp"
 #include "Widget/Render/DummyWidget.hpp"
 #include "Widget/Render/OGLWidget.hpp"
@@ -25,9 +27,7 @@
 #endif // NETPLAY
 #include "Dialog/LogDialog.hpp"
 
-#ifdef _WIN32
 #include <string>
-#endif
 #ifdef UPDATER
 #include <QNetworkReply>
 #endif // UPDATER
@@ -55,8 +55,14 @@ class MainWindow : public QMainWindow, private Ui::MainWindow
 
     bool Init(QApplication* app, bool showUI, bool launchROM);
     void OpenROM(QString file, QString disk, bool fullscreen, bool quitAfterEmulation, int stateSlot);
+#ifdef NETPLAY
+    QString ResolveKailleraRomByName(QString gameName);
+#endif
 
   private:
+    void setDebugReplayStatusMessage(const std::string& message);
+    void startVerifyDebugReplay(bool withGraphics, bool stress = false);
+
     Thread::EmulationThread *emulationThread = nullptr;
 
     CoreCallbacks* coreCallBacks = nullptr;
@@ -97,9 +103,9 @@ class MainWindow : public QMainWindow, private Ui::MainWindow
     bool ui_ShowToolbar   = false;
     bool ui_ShowStatusbar = false;
 
-    bool ui_ManuallyPaused = true;
     bool ui_ManuallySavedState  = false;
     bool ui_ManuallyLoadedState = false;
+    CoreRollbackState ui_RollbackDebugState;
 
     bool ui_ForceClose = false;
 
@@ -125,6 +131,7 @@ class MainWindow : public QMainWindow, private Ui::MainWindow
     int ui_GamesharkButtonTimerId = 0;
     int ui_UpdateSaveStateSlotTimerId = 0;
     int ui_CheckVideoSizeTimerId = 0;
+    int ui_RollbackLivePumpTimerId = 0;
 
     int ui_LoadSaveStateSlotCounter = 0;
     int ui_LoadSaveStateSlotTimerId = -1;
@@ -138,6 +145,10 @@ class MainWindow : public QMainWindow, private Ui::MainWindow
     bool ui_AutoStartNetplayOnStartupPending = false;
     bool ui_NetplayChatInputActive = false;
     QString ui_NetplayChatInput;
+    bool ui_RollbackLivePumpPending = false;
+    bool ui_RollbackLivePumpActive = false;
+    bool ui_RollbackNetplayRoomActive = false;
+    bool ui_RollbackNetplayLaunchActive = false;
     struct PendingLocalChatEcho
     {
         QString message;
@@ -213,8 +224,6 @@ class MainWindow : public QMainWindow, private Ui::MainWindow
     void closeNetplayChatPrompt(void);
 #endif // NETPLAY
 
-    void on_QGuiApplication_applicationStateChanged(Qt::ApplicationState state);
- 
 #ifdef UPDATER
     void on_networkAccessManager_Finished(QNetworkReply *reply);
 #endif // UPDATER
@@ -236,6 +245,14 @@ class MainWindow : public QMainWindow, private Ui::MainWindow
     void on_Action_System_Cheats(void);
     void on_Action_System_GSButton(void);
     void on_Action_System_Exit(void);
+
+    void on_Action_Rollback_SaveState(void);
+    void on_Action_Rollback_LoadState(void);
+    void on_Action_Rollback_StartDebugReplay(void);
+    void on_Action_Rollback_VerifyDebugReplay(void);
+    void on_Action_Rollback_VerifyDebugReplayWithGraphics(void);
+    void on_Action_Rollback_StressDebugReplay(void);
+    void on_Action_Rollback_ClientInputReplay(bool checked);
 
     void on_Action_Settings_Graphics(void);
     void on_Action_Settings_Audio(void);
@@ -265,6 +282,7 @@ class MainWindow : public QMainWindow, private Ui::MainWindow
     void on_Kaillera_PlayerDropped(QString nickname, int playerNum);
     void on_Kaillera_GameEnded(void);
     void on_Kaillera_RecordingFileClosed(void);
+    void on_Rollback_SessionRequested(QString gameName, QString remoteAddress, int localPort, int remotePort, int localPlayer, int frameDelay, int predictionWindow);
     void on_RomBrowser_RomListRefreshFinished(bool canceled);
 #endif
 

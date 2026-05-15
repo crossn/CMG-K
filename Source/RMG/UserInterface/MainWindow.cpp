@@ -22,12 +22,12 @@
 #include "Dialog/Netplay/NetplaySessionBrowserDialog.hpp"
 #include "Dialog/Netplay/CreateNetplaySessionDialog.hpp"
 #include "Dialog/Netplay/NetplaySessionDialog.hpp"
-#endif // NETPLAY
-#if defined(NETPLAY) && defined(_WIN32)
 #include "KailleraUIBridge.hpp"
 #include "Dialog/Kaillera/KailleraPlaybackDialog.hpp"
 #include "n02_client.h"
-#endif
+#include "kailleraclient.h"
+#endif // NETPLAY
+#include "Dialog/RaphnetInputDialog.hpp"
 #include "UserInterface/EventFilter.hpp"
 #include "Utilities/QtKeyToSdl3Key.hpp"
 #include "Utilities/QtMessageBox.hpp"
@@ -48,7 +48,7 @@
 #include <QDesktopServices>
 #include <QGuiApplication>
 #include <QStyleFactory>
-#include <QActionGroup> 
+#include <QActionGroup>
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QMessageBox>
@@ -134,7 +134,7 @@ public:
     {
         if (element == CE_ItemViewItem)
         {
-            // Strip focus only — keep Selected so text color changes correctly
+            // Strip focus only  Ekeep Selected so text color changes correctly
             QStyleOptionViewItem opt(*qstyleoption_cast<const QStyleOptionViewItem*>(option));
             opt.state &= ~State_HasFocus;
             QProxyStyle::drawControl(element, &opt, painter, widget);
@@ -146,7 +146,14 @@ public:
 #endif
 #include <chrono>
 #include <cmath>
+#include <array>
 #include <algorithm>
+#include <cstdint>
+#include <cstring>
+#include <fstream>
+#include <iomanip>
+#include <mutex>
+#include <sstream>
 #include <vector>
 
 #include <RMG-Core/CachedRomHeaderAndSettings.hpp>
@@ -155,6 +162,8 @@ public:
 #include <RMG-Core/SpeedFactor.hpp>
 #include <RMG-Core/Screenshot.hpp>
 #include <RMG-Core/Emulation.hpp>
+#include <RMG-Core/RollbackNetcode.hpp>
+#include <RMG-Core/rmgk_gekko.hpp>
 #include <RMG-Core/SaveState.hpp>
 #include <RMG-Core/Settings.hpp>
 #include <RMG-Core/Plugins.hpp>
@@ -172,8 +181,1308 @@ public:
 using namespace UserInterface;
 using namespace Utilities;
 
+static bool isRaphnetRawPlugin()
+{
+    std::string pluginName = CoreSettingsGetStringValue(SettingsID::Core_INPUT_Plugin);
+    return pluginName.find("raphnetraw") != std::string::npos;
+}
+
 namespace
 {
+constexpr int kRollbackDebugReplayFrames = 1200;
+constexpr int kRollbackDebugReplayPlayers = 4;
+constexpr int kRollbackDebugStressInterval = 5;
+constexpr int kRollbackDebugStressRollbackFrames = 2;
+constexpr const char* kRollbackDebugReplayFilePath = "rollback_sanity_test.replay";
+constexpr const char* kRollbackDebugReplayLogPath = "rollback_sanity_test.log";
+constexpr uint32_t kRollbackDebugReplayMagic = 0x52534452;
+constexpr uint32_t kRollbackDebugReplayVersion = 9;
+
+enum class RollbackDebugReplayMode
+{
+    Idle,
+    Recording,
+    Verifying,
+    Stressing
+};
+
+struct RollbackDebugReplayState
+{
+    std::mutex mutex;
+    RollbackDebugReplayMode mode = RollbackDebugReplayMode::Idle;
+    CoreRollbackState initialState;
+    CoreRollbackState finalState;
+    std::array<CoreRollbackState, kRollbackDebugStressRollbackFrames + 1> stressCheckpoints;
+    std::vector<std::array<uint32_t, kRollbackDebugReplayPlayers>> inputs;
+    std::vector<uint64_t> inputHashes;
+    std::vector<uint64_t> frameHashes;
+    size_t verifyInputIndex = 0;
+    size_t verifyFrameIndex = 0;
+    int firstInputMismatchFrame = -1;
+    uint64_t firstInputMismatchExpectedHash = 0;
+    uint64_t firstInputMismatchActualHash = 0;
+    int firstMismatchFrame = -1;
+    uint64_t firstMismatchExpectedHash = 0;
+    uint64_t firstMismatchActualHash = 0;
+    uint64_t recordedInputHash = 0;
+    uint64_t replayedInputHash = 0;
+    uint64_t finalHash = 0;
+    bool frameAdvancedThisFrame = false;
+    bool pendingInitialSave = false;
+    bool pendingInitialLoad = false;
+    bool countReplayInputHash = true;
+    bool verifyWithGraphics = false;
+    bool lastVerifyCompleted = false;
+    bool lastVerifyMatched = false;
+    uint64_t lastVerifyExpectedHash = 0;
+    uint64_t lastVerifyActualHash = 0;
+    size_t lastVerifyRecordedInputFrames = 0;
+    size_t lastVerifyReplayedInputFrames = 0;
+    int stressRollbackCount = 0;
+    int stressRollbackFrames = 0;
+    int stressResimulatedFrames = 0;
+    bool ready = false;
+};
+
+RollbackDebugReplayState g_RollbackDebugReplay;
+
+bool RollbackDebugReplayBeginFrame(void* userData);
+bool RollbackDebugReplayInputProvider(uint32_t* inputs, int players, void* userData);
+bool RollbackDebugReplayEndFrame(void* userData);
+bool RollbackDebugRecordFrameHashFromRollbackFrame();
+bool RollbackDebugFinishRecordingFromRollbackFrame();
+bool RollbackDebugVerifyFromRollbackFrame();
+bool RollbackDebugRunStressRollbackFromRollbackFrame(size_t frame);
+void FreeRollbackDebugStressCheckpoints();
+bool SaveRollbackDebugStressCheckpoint(size_t frame);
+void WriteRollbackDebugReplayLog(const std::string& phase, bool matched, uint64_t expectedHash,
+    uint64_t actualHash, size_t recordedInputFrames, size_t replayedInputFrames,
+    const CoreRollbackState& expectedState, const CoreRollbackState& actualState);
+void WriteRollbackDebugReplayEventLog(const std::string& phase, const std::string& message);
+std::string FormatRollbackRunFrameStats(const CoreRollbackRunFrameStats& stats);
+bool RollbackDebugShouldIgnoreStopFailure(const std::string& error);
+
+bool RollbackDebugEnsureStableFrameControl()
+{
+    if (!CoreIsEmulationRunning())
+    {
+        return false;
+    }
+    if (CoreIsEmulationPaused())
+    {
+        return CoreResumeEmulation();
+    }
+    return true;
+}
+
+void RollbackDebugCloseSession()
+{
+    rmgk_gekko::set_debug_hooks(nullptr, nullptr, nullptr, nullptr);
+    rmgk_gekko::set_debug_frame_output(-1);
+    CoreSetFrameOutput(CoreFrameOutput_All);
+    FreeRollbackDebugStressCheckpoints();
+    std::lock_guard<std::mutex> lock(g_RollbackDebugReplay.mutex);
+    g_RollbackDebugReplay.frameAdvancedThisFrame = false;
+    g_RollbackDebugReplay.pendingInitialSave = false;
+    g_RollbackDebugReplay.pendingInitialLoad = false;
+    g_RollbackDebugReplay.stressRollbackCount = 0;
+    g_RollbackDebugReplay.stressRollbackFrames = 0;
+    g_RollbackDebugReplay.stressResimulatedFrames = 0;
+}
+
+std::string FormatRollbackRunFrameStats(const CoreRollbackRunFrameStats& stats)
+{
+    std::ostringstream stream;
+    stream << " core_total_us=" << stats.totalUs
+           << " r4300_us=" << stats.r4300Us
+           << " vi_us=" << stats.viUs
+           << " new_frame_us=" << stats.newFrameUs
+           << " cheats_us=" << stats.cheatsUs
+           << " pacing_us=" << stats.pacingUs
+           << " input_us=" << stats.inputUs
+           << " pause_us=" << stats.pauseUs
+           << " netplay_us=" << stats.netplayUs
+           << " dynarec_recompiles=" << stats.dynarecRecompileCount
+           << " dynarec_recompile_us=" << stats.dynarecRecompileUs
+           << " dynarec_invalidate_us=" << stats.dynarecInvalidateUs
+           << " dynarec_full_invalidates=" << stats.dynarecFullInvalidateCount
+           << " dynarec_range_invalidates=" << stats.dynarecRangeInvalidateCount
+           << " dynarec_block_invalidates=" << stats.dynarecBlockInvalidateCount
+           << " dynarec_verify_dirty_count=" << stats.dynarecVerifyDirtyCount
+           << " dynarec_verify_dirty_us=" << stats.dynarecVerifyDirtyUs
+           << " dynarec_get_addr_count=" << stats.dynarecGetAddrCount
+           << " dynarec_get_addr_us=" << stats.dynarecGetAddrUs
+           << " dynarec_get_addr_ht_count=" << stats.dynarecGetAddrHtCount
+           << " dynarec_get_addr_32_count=" << stats.dynarecGetAddr32Count
+           << " dynarec_dynamic_linker_count=" << stats.dynarecDynamicLinkerCount
+           << " dynarec_dynamic_linker_us=" << stats.dynarecDynamicLinkerUs
+           << " dynarec_dynamic_linker_ds_count=" << stats.dynarecDynamicLinkerDsCount
+           << " dynarec_dynamic_linker_ds_us=" << stats.dynarecDynamicLinkerDsUs
+           << " cached_code_full_invalidates=" << stats.cachedCodeFullInvalidateCount
+           << " cached_code_range_invalidates=" << stats.cachedCodeRangeInvalidateCount
+           << " interrupt_count=" << stats.interruptCount
+           << " interrupt_us=" << stats.interruptUs
+           << " interrupt_max_us=" << stats.interruptMaxUs
+           << " interrupt_max_type=" << stats.interruptMaxType
+           << " interrupt_vi_count=" << stats.interruptViCount
+           << " interrupt_vi_us=" << stats.interruptViUs
+           << " interrupt_compare_count=" << stats.interruptCompareCount
+           << " interrupt_compare_us=" << stats.interruptCompareUs
+           << " interrupt_check_count=" << stats.interruptCheckCount
+           << " interrupt_check_us=" << stats.interruptCheckUs
+           << " interrupt_si_count=" << stats.interruptSiCount
+           << " interrupt_si_us=" << stats.interruptSiUs
+           << " interrupt_pi_count=" << stats.interruptPiCount
+           << " interrupt_pi_us=" << stats.interruptPiUs
+           << " interrupt_ai_count=" << stats.interruptAiCount
+           << " interrupt_ai_us=" << stats.interruptAiUs
+           << " interrupt_sp_count=" << stats.interruptSpCount
+           << " interrupt_sp_us=" << stats.interruptSpUs
+           << " interrupt_dp_count=" << stats.interruptDpCount
+           << " interrupt_dp_us=" << stats.interruptDpUs
+           << " interrupt_rsp_dma_count=" << stats.interruptRspDmaCount
+           << " interrupt_rsp_dma_us=" << stats.interruptRspDmaUs
+           << " interrupt_rsp_task_count=" << stats.interruptRspTaskCount
+           << " interrupt_rsp_task_us=" << stats.interruptRspTaskUs
+           << " ai_set_frequency_count=" << stats.aiSetFrequencyCount
+           << " ai_set_frequency_us=" << stats.aiSetFrequencyUs
+           << " ai_push_samples_count=" << stats.aiPushSamplesCount
+           << " ai_push_samples_us=" << stats.aiPushSamplesUs
+           << " ai_fifo_pop_count=" << stats.aiFifoPopCount
+           << " ai_fifo_pop_us=" << stats.aiFifoPopUs
+           << " ai_raise_interrupt_count=" << stats.aiRaiseInterruptCount
+           << " ai_raise_interrupt_us=" << stats.aiRaiseInterruptUs
+           << " emumode=" << stats.emumode
+           << " cp0_count_before=" << stats.cp0CountBefore
+           << " cp0_count_after=" << stats.cp0CountAfter
+           << " cp0_count_delta=" << (stats.cp0CountAfter - stats.cp0CountBefore)
+           << " next_interrupt_before=" << stats.nextInterruptBefore
+           << " next_interrupt_after=" << stats.nextInterruptAfter
+           << " current_frame_before=" << stats.currentFrameBefore
+           << " current_frame_after=" << stats.currentFrameAfter
+           << " load_before_cp0_count=" << stats.loadBeforeCp0Count
+           << " load_before_next_interrupt=" << stats.loadBeforeNextInterrupt
+           << " load_before_current_frame=" << stats.loadBeforeCurrentFrame
+           << " load_before_cycle_count=" << stats.loadBeforeCycleCount
+           << " load_before_pending_exception=" << stats.loadBeforePendingException
+           << " load_before_stop=" << stats.loadBeforeStop
+           << " load_probe_cp0_count=" << stats.loadProbeCp0Count
+           << " load_probe_next_interrupt=" << stats.loadProbeNextInterrupt
+           << " load_probe_current_frame=" << stats.loadProbeCurrentFrame
+           << " load_probe_cycle_count=" << stats.loadProbeCycleCount
+           << " load_probe_pending_exception=" << stats.loadProbePendingException
+           << " load_probe_stop=" << stats.loadProbeStop
+           << " hidden_begin_cp0_count=" << stats.hiddenBeginCp0Count
+           << " hidden_begin_next_interrupt=" << stats.hiddenBeginNextInterrupt
+           << " hidden_begin_current_frame=" << stats.hiddenBeginCurrentFrame
+           << " hidden_begin_cycle_count=" << stats.hiddenBeginCycleCount
+           << " hidden_begin_pending_exception=" << stats.hiddenBeginPendingException
+           << " hidden_begin_stop=" << stats.hiddenBeginStop
+           << " resume_probe_cp0_count=" << stats.resumeProbeCp0Count
+           << " resume_probe_next_interrupt=" << stats.resumeProbeNextInterrupt
+           << " resume_probe_current_frame=" << stats.resumeProbeCurrentFrame
+           << " resume_probe_cycle_count=" << stats.resumeProbeCycleCount
+           << " resume_probe_pending_exception=" << stats.resumeProbePendingException
+           << " resume_probe_stop=" << stats.resumeProbeStop
+           << " dynarec_cycle_count_before=" << stats.dynarecCycleCountBefore
+           << " dynarec_cycle_count_after=" << stats.dynarecCycleCountAfter
+           << " dynarec_pending_exception_before=" << stats.dynarecPendingExceptionBefore
+           << " dynarec_pending_exception_after=" << stats.dynarecPendingExceptionAfter
+           << " dynarec_stop_before=" << stats.dynarecStopBefore
+           << " dynarec_stop_after=" << stats.dynarecStopAfter
+           << " delay_slot_before=" << stats.delaySlotBefore
+           << " delay_slot_after=" << stats.delaySlotAfter
+           << " output_flags=" << stats.outputFlags
+           << std::hex << std::setfill('0')
+           << " pc_before=0x" << std::setw(8) << stats.pcBefore
+           << " pc_after=0x" << std::setw(8) << stats.pcAfter
+           << " load_before_pc=0x" << std::setw(8) << stats.loadBeforePc
+           << " load_probe_pc=0x" << std::setw(8) << stats.loadProbePc
+           << " hidden_begin_pc=0x" << std::setw(8) << stats.hiddenBeginPc
+           << " resume_probe_pc=0x" << std::setw(8) << stats.resumeProbePc
+           << " dynarec_pcaddr_before=0x" << std::setw(8) << stats.dynarecPcaddrBefore
+           << " dynarec_pcaddr_after=0x" << std::setw(8) << stats.dynarecPcaddrAfter
+           << " cp0_last_addr_before=0x" << std::setw(8) << stats.cp0LastAddrBefore
+           << " cp0_last_addr_after=0x" << std::setw(8) << stats.cp0LastAddrAfter
+           << std::dec;
+    return stream.str();
+}
+
+bool RollbackDebugShouldIgnoreStopFailure(const std::string& error)
+{
+    return !CoreIsEmulationRunning() ||
+        error.find("INVALID_STATE") != std::string::npos ||
+        error.find("stop") != std::string::npos ||
+        error.find("Stop") != std::string::npos;
+}
+
+bool RollbackDebugIsPlaybackMode(RollbackDebugReplayMode mode)
+{
+    return mode == RollbackDebugReplayMode::Verifying || mode == RollbackDebugReplayMode::Stressing;
+}
+
+size_t RollbackDebugStressCheckpointIndex(size_t frame)
+{
+    return frame % g_RollbackDebugReplay.stressCheckpoints.size();
+}
+
+void FreeRollbackDebugStressCheckpoints()
+{
+    for (auto& checkpoint : g_RollbackDebugReplay.stressCheckpoints)
+    {
+        CoreRollbackFreeGameState(checkpoint);
+    }
+}
+
+bool SaveRollbackDebugStressCheckpoint(size_t frame)
+{
+    CoreRollbackState& checkpoint =
+        g_RollbackDebugReplay.stressCheckpoints[RollbackDebugStressCheckpointIndex(frame)];
+    CoreRollbackFreeGameState(checkpoint);
+    const auto beginTime = std::chrono::steady_clock::now();
+    const bool result = CoreRollbackSaveGameState(checkpoint, CoreGetCurrentFrameCount());
+    const auto elapsedUs =
+        std::chrono::duration_cast<std::chrono::microseconds>(
+            std::chrono::steady_clock::now() - beginTime).count();
+    WriteRollbackDebugReplayEventLog(result ? "stress_checkpoint_save" : "stress_checkpoint_save_failed",
+        "frame=" + std::to_string(frame) +
+        " len=" + std::to_string(checkpoint.len) +
+        " elapsed_us=" + std::to_string(elapsedUs) +
+        (result ? "" : (" error=" + CoreGetError())));
+    return result;
+}
+
+bool WriteReplayBytes(std::ofstream& file, const void* data, size_t size)
+{
+    file.write(static_cast<const char*>(data), static_cast<std::streamsize>(size));
+    return file.good();
+}
+
+bool ReadReplayBytes(std::ifstream& file, void* data, size_t size)
+{
+    file.read(static_cast<char*>(data), static_cast<std::streamsize>(size));
+    return file.good();
+}
+
+uint64_t HashRollbackDebugReplayInputFrame(const std::array<uint32_t, kRollbackDebugReplayPlayers>& inputs)
+{
+    constexpr uint64_t OffsetBasis = 14695981039346656037ull;
+    constexpr uint64_t Prime = 1099511628211ull;
+    uint64_t hash = OffsetBasis;
+
+    for (uint32_t input : inputs)
+    {
+        for (int byte = 0; byte < 4; byte++)
+        {
+            hash ^= static_cast<unsigned char>((input >> (byte * 8)) & 0xff);
+            hash *= Prime;
+        }
+    }
+
+    return hash;
+}
+
+uint64_t AppendRollbackDebugReplayHash(uint64_t hash, uint64_t value)
+{
+    constexpr uint64_t Prime = 1099511628211ull;
+
+    if (hash == 0)
+    {
+        hash = 14695981039346656037ull;
+    }
+
+    for (int byte = 0; byte < 8; byte++)
+    {
+        hash ^= static_cast<unsigned char>((value >> (byte * 8)) & 0xff);
+        hash *= Prime;
+    }
+
+    return hash;
+}
+
+bool SaveRollbackDebugReplayFile(std::string& error, const CoreRollbackState& finalState)
+{
+    std::ofstream file(kRollbackDebugReplayFilePath, std::ios::binary | std::ios::trunc);
+    if (!file.is_open())
+    {
+        error = "could not open rollback_sanity_test.replay for writing";
+        return false;
+    }
+
+    std::lock_guard<std::mutex> lock(g_RollbackDebugReplay.mutex);
+    if (g_RollbackDebugReplay.initialState.buffer == nullptr || g_RollbackDebugReplay.initialState.len <= 0)
+    {
+        error = "debug replay has no initial rollback state";
+        return false;
+    }
+    if (finalState.buffer == nullptr || finalState.len <= 0)
+    {
+        error = "debug replay has no final rollback state";
+        return false;
+    }
+
+    const uint32_t magic = kRollbackDebugReplayMagic;
+    const uint32_t version = kRollbackDebugReplayVersion;
+    const int32_t frames = kRollbackDebugReplayFrames;
+    const int32_t players = kRollbackDebugReplayPlayers;
+    const int32_t stateLen = g_RollbackDebugReplay.initialState.len;
+    const int32_t stateChecksum = g_RollbackDebugReplay.initialState.checksum;
+    const int32_t stateFrame = g_RollbackDebugReplay.initialState.frame;
+    const int32_t finalStateLen = finalState.len;
+    const int32_t finalStateChecksum = finalState.checksum;
+    const int32_t finalStateFrame = finalState.frame;
+    const int32_t inputCount = static_cast<int32_t>(g_RollbackDebugReplay.inputs.size());
+    const int32_t inputHashCount = static_cast<int32_t>(g_RollbackDebugReplay.inputHashes.size());
+    const int32_t frameHashCount = static_cast<int32_t>(g_RollbackDebugReplay.frameHashes.size());
+    const uint64_t recordedInputHash = g_RollbackDebugReplay.recordedInputHash;
+    const uint64_t finalHash = g_RollbackDebugReplay.finalHash;
+
+    if (!WriteReplayBytes(file, &magic, sizeof(magic)) ||
+        !WriteReplayBytes(file, &version, sizeof(version)) ||
+        !WriteReplayBytes(file, &frames, sizeof(frames)) ||
+        !WriteReplayBytes(file, &players, sizeof(players)) ||
+        !WriteReplayBytes(file, &stateLen, sizeof(stateLen)) ||
+        !WriteReplayBytes(file, &stateChecksum, sizeof(stateChecksum)) ||
+        !WriteReplayBytes(file, &stateFrame, sizeof(stateFrame)) ||
+        !WriteReplayBytes(file, &finalStateLen, sizeof(finalStateLen)) ||
+        !WriteReplayBytes(file, &finalStateChecksum, sizeof(finalStateChecksum)) ||
+        !WriteReplayBytes(file, &finalStateFrame, sizeof(finalStateFrame)) ||
+        !WriteReplayBytes(file, &inputCount, sizeof(inputCount)) ||
+        !WriteReplayBytes(file, &inputHashCount, sizeof(inputHashCount)) ||
+        !WriteReplayBytes(file, &frameHashCount, sizeof(frameHashCount)) ||
+        !WriteReplayBytes(file, &recordedInputHash, sizeof(recordedInputHash)) ||
+        !WriteReplayBytes(file, &finalHash, sizeof(finalHash)) ||
+        !WriteReplayBytes(file, g_RollbackDebugReplay.initialState.buffer, static_cast<size_t>(stateLen)) ||
+        !WriteReplayBytes(file, finalState.buffer, static_cast<size_t>(finalStateLen)))
+    {
+        error = "could not write rollback_sanity_test.replay header/state";
+        return false;
+    }
+
+    for (const auto& input : g_RollbackDebugReplay.inputs)
+    {
+        if (!WriteReplayBytes(file, input.data(), input.size() * sizeof(input[0])))
+        {
+            error = "could not write rollback_sanity_test.replay inputs";
+            return false;
+        }
+    }
+
+    if (!g_RollbackDebugReplay.inputHashes.empty() &&
+        !WriteReplayBytes(file, g_RollbackDebugReplay.inputHashes.data(),
+            g_RollbackDebugReplay.inputHashes.size() * sizeof(g_RollbackDebugReplay.inputHashes[0])))
+    {
+        error = "could not write rollback_sanity_test.replay input hashes";
+        return false;
+    }
+
+    if (!g_RollbackDebugReplay.frameHashes.empty() &&
+        !WriteReplayBytes(file, g_RollbackDebugReplay.frameHashes.data(),
+            g_RollbackDebugReplay.frameHashes.size() * sizeof(g_RollbackDebugReplay.frameHashes[0])))
+    {
+        error = "could not write rollback_sanity_test.replay frame hashes";
+        return false;
+    }
+
+    return true;
+}
+
+std::string GetRollbackDebugReplayPayloadRegion(int payloadOffset)
+{
+    constexpr int RdramPayloadOffset = 440;
+    constexpr int RdramSize = 8 * 1024 * 1024;
+
+    if (payloadOffset < 0)
+    {
+        return "none";
+    }
+
+    if (payloadOffset >= RdramPayloadOffset && payloadOffset < RdramPayloadOffset + RdramSize)
+    {
+        return "rdram+0x" + QString::number(payloadOffset - RdramPayloadOffset, 16).toStdString();
+    }
+
+    if (payloadOffset < RdramPayloadOffset)
+    {
+        return "core-registers";
+    }
+
+    return "post-rdram-state";
+}
+
+bool LoadRollbackDebugReplayFile(std::string& error)
+{
+    std::ifstream file(kRollbackDebugReplayFilePath, std::ios::binary);
+    if (!file.is_open())
+    {
+        error = "could not open rollback_sanity_test.replay for reading";
+        return false;
+    }
+
+    uint32_t magic = 0;
+    uint32_t version = 0;
+    int32_t frames = 0;
+    int32_t players = 0;
+    int32_t stateLen = 0;
+    int32_t stateChecksum = 0;
+    int32_t stateFrame = 0;
+    int32_t finalStateLen = 0;
+    int32_t finalStateChecksum = 0;
+    int32_t finalStateFrame = 0;
+    int32_t inputCount = 0;
+    int32_t inputHashCount = 0;
+    int32_t frameHashCount = 0;
+    uint64_t recordedInputHash = 0;
+    uint64_t finalHash = 0;
+
+    if (!ReadReplayBytes(file, &magic, sizeof(magic)) ||
+        !ReadReplayBytes(file, &version, sizeof(version)) ||
+        !ReadReplayBytes(file, &frames, sizeof(frames)) ||
+        !ReadReplayBytes(file, &players, sizeof(players)) ||
+        !ReadReplayBytes(file, &stateLen, sizeof(stateLen)) ||
+        !ReadReplayBytes(file, &stateChecksum, sizeof(stateChecksum)) ||
+        !ReadReplayBytes(file, &stateFrame, sizeof(stateFrame)) ||
+        !ReadReplayBytes(file, &finalStateLen, sizeof(finalStateLen)) ||
+        !ReadReplayBytes(file, &finalStateChecksum, sizeof(finalStateChecksum)) ||
+        !ReadReplayBytes(file, &finalStateFrame, sizeof(finalStateFrame)) ||
+        !ReadReplayBytes(file, &inputCount, sizeof(inputCount)) ||
+        !ReadReplayBytes(file, &inputHashCount, sizeof(inputHashCount)) ||
+        !ReadReplayBytes(file, &frameHashCount, sizeof(frameHashCount)) ||
+        !ReadReplayBytes(file, &recordedInputHash, sizeof(recordedInputHash)) ||
+        !ReadReplayBytes(file, &finalHash, sizeof(finalHash)))
+    {
+        error = "could not read rollback_sanity_test.replay header";
+        return false;
+    }
+
+    if (magic != kRollbackDebugReplayMagic || version != kRollbackDebugReplayVersion ||
+        frames != kRollbackDebugReplayFrames || players != kRollbackDebugReplayPlayers ||
+        stateLen <= 0 || finalStateLen <= 0 || inputCount < 0 || inputCount > kRollbackDebugReplayFrames ||
+        inputHashCount < 0 || inputHashCount > kRollbackDebugReplayFrames ||
+        frameHashCount < 0 || frameHashCount > kRollbackDebugReplayFrames)
+    {
+        error = "rollback_sanity_test.replay has an invalid or stale format; record it again";
+        return false;
+    }
+
+    CoreRollbackState replayState;
+    CoreRollbackState replayFinalState;
+    replayState.buffer = static_cast<unsigned char*>(std::malloc(static_cast<size_t>(stateLen)));
+    replayState.len = stateLen;
+    replayState.checksum = stateChecksum;
+    replayState.frame = stateFrame;
+    replayFinalState.buffer = static_cast<unsigned char*>(std::malloc(static_cast<size_t>(finalStateLen)));
+    replayFinalState.len = finalStateLen;
+    replayFinalState.checksum = finalStateChecksum;
+    replayFinalState.frame = finalStateFrame;
+    if (replayState.buffer == nullptr || replayFinalState.buffer == nullptr)
+    {
+        std::free(replayState.buffer);
+        std::free(replayFinalState.buffer);
+        error = "could not allocate rollback_sanity_test.replay state";
+        return false;
+    }
+
+    if (!ReadReplayBytes(file, replayState.buffer, static_cast<size_t>(stateLen)))
+    {
+        std::free(replayState.buffer);
+        std::free(replayFinalState.buffer);
+        error = "could not read rollback_sanity_test.replay state";
+        return false;
+    }
+    if (!ReadReplayBytes(file, replayFinalState.buffer, static_cast<size_t>(finalStateLen)))
+    {
+        std::free(replayState.buffer);
+        std::free(replayFinalState.buffer);
+        error = "could not read rollback_sanity_test.replay final state";
+        return false;
+    }
+
+    std::vector<std::array<uint32_t, kRollbackDebugReplayPlayers>> replayInputs(static_cast<size_t>(inputCount));
+    std::vector<uint64_t> replayInputHashes(static_cast<size_t>(inputHashCount));
+    std::vector<uint64_t> replayFrameHashes(static_cast<size_t>(frameHashCount));
+    for (auto& input : replayInputs)
+    {
+        if (!ReadReplayBytes(file, input.data(), input.size() * sizeof(input[0])))
+        {
+            std::free(replayState.buffer);
+            std::free(replayFinalState.buffer);
+            error = "could not read rollback_sanity_test.replay inputs";
+            return false;
+        }
+    }
+    if (!replayInputHashes.empty() &&
+        !ReadReplayBytes(file, replayInputHashes.data(), replayInputHashes.size() * sizeof(replayInputHashes[0])))
+    {
+        std::free(replayState.buffer);
+        std::free(replayFinalState.buffer);
+        error = "could not read rollback_sanity_test.replay input hashes";
+        return false;
+    }
+    if (!replayFrameHashes.empty() &&
+        !ReadReplayBytes(file, replayFrameHashes.data(), replayFrameHashes.size() * sizeof(replayFrameHashes[0])))
+    {
+        std::free(replayState.buffer);
+        std::free(replayFinalState.buffer);
+        error = "could not read rollback_sanity_test.replay frame hashes";
+        return false;
+    }
+
+    CoreRollbackState oldState;
+    CoreRollbackState oldFinalState;
+    {
+        std::lock_guard<std::mutex> lock(g_RollbackDebugReplay.mutex);
+        oldState = g_RollbackDebugReplay.initialState;
+        oldFinalState = g_RollbackDebugReplay.finalState;
+        g_RollbackDebugReplay.initialState = replayState;
+        g_RollbackDebugReplay.finalState = replayFinalState;
+        g_RollbackDebugReplay.inputs = std::move(replayInputs);
+        g_RollbackDebugReplay.inputHashes = std::move(replayInputHashes);
+        g_RollbackDebugReplay.frameHashes = std::move(replayFrameHashes);
+        g_RollbackDebugReplay.verifyInputIndex = 0;
+        g_RollbackDebugReplay.verifyFrameIndex = 0;
+        g_RollbackDebugReplay.firstInputMismatchFrame = -1;
+        g_RollbackDebugReplay.firstInputMismatchExpectedHash = 0;
+        g_RollbackDebugReplay.firstInputMismatchActualHash = 0;
+        g_RollbackDebugReplay.firstMismatchFrame = -1;
+        g_RollbackDebugReplay.firstMismatchExpectedHash = 0;
+        g_RollbackDebugReplay.firstMismatchActualHash = 0;
+        g_RollbackDebugReplay.recordedInputHash = recordedInputHash;
+        g_RollbackDebugReplay.replayedInputHash = 0;
+        g_RollbackDebugReplay.finalHash = finalHash;
+        g_RollbackDebugReplay.ready = true;
+    }
+    CoreRollbackFreeGameState(oldState);
+    CoreRollbackFreeGameState(oldFinalState);
+    return true;
+}
+
+void GetRollbackStatePayload(const CoreRollbackState& state, const unsigned char*& buffer, int& len)
+{
+    constexpr int RollbackHeaderInts = 6;
+    constexpr int RollbackHeaderSize = RollbackHeaderInts * static_cast<int>(sizeof(int32_t));
+    constexpr int32_t RollbackHeaderMagic =
+        (static_cast<int32_t>('R') << 24) |
+        (static_cast<int32_t>('L') << 16) |
+        (static_cast<int32_t>('B') << 8) |
+        static_cast<int32_t>('K');
+    constexpr int32_t LegacyRollbackHeaderMagic =
+        (static_cast<int32_t>('G') << 24) |
+        (static_cast<int32_t>('G') << 16) |
+        (static_cast<int32_t>('P') << 8) |
+        static_cast<int32_t>('O');
+
+    buffer = state.buffer;
+    len = state.len;
+
+    if (buffer == nullptr)
+    {
+        len = 0;
+        return;
+    }
+
+    if (len >= RollbackHeaderSize)
+    {
+        int32_t magic = 0;
+        int32_t headerSize = 0;
+        std::memcpy(&magic, buffer, sizeof(magic));
+        std::memcpy(&headerSize, buffer + sizeof(magic), sizeof(headerSize));
+        if ((magic == RollbackHeaderMagic || magic == LegacyRollbackHeaderMagic) && headerSize == RollbackHeaderSize)
+        {
+            buffer += RollbackHeaderSize;
+            len -= RollbackHeaderSize;
+        }
+    }
+}
+
+uint64_t HashRollbackState(const CoreRollbackState& state)
+{
+    constexpr uint64_t OffsetBasis = 14695981039346656037ull;
+    constexpr uint64_t Prime = 1099511628211ull;
+    uint64_t hash = OffsetBasis;
+    const unsigned char* buffer;
+    int len;
+
+    GetRollbackStatePayload(state, buffer, len);
+
+    for (int i = 0; i < len; i++)
+    {
+        hash ^= buffer[i];
+        hash *= Prime;
+    }
+
+    return hash;
+}
+
+bool RollbackDebugReplayBeginFrame(void* userData)
+{
+    (void)userData;
+
+    RollbackDebugReplayMode mode;
+    bool pendingInitialSave;
+    bool pendingInitialLoad;
+    {
+        std::lock_guard<std::mutex> lock(g_RollbackDebugReplay.mutex);
+        mode = g_RollbackDebugReplay.mode;
+        pendingInitialSave = g_RollbackDebugReplay.pendingInitialSave;
+        pendingInitialLoad = g_RollbackDebugReplay.pendingInitialLoad;
+        g_RollbackDebugReplay.frameAdvancedThisFrame = false;
+    }
+
+    if (mode == RollbackDebugReplayMode::Recording && pendingInitialSave)
+    {
+        CoreRollbackState initialState = {};
+        const auto saveBeginTime = std::chrono::steady_clock::now();
+        if (!CoreRollbackSaveGameState(initialState, CoreGetCurrentFrameCount()))
+        {
+            const auto saveUs =
+                std::chrono::duration_cast<std::chrono::microseconds>(
+                    std::chrono::steady_clock::now() - saveBeginTime).count();
+            WriteRollbackDebugReplayEventLog("record_initial_save_failed",
+                "elapsed_us=" + std::to_string(saveUs) + " error=" + CoreGetError());
+            std::lock_guard<std::mutex> lock(g_RollbackDebugReplay.mutex);
+            g_RollbackDebugReplay.mode = RollbackDebugReplayMode::Idle;
+            g_RollbackDebugReplay.pendingInitialSave = false;
+            return false;
+        }
+        const auto saveUs =
+            std::chrono::duration_cast<std::chrono::microseconds>(
+                std::chrono::steady_clock::now() - saveBeginTime).count();
+
+        {
+            std::lock_guard<std::mutex> lock(g_RollbackDebugReplay.mutex);
+            g_RollbackDebugReplay.initialState = initialState;
+            g_RollbackDebugReplay.pendingInitialSave = false;
+        }
+        WriteRollbackDebugReplayEventLog("record_initial_save",
+            "frame=" + std::to_string(initialState.frame) +
+            " save_us=" + std::to_string(saveUs) +
+            " hash=" + std::to_string(HashRollbackState(initialState)));
+        return true;
+    }
+
+    if (!RollbackDebugIsPlaybackMode(mode) || !pendingInitialLoad)
+    {
+        return true;
+    }
+
+    const auto loadBeginTime = std::chrono::steady_clock::now();
+    if (!CoreRollbackLoadGameState(g_RollbackDebugReplay.initialState))
+    {
+        const auto loadUs =
+            std::chrono::duration_cast<std::chrono::microseconds>(
+                std::chrono::steady_clock::now() - loadBeginTime).count();
+        WriteRollbackDebugReplayEventLog("verify_initial_load_failed",
+            "load_us=" + std::to_string(loadUs) + " error=" + CoreGetError());
+        std::lock_guard<std::mutex> lock(g_RollbackDebugReplay.mutex);
+        g_RollbackDebugReplay.mode = RollbackDebugReplayMode::Idle;
+        g_RollbackDebugReplay.pendingInitialSave = false;
+        g_RollbackDebugReplay.pendingInitialLoad = false;
+        return false;
+    }
+    const auto loadUs =
+        std::chrono::duration_cast<std::chrono::microseconds>(
+            std::chrono::steady_clock::now() - loadBeginTime).count();
+
+    CoreRollbackState loadedInitialState = {};
+    const auto verifySaveBeginTime = std::chrono::steady_clock::now();
+    if (CoreRollbackSaveGameState(loadedInitialState, CoreGetCurrentFrameCount()))
+    {
+        const auto verifySaveUs =
+            std::chrono::duration_cast<std::chrono::microseconds>(
+                std::chrono::steady_clock::now() - verifySaveBeginTime).count();
+        CoreRollbackState expectedInitialState;
+        size_t recordedInputFrames;
+        {
+            std::lock_guard<std::mutex> lock(g_RollbackDebugReplay.mutex);
+            expectedInitialState = g_RollbackDebugReplay.initialState;
+            recordedInputFrames = g_RollbackDebugReplay.inputs.size();
+        }
+        const uint64_t expectedInitialHash = HashRollbackState(expectedInitialState);
+        const uint64_t loadedInitialHash = HashRollbackState(loadedInitialState);
+        WriteRollbackDebugReplayLog(mode == RollbackDebugReplayMode::Stressing ? "stress_initial_load" : "verify_initial_load",
+            expectedInitialHash == loadedInitialHash,
+            expectedInitialHash, loadedInitialHash, recordedInputFrames, 0, expectedInitialState, loadedInitialState);
+        WriteRollbackDebugReplayEventLog(mode == RollbackDebugReplayMode::Stressing ? "stress_initial_load_timing" : "verify_initial_load_timing",
+            "load_us=" + std::to_string(loadUs) +
+            " verify_save_us=" + std::to_string(verifySaveUs));
+    }
+    CoreRollbackFreeGameState(loadedInitialState);
+
+    if (mode == RollbackDebugReplayMode::Stressing && !SaveRollbackDebugStressCheckpoint(0))
+    {
+        WriteRollbackDebugReplayEventLog("stress_initial_checkpoint_failed", CoreGetError());
+        std::lock_guard<std::mutex> lock(g_RollbackDebugReplay.mutex);
+        g_RollbackDebugReplay.mode = RollbackDebugReplayMode::Idle;
+        g_RollbackDebugReplay.pendingInitialLoad = false;
+        return false;
+    }
+
+    {
+        std::lock_guard<std::mutex> lock(g_RollbackDebugReplay.mutex);
+        g_RollbackDebugReplay.pendingInitialLoad = false;
+    }
+    return true;
+}
+
+bool RollbackDebugReplayInputProvider(uint32_t* inputs, int players, void* userData)
+{
+    (void)userData;
+    if (inputs == nullptr || players < 1)
+    {
+        return false;
+    }
+
+    std::array<uint32_t, kRollbackDebugReplayPlayers> frameInputs = {};
+    RollbackDebugReplayMode mode;
+    bool verifyWithGraphics = false;
+    {
+        std::lock_guard<std::mutex> lock(g_RollbackDebugReplay.mutex);
+        mode = g_RollbackDebugReplay.mode;
+        verifyWithGraphics = g_RollbackDebugReplay.verifyWithGraphics;
+    }
+
+    if (mode == RollbackDebugReplayMode::Recording)
+    {
+        CoreSetFrameOutput(CoreFrameOutput_All);
+        const int playerCount = std::min(players, kRollbackDebugReplayPlayers);
+        for (int i = 0; i < playerCount; i++)
+        {
+            frameInputs[i] = inputs[i];
+        }
+
+        std::lock_guard<std::mutex> lock(g_RollbackDebugReplay.mutex);
+        if (g_RollbackDebugReplay.inputs.size() < kRollbackDebugReplayFrames)
+        {
+            const uint64_t inputHash = HashRollbackDebugReplayInputFrame(frameInputs);
+            g_RollbackDebugReplay.inputHashes.push_back(inputHash);
+            g_RollbackDebugReplay.recordedInputHash =
+                AppendRollbackDebugReplayHash(g_RollbackDebugReplay.recordedInputHash, inputHash);
+            g_RollbackDebugReplay.inputs.push_back(frameInputs);
+        }
+        g_RollbackDebugReplay.frameAdvancedThisFrame = true;
+    }
+    else if (RollbackDebugIsPlaybackMode(mode))
+    {
+        CoreSetFrameOutput(verifyWithGraphics ? CoreFrameOutput_All : CoreFrameOutput_None);
+        std::lock_guard<std::mutex> lock(g_RollbackDebugReplay.mutex);
+        if (g_RollbackDebugReplay.verifyInputIndex >= g_RollbackDebugReplay.inputs.size())
+        {
+            return false;
+        }
+
+        frameInputs = g_RollbackDebugReplay.inputs[g_RollbackDebugReplay.verifyInputIndex++];
+        const uint64_t inputHash = HashRollbackDebugReplayInputFrame(frameInputs);
+        if (g_RollbackDebugReplay.verifyInputIndex <= g_RollbackDebugReplay.inputHashes.size())
+        {
+            const uint64_t expectedInputHash = g_RollbackDebugReplay.inputHashes[g_RollbackDebugReplay.verifyInputIndex - 1];
+            if (inputHash != expectedInputHash && g_RollbackDebugReplay.firstInputMismatchFrame < 0)
+            {
+                g_RollbackDebugReplay.firstInputMismatchFrame = static_cast<int>(g_RollbackDebugReplay.verifyInputIndex);
+                g_RollbackDebugReplay.firstInputMismatchExpectedHash = expectedInputHash;
+                g_RollbackDebugReplay.firstInputMismatchActualHash = inputHash;
+            }
+        }
+        if (g_RollbackDebugReplay.countReplayInputHash)
+        {
+            g_RollbackDebugReplay.replayedInputHash =
+                AppendRollbackDebugReplayHash(g_RollbackDebugReplay.replayedInputHash, inputHash);
+        }
+        g_RollbackDebugReplay.frameAdvancedThisFrame = true;
+    }
+    else
+    {
+        return CoreRollbackSampleInput(inputs, static_cast<int>(sizeof(uint32_t)), players);
+    }
+
+    std::memset(inputs, 0, static_cast<size_t>(players) * sizeof(uint32_t));
+    const int playerCount = std::min(players, kRollbackDebugReplayPlayers);
+    for (int i = 0; i < playerCount; i++)
+    {
+        inputs[i] = frameInputs[i];
+    }
+    return true;
+}
+
+bool RollbackDebugReplayEndFrame(void* userData)
+{
+    (void)userData;
+    RollbackDebugReplayMode mode;
+    bool shouldRecordFrameHash = false;
+    bool shouldFinishRecording = false;
+    bool shouldVerifyFrame = false;
+    {
+        std::lock_guard<std::mutex> lock(g_RollbackDebugReplay.mutex);
+        mode = g_RollbackDebugReplay.mode;
+        shouldRecordFrameHash =
+            mode == RollbackDebugReplayMode::Recording &&
+            g_RollbackDebugReplay.frameAdvancedThisFrame;
+        shouldFinishRecording =
+            shouldRecordFrameHash &&
+            g_RollbackDebugReplay.inputs.size() >= static_cast<size_t>(kRollbackDebugReplayFrames);
+        shouldVerifyFrame =
+            RollbackDebugIsPlaybackMode(mode) &&
+            g_RollbackDebugReplay.frameAdvancedThisFrame;
+        g_RollbackDebugReplay.frameAdvancedThisFrame = false;
+    }
+
+    if (shouldRecordFrameHash && !RollbackDebugRecordFrameHashFromRollbackFrame())
+    {
+        return false;
+    }
+    if (shouldFinishRecording)
+    {
+        return RollbackDebugFinishRecordingFromRollbackFrame();
+    }
+    if (shouldVerifyFrame)
+    {
+        return RollbackDebugVerifyFromRollbackFrame();
+    }
+
+    return true;
+}
+
+bool RollbackDebugRecordFrameHashFromRollbackFrame()
+{
+    size_t frameHashCount;
+    {
+        std::lock_guard<std::mutex> lock(g_RollbackDebugReplay.mutex);
+        frameHashCount = g_RollbackDebugReplay.inputs.size();
+    }
+    if (frameHashCount <= 5 || (frameHashCount % 60) == 0)
+    {
+        WriteRollbackDebugReplayEventLog("record_frame_hash",
+            "frame=" + std::to_string(frameHashCount) +
+            " skipped=1 reason=hot_path_debug_hash_disabled");
+    }
+
+    return true;
+}
+
+bool RollbackDebugFinishRecordingFromRollbackFrame()
+{
+    CoreRollbackState finalState;
+    const auto saveBeginTime = std::chrono::steady_clock::now();
+    if (!CoreRollbackSaveGameState(finalState, CoreGetCurrentFrameCount()))
+    {
+        const auto saveUs =
+            std::chrono::duration_cast<std::chrono::microseconds>(
+                std::chrono::steady_clock::now() - saveBeginTime).count();
+        std::lock_guard<std::mutex> lock(g_RollbackDebugReplay.mutex);
+        g_RollbackDebugReplay.mode = RollbackDebugReplayMode::Idle;
+        g_RollbackDebugReplay.ready = false;
+        WriteRollbackDebugReplayEventLog("record_failed",
+            "save_us=" + std::to_string(saveUs) + " error=" + CoreGetError());
+        return false;
+    }
+    const auto saveUs =
+        std::chrono::duration_cast<std::chrono::microseconds>(
+            std::chrono::steady_clock::now() - saveBeginTime).count();
+
+    const uint64_t finalHash = HashRollbackState(finalState);
+    size_t recordedInputFrames;
+    {
+        std::lock_guard<std::mutex> lock(g_RollbackDebugReplay.mutex);
+        if (g_RollbackDebugReplay.frameHashes.empty())
+        {
+            g_RollbackDebugReplay.frameHashes.push_back(finalHash);
+        }
+        else if (g_RollbackDebugReplay.frameHashes.size() < static_cast<size_t>(kRollbackDebugReplayFrames))
+        {
+            g_RollbackDebugReplay.frameHashes.push_back(finalHash);
+        }
+        g_RollbackDebugReplay.finalHash = finalHash;
+        g_RollbackDebugReplay.mode = RollbackDebugReplayMode::Idle;
+        recordedInputFrames = g_RollbackDebugReplay.inputs.size();
+    }
+
+    std::string replayFileError;
+    const bool replayFileSaved = SaveRollbackDebugReplayFile(replayFileError, finalState);
+    {
+        std::lock_guard<std::mutex> lock(g_RollbackDebugReplay.mutex);
+        g_RollbackDebugReplay.ready = replayFileSaved;
+    }
+    WriteRollbackDebugReplayLog("record", replayFileSaved, finalHash, finalHash,
+        recordedInputFrames, recordedInputFrames, finalState, finalState);
+    WriteRollbackDebugReplayEventLog(replayFileSaved ? "record_finished" : "record_failed",
+        replayFileSaved ? ("frames=" + std::to_string(recordedInputFrames) +
+            " final_save_us=" + std::to_string(saveUs)) : replayFileError);
+    CoreRollbackFreeGameState(finalState);
+    RollbackDebugCloseSession();
+    return replayFileSaved;
+}
+
+bool RollbackDebugVerifyFromRollbackFrame()
+{
+    RollbackDebugReplayMode mode;
+    bool hasPerFrameHashes;
+    size_t pendingFrameIndex;
+    bool willFinish;
+    {
+        std::lock_guard<std::mutex> lock(g_RollbackDebugReplay.mutex);
+        mode = g_RollbackDebugReplay.mode;
+        hasPerFrameHashes =
+            g_RollbackDebugReplay.frameHashes.size() == static_cast<size_t>(kRollbackDebugReplayFrames);
+        pendingFrameIndex = g_RollbackDebugReplay.verifyFrameIndex + 1;
+        willFinish = pendingFrameIndex >= static_cast<size_t>(kRollbackDebugReplayFrames);
+    }
+
+    CoreRollbackState finalState;
+    long long saveUs = 0;
+    uint64_t finalHash = 0;
+    const bool shouldHashState = hasPerFrameHashes || willFinish;
+    if (shouldHashState)
+    {
+        const auto saveBeginTime = std::chrono::steady_clock::now();
+        if (!CoreRollbackSaveGameState(finalState, CoreGetCurrentFrameCount()))
+        {
+            saveUs =
+                std::chrono::duration_cast<std::chrono::microseconds>(
+                    std::chrono::steady_clock::now() - saveBeginTime).count();
+            std::lock_guard<std::mutex> lock(g_RollbackDebugReplay.mutex);
+            g_RollbackDebugReplay.mode = RollbackDebugReplayMode::Idle;
+            WriteRollbackDebugReplayEventLog("verify_frame_save_failed",
+                "save_us=" + std::to_string(saveUs) + " error=" + CoreGetError());
+            return false;
+        }
+        saveUs =
+            std::chrono::duration_cast<std::chrono::microseconds>(
+                std::chrono::steady_clock::now() - saveBeginTime).count();
+        finalHash = HashRollbackState(finalState);
+    }
+
+    uint64_t expectedHash;
+    CoreRollbackState expectedFinalState;
+    size_t replayedInputFrames;
+    size_t recordedInputFrames;
+    size_t verifyFrameIndex;
+    bool finished;
+    bool matched;
+    bool shouldStressRollback = false;
+    {
+        std::lock_guard<std::mutex> lock(g_RollbackDebugReplay.mutex);
+        if (hasPerFrameHashes && g_RollbackDebugReplay.verifyFrameIndex < g_RollbackDebugReplay.frameHashes.size())
+        {
+            const uint64_t expectedFrameHash = g_RollbackDebugReplay.frameHashes[g_RollbackDebugReplay.verifyFrameIndex];
+            if (finalHash != expectedFrameHash && g_RollbackDebugReplay.firstMismatchFrame < 0)
+            {
+                g_RollbackDebugReplay.firstMismatchFrame = static_cast<int>(g_RollbackDebugReplay.verifyFrameIndex + 1);
+                g_RollbackDebugReplay.firstMismatchExpectedHash = expectedFrameHash;
+                g_RollbackDebugReplay.firstMismatchActualHash = finalHash;
+                WriteRollbackDebugReplayEventLog("verify_frame_mismatch",
+                    "frame=" + std::to_string(g_RollbackDebugReplay.firstMismatchFrame) +
+                    " expected_hash=" + std::to_string(expectedFrameHash) +
+                    " actual_hash=" + std::to_string(finalHash) +
+                    " replayed_inputs=" + std::to_string(g_RollbackDebugReplay.verifyInputIndex));
+            }
+        }
+        g_RollbackDebugReplay.verifyFrameIndex++;
+        expectedHash = g_RollbackDebugReplay.finalHash;
+        expectedFinalState = g_RollbackDebugReplay.finalState;
+        replayedInputFrames = g_RollbackDebugReplay.verifyInputIndex;
+        recordedInputFrames = g_RollbackDebugReplay.inputs.size();
+        verifyFrameIndex = g_RollbackDebugReplay.verifyFrameIndex;
+        finished = verifyFrameIndex >= static_cast<size_t>(kRollbackDebugReplayFrames);
+        shouldStressRollback =
+            mode == RollbackDebugReplayMode::Stressing &&
+            !finished &&
+            verifyFrameIndex >= static_cast<size_t>(kRollbackDebugStressRollbackFrames) &&
+            (verifyFrameIndex % static_cast<size_t>(kRollbackDebugStressInterval)) == 0;
+        matched = finished &&
+            finalHash == expectedHash &&
+            recordedInputFrames == replayedInputFrames &&
+            g_RollbackDebugReplay.recordedInputHash == g_RollbackDebugReplay.replayedInputHash &&
+            g_RollbackDebugReplay.firstInputMismatchFrame < 0;
+        if (finished)
+        {
+            g_RollbackDebugReplay.mode = RollbackDebugReplayMode::Idle;
+            g_RollbackDebugReplay.lastVerifyCompleted = true;
+            g_RollbackDebugReplay.lastVerifyMatched = matched;
+            g_RollbackDebugReplay.lastVerifyExpectedHash = expectedHash;
+            g_RollbackDebugReplay.lastVerifyActualHash = finalHash;
+            g_RollbackDebugReplay.lastVerifyRecordedInputFrames = recordedInputFrames;
+            g_RollbackDebugReplay.lastVerifyReplayedInputFrames = replayedInputFrames;
+        }
+    }
+
+    if (!finished && (verifyFrameIndex <= 5 || (verifyFrameIndex % 60) == 0))
+    {
+        WriteRollbackDebugReplayEventLog("verify_frame_progress",
+            "frame=" + std::to_string(verifyFrameIndex) +
+            " save_us=" + std::to_string(saveUs) +
+            " hash=" + (shouldHashState ? std::to_string(finalHash) : std::string("skipped")) +
+            " replayed_inputs=" + std::to_string(replayedInputFrames));
+    }
+
+    if (mode == RollbackDebugReplayMode::Stressing && !SaveRollbackDebugStressCheckpoint(verifyFrameIndex))
+    {
+        CoreRollbackFreeGameState(finalState);
+        WriteRollbackDebugReplayEventLog("stress_checkpoint_failed",
+            "frame=" + std::to_string(verifyFrameIndex) + " error=" + CoreGetError());
+        std::lock_guard<std::mutex> lock(g_RollbackDebugReplay.mutex);
+        g_RollbackDebugReplay.mode = RollbackDebugReplayMode::Idle;
+        return false;
+    }
+
+    if (shouldStressRollback && !RollbackDebugRunStressRollbackFromRollbackFrame(verifyFrameIndex))
+    {
+        CoreRollbackFreeGameState(finalState);
+        return false;
+    }
+
+    if (finished)
+    {
+        WriteRollbackDebugReplayLog(mode == RollbackDebugReplayMode::Stressing ? "stress_verify" : "verify",
+            matched, expectedHash, finalHash,
+            recordedInputFrames, replayedInputFrames, expectedFinalState, finalState);
+        RollbackDebugCloseSession();
+    }
+    CoreRollbackFreeGameState(finalState);
+    return true;
+}
+
+bool RollbackDebugRunStressRollbackFromRollbackFrame(size_t frame)
+{
+    const auto burstBeginTime = std::chrono::steady_clock::now();
+    const size_t rollbackFrame = frame - static_cast<size_t>(kRollbackDebugStressRollbackFrames);
+    CoreRollbackState& checkpoint =
+        g_RollbackDebugReplay.stressCheckpoints[RollbackDebugStressCheckpointIndex(rollbackFrame)];
+    if (checkpoint.buffer == nullptr)
+    {
+        WriteRollbackDebugReplayEventLog("stress_failed",
+            "missing checkpoint for frame=" + std::to_string(rollbackFrame));
+        std::lock_guard<std::mutex> lock(g_RollbackDebugReplay.mutex);
+        g_RollbackDebugReplay.mode = RollbackDebugReplayMode::Idle;
+        return false;
+    }
+
+    const auto loadBeginTime = std::chrono::steady_clock::now();
+    if (!CoreRollbackLoadGameState(checkpoint))
+    {
+        const std::string error = CoreGetError();
+        WriteRollbackDebugReplayEventLog("stress_failed",
+            "load frame=" + std::to_string(rollbackFrame) + " error=" + error);
+        std::lock_guard<std::mutex> lock(g_RollbackDebugReplay.mutex);
+        g_RollbackDebugReplay.mode = RollbackDebugReplayMode::Idle;
+        if (RollbackDebugShouldIgnoreStopFailure(error))
+        {
+            WriteRollbackDebugReplayEventLog("stress_stopped",
+                "ignored shutdown load failure at frame=" + std::to_string(rollbackFrame) + " error=" + error);
+            return true;
+        }
+        return false;
+    }
+    const auto loadUs =
+        std::chrono::duration_cast<std::chrono::microseconds>(
+            std::chrono::steady_clock::now() - loadBeginTime).count();
+
+    std::array<std::array<uint32_t, kRollbackDebugReplayPlayers>, kRollbackDebugStressRollbackFrames> resimInputs = {};
+    {
+        std::lock_guard<std::mutex> lock(g_RollbackDebugReplay.mutex);
+        if (frame > g_RollbackDebugReplay.inputs.size())
+        {
+            g_RollbackDebugReplay.mode = RollbackDebugReplayMode::Idle;
+            return false;
+        }
+        for (int i = 0; i < kRollbackDebugStressRollbackFrames; i++)
+        {
+            resimInputs[static_cast<size_t>(i)] =
+                g_RollbackDebugReplay.inputs[rollbackFrame + static_cast<size_t>(i)];
+        }
+        g_RollbackDebugReplay.countReplayInputHash = false;
+        g_RollbackDebugReplay.stressRollbackCount++;
+        g_RollbackDebugReplay.stressRollbackFrames += kRollbackDebugStressRollbackFrames;
+        g_RollbackDebugReplay.stressResimulatedFrames += kRollbackDebugStressRollbackFrames;
+    }
+
+    long long resimTotalUs = 0;
+    long long resimMaxUs = 0;
+    for (int i = 0; i < kRollbackDebugStressRollbackFrames; i++)
+    {
+        const size_t resimFrame = rollbackFrame + static_cast<size_t>(i) + 1;
+        const auto resimBeginTime = std::chrono::steady_clock::now();
+        const bool resimOk = rmgk_gekko::debug_run_frame_with_inputs(
+            resimInputs[static_cast<size_t>(i)].data(), kRollbackDebugReplayPlayers, CoreFrameOutput_None);
+        const long long resimUs =
+            std::chrono::duration_cast<std::chrono::microseconds>(
+                std::chrono::steady_clock::now() - resimBeginTime).count();
+        CoreRollbackRunFrameStats runFrameStats;
+        const bool hasRunFrameStats = CoreRollbackGetRunFrameStats(runFrameStats);
+        std::string statsMessage =
+            "frame=" + std::to_string(resimFrame) +
+            " source_frame=" + std::to_string(rollbackFrame + static_cast<size_t>(i)) +
+            " resim_us=" + std::to_string(resimUs) +
+            " p1=" + std::to_string(resimInputs[static_cast<size_t>(i)][0]) +
+            " p2=" + std::to_string(resimInputs[static_cast<size_t>(i)][1]) +
+            " p3=" + std::to_string(resimInputs[static_cast<size_t>(i)][2]) +
+            " p4=" + std::to_string(resimInputs[static_cast<size_t>(i)][3]);
+        if (hasRunFrameStats)
+        {
+            statsMessage += FormatRollbackRunFrameStats(runFrameStats);
+        }
+
+        if (!resimOk)
+        {
+            const std::string error = CoreGetError();
+            WriteRollbackDebugReplayEventLog("stress_resim_failed", statsMessage + " error=" + error);
+            std::lock_guard<std::mutex> lock(g_RollbackDebugReplay.mutex);
+            g_RollbackDebugReplay.mode = RollbackDebugReplayMode::Idle;
+            g_RollbackDebugReplay.countReplayInputHash = true;
+            if (RollbackDebugShouldIgnoreStopFailure(error))
+            {
+                WriteRollbackDebugReplayEventLog("stress_stopped",
+                    "ignored shutdown failure at frame=" + std::to_string(resimFrame) + " error=" + error);
+                return true;
+            }
+            return false;
+        }
+        WriteRollbackDebugReplayEventLog("stress_resim_frame", statsMessage);
+        resimTotalUs += resimUs;
+        resimMaxUs = std::max(resimMaxUs, resimUs);
+    }
+
+    {
+        std::lock_guard<std::mutex> lock(g_RollbackDebugReplay.mutex);
+        g_RollbackDebugReplay.countReplayInputHash = true;
+    }
+
+    const auto burstTotalUs =
+        std::chrono::duration_cast<std::chrono::microseconds>(
+            std::chrono::steady_clock::now() - burstBeginTime).count();
+    WriteRollbackDebugReplayEventLog("stress_rollback",
+        "frame=" + std::to_string(frame) +
+        " rollback_to=" + std::to_string(rollbackFrame) +
+        " load_us=" + std::to_string(loadUs) +
+        " resim_total_us=" + std::to_string(resimTotalUs) +
+        " resim_max_us=" + std::to_string(resimMaxUs) +
+        " total_us=" + std::to_string(burstTotalUs) +
+        " resimulated=" + std::to_string(kRollbackDebugStressRollbackFrames));
+    return true;
+}
+
+int FirstRollbackStatePayloadDifference(const CoreRollbackState& expected, const CoreRollbackState& actual, int& expectedLen, int& actualLen)
+{
+    const unsigned char* expectedBuffer;
+    const unsigned char* actualBuffer;
+    GetRollbackStatePayload(expected, expectedBuffer, expectedLen);
+    GetRollbackStatePayload(actual, actualBuffer, actualLen);
+
+    const int compareLen = std::min(expectedLen, actualLen);
+    for (int i = 0; i < compareLen; i++)
+    {
+        if (expectedBuffer[i] != actualBuffer[i])
+        {
+            return i;
+        }
+    }
+
+    if (expectedLen != actualLen)
+    {
+        return compareLen;
+    }
+
+    return -1;
+}
+
+void WriteRollbackDebugReplayLog(const std::string& phase,
+    bool matched,
+    uint64_t expectedHash,
+    uint64_t actualHash,
+    size_t recordedInputFrames,
+    size_t replayedInputFrames,
+    const CoreRollbackState& expectedState,
+    const CoreRollbackState& actualState)
+{
+    int expectedPayloadLen = 0;
+    int actualPayloadLen = 0;
+    const int firstDiff = FirstRollbackStatePayloadDifference(expectedState, actualState, expectedPayloadLen, actualPayloadLen);
+    const unsigned char* expectedPayload = nullptr;
+    const unsigned char* actualPayload = nullptr;
+    GetRollbackStatePayload(expectedState, expectedPayload, expectedPayloadLen);
+    GetRollbackStatePayload(actualState, actualPayload, actualPayloadLen);
+
+    std::ofstream log(kRollbackDebugReplayLogPath, std::ios::app);
+    if (!log.is_open())
+    {
+        return;
+    }
+
+    log << "phase=" << phase << "\n";
+    log << "matched=" << (matched ? "true" : "false") << "\n";
+    log << "expected_hash=" << expectedHash << "\n";
+    log << "actual_hash=" << actualHash << "\n";
+    log << "recorded_input_frames=" << recordedInputFrames << "\n";
+    log << "replayed_input_frames=" << replayedInputFrames << "\n";
+    log << "recorded_input_hashes=" << g_RollbackDebugReplay.inputHashes.size() << "\n";
+    log << "recorded_input_hash=" << g_RollbackDebugReplay.recordedInputHash << "\n";
+    log << "replayed_input_hash=" << g_RollbackDebugReplay.replayedInputHash << "\n";
+    log << "inputs_match=" << (g_RollbackDebugReplay.recordedInputHash == g_RollbackDebugReplay.replayedInputHash ? "true" : "false") << "\n";
+    log << "first_input_mismatch_frame=" << g_RollbackDebugReplay.firstInputMismatchFrame << "\n";
+    log << "first_input_mismatch_expected_hash=" << g_RollbackDebugReplay.firstInputMismatchExpectedHash << "\n";
+    log << "first_input_mismatch_actual_hash=" << g_RollbackDebugReplay.firstInputMismatchActualHash << "\n";
+    for (size_t i = 0; i < std::min<size_t>(g_RollbackDebugReplay.inputs.size(), 4); i++)
+    {
+        log << "input_frame_" << (i + 1) << "=";
+        for (size_t player = 0; player < g_RollbackDebugReplay.inputs[i].size(); player++)
+        {
+            log << std::hex << g_RollbackDebugReplay.inputs[i][player] << (player + 1 < g_RollbackDebugReplay.inputs[i].size() ? ' ' : '\n');
+        }
+        log << std::dec;
+    }
+    log << "recorded_frame_hashes=" << g_RollbackDebugReplay.frameHashes.size() << "\n";
+    log << "verify_frame_index=" << g_RollbackDebugReplay.verifyFrameIndex << "\n";
+    log << "stress_rollback_count=" << g_RollbackDebugReplay.stressRollbackCount << "\n";
+    log << "stress_rollback_frames=" << g_RollbackDebugReplay.stressRollbackFrames << "\n";
+    log << "stress_resimulated_frames=" << g_RollbackDebugReplay.stressResimulatedFrames << "\n";
+    log << "first_mismatch_frame=" << g_RollbackDebugReplay.firstMismatchFrame << "\n";
+    log << "first_mismatch_expected_hash=" << g_RollbackDebugReplay.firstMismatchExpectedHash << "\n";
+    log << "first_mismatch_actual_hash=" << g_RollbackDebugReplay.firstMismatchActualHash << "\n";
+    log << "replay_file=" << kRollbackDebugReplayFilePath << "\n";
+    log << "replay_version=" << kRollbackDebugReplayVersion << "\n";
+    log << "expected_state_len=" << expectedState.len << "\n";
+    log << "actual_state_len=" << actualState.len << "\n";
+    log << "expected_payload_len=" << expectedPayloadLen << "\n";
+    log << "actual_payload_len=" << actualPayloadLen << "\n";
+    log << "first_payload_diff=" << firstDiff << "\n";
+    log << "first_payload_diff_region=" << GetRollbackDebugReplayPayloadRegion(firstDiff) << "\n";
+
+    if (firstDiff >= 0)
+    {
+        const int start = std::max(0, firstDiff - 16);
+        const int end = std::min(std::min(expectedPayloadLen, actualPayloadLen), firstDiff + 16);
+        log << "diff_window_start=" << start << "\n";
+        log << "expected_bytes=";
+        for (int i = start; i < end; i++)
+        {
+            log << std::hex << static_cast<int>(expectedPayload[i]) << (i + 1 < end ? ' ' : '\n');
+        }
+        log << std::dec;
+        log << "actual_bytes=";
+        for (int i = start; i < end; i++)
+        {
+            log << std::hex << static_cast<int>(actualPayload[i]) << (i + 1 < end ? ' ' : '\n');
+        }
+        log << std::dec;
+    }
+
+    log << "---\n";
+}
+
+void WriteRollbackDebugReplayEventLog(const std::string& phase, const std::string& message)
+{
+    std::ofstream log(kRollbackDebugReplayLogPath, std::ios::app);
+    if (!log.is_open())
+    {
+        return;
+    }
+
+    log << "phase=" << phase << "\n";
+    log << "message=" << message << "\n";
+    log << "replay_file=" << kRollbackDebugReplayFilePath << "\n";
+    log << "replay_version=" << kRollbackDebugReplayVersion << "\n";
+    log << "---\n";
+}
+
 QString resolveStyleFactoryKey(const QString& styleName)
 {
     const QStringList styleKeys = QStyleFactory::keys();
@@ -212,6 +1521,18 @@ QString NormalizeOsdKailleraChatMessage(QString message)
     message.replace('\n', ' ');
     return message;
 }
+
+#ifdef _WIN32
+std::array<std::string, 4> GetLiveKailleraPortLabelNames()
+{
+    std::array<std::string, 4> playerNames;
+    for (size_t i = 0; i < playerNames.size(); ++i)
+    {
+        playerNames[i] = recording_player_names[i];
+    }
+    return playerNames;
+}
+#endif // _WIN32
 #endif // NETPLAY
 } // namespace
 
@@ -221,6 +1542,10 @@ MainWindow::MainWindow() : QMainWindow(nullptr)
 
 MainWindow::~MainWindow()
 {
+    CoreRollbackFreeGameState(this->ui_RollbackDebugState);
+    CoreRollbackFreeGameState(g_RollbackDebugReplay.initialState);
+    CoreRollbackFreeGameState(g_RollbackDebugReplay.finalState);
+    FreeRollbackDebugStressCheckpoints();
 }
 
 bool MainWindow::Init(QApplication* app, bool showUI, bool launchROM)
@@ -273,7 +1598,6 @@ bool MainWindow::Init(QApplication* app, bool showUI, bool launchROM)
     // connect signals early due to pending debug callbacks
     connect(coreCallBacks, &CoreCallbacks::OnCoreDebugCallback, this, &MainWindow::on_Core_DebugCallback);
     connect(coreCallBacks, &CoreCallbacks::OnCoreStateCallback, this, &MainWindow::on_Core_StateCallback);
-    connect(app, &QGuiApplication::applicationStateChanged, this, &MainWindow::on_QGuiApplication_applicationStateChanged);
 
     if (!this->coreCallBacks->Init())
     {
@@ -352,7 +1676,7 @@ bool MainWindow::applyExclusiveFullscreen(void)
 
     if (resolution.empty() && refreshRate == 0 && monitor.empty())
     {
-        // all desktop defaults — nothing to change
+        // all desktop defaults  Enothing to change
         return true;
     }
 
@@ -440,7 +1764,7 @@ void MainWindow::closeEvent(QCloseEvent *event)
     // we have to make sure we save the geomtry
     // for the ROM browser when emulation
     // isn't running (or hasn't run at all)
-    if (!this->ui_QuitAfterEmulation && 
+    if (!this->ui_QuitAfterEmulation &&
         !inEmulation)
     {
         this->storeGeometry();
@@ -485,10 +1809,10 @@ void MainWindow::closeEvent(QCloseEvent *event)
     }
 
     // Process events so the dialog chain fully unwinds
-    // (server browser close → netplay dialog close → showServerDialog returns)
+    // (server browser close ↁEnetplay dialog close ↁEshowServerDialog returns)
     QCoreApplication::processEvents();
 
-    // Shutdown Kaillera if still active (safety net — dialogs should have cleaned up)
+    // Shutdown Kaillera if still active (safety net  Edialogs should have cleaned up)
     if (this->kailleraSessionManager != nullptr)
     {
         CoreEndKailleraGame();
@@ -548,7 +1872,7 @@ void MainWindow::initializeUI(bool launchROM)
     this->ui_StatusBar_RenderModeLabel = new QLabel(this);
 
     // only start refreshing the ROM browser
-    // when RMG isn't launched with a ROM 
+    // when RMG isn't launched with a ROM
     // specified on the commandline
     if (!launchROM)
     {
@@ -619,6 +1943,7 @@ void MainWindow::configureUI(QApplication* app, bool showUI)
     }
 
     this->menuBar()->setVisible(this->ui_ShowMenubar);
+    this->menuRollback->menuAction()->setVisible(CoreSettingsGetBoolValue(SettingsID::Rollback_EnableLocalTesting));
     this->toolBar->setVisible(this->ui_ShowToolbar);
     this->statusBar()->setVisible(this->ui_ShowStatusbar);
     this->statusBar()->addPermanentWidget(this->ui_StatusBar_Label, 99);
@@ -750,7 +2075,7 @@ void MainWindow::configureTheme(QApplication* app)
         // set the stylesheet theme,
         // if the file exists and can be opened
         QFile themeFile(themePath);
-        if (themeFile.exists() && 
+        if (themeFile.exists() &&
             themeFile.open(QIODevice::ReadOnly))
         {
             app->setStyleSheet(themeFile.readAll());
@@ -930,7 +2255,8 @@ void MainWindow::checkRaphnetPluginMismatch(void)
         }
 
         // Update input settings button enabled state
-        bool hasInputConfig = CorePluginsHasConfig(CorePluginType::Input);
+        bool hasInputConfig = CorePluginsHasConfig(CorePluginType::Input) ||
+            (isRaphnetRawPlugin() && !CoreIsEmulationRunning());
         this->action_Settings_Input->setEnabled(hasInputConfig);
         this->action_Toolbar_Input->setEnabled(hasInputConfig);
     }
@@ -1013,6 +2339,25 @@ void MainWindow::updateUI(bool inEmulation, bool isPaused)
 
     // update timer timeout
     this->ui_StatusBarTimerTimeout = CoreSettingsGetIntValue(SettingsID::GUI_StatusbarMessageDuration);
+    this->menuRollback->menuAction()->setVisible(CoreSettingsGetBoolValue(SettingsID::Rollback_EnableLocalTesting));
+}
+
+void MainWindow::setDebugReplayStatusMessage(const std::string& message)
+{
+    OnScreenDisplaySetMessage(message);
+
+    if (!this->ui_ShowStatusbar)
+    {
+        return;
+    }
+
+    this->ui_StatusBar_Label->setText(QString::fromStdString(message));
+
+    if (this->ui_ResetStatusBarTimerId != 0)
+    {
+        this->killTimer(this->ui_ResetStatusBarTimerId);
+    }
+    this->ui_ResetStatusBarTimerId = this->startTimer(this->ui_StatusBarTimerTimeout * 1000);
 }
 
 void MainWindow::storeGeometry(void)
@@ -1258,6 +2603,20 @@ void MainWindow::launchEmulationThread(QString cartRom, QString diskRom, bool re
 void MainWindow::updateActions(bool inEmulation, bool isPaused)
 {
     QString keyBinding;
+    bool rollbackDebugReplayIdle;
+    bool rollbackDebugReplayReady;
+    const bool rollbackDebugReplayFileExists = std::ifstream(kRollbackDebugReplayFilePath, std::ios::binary).good();
+
+    {
+        std::lock_guard<std::mutex> lock(g_RollbackDebugReplay.mutex);
+        rollbackDebugReplayIdle = g_RollbackDebugReplay.mode == RollbackDebugReplayMode::Idle;
+        rollbackDebugReplayReady = g_RollbackDebugReplay.ready || rollbackDebugReplayFileExists;
+    }
+
+    this->menuRollback->menuAction()->setVisible(CoreSettingsGetBoolValue(SettingsID::Rollback_EnableLocalTesting));
+
+    const bool synchronizedNetplayActive = CoreIsSynchronizedNetplayActive();
+    const bool netplaySessionActive = synchronizedNetplayActive || CoreHasInitKaillera();
 
     keyBinding = QString::fromStdString(CoreSettingsGetStringValue(SettingsID::KeyBinding_StartROM));
     this->action_System_StartRom->setShortcut(QKeySequence(keyBinding));
@@ -1276,7 +2635,7 @@ void MainWindow::updateActions(bool inEmulation, bool isPaused)
 #else
     this->action_System_Shutdown->setEnabled(inEmulation && !CoreHasInitNetplay());
 #endif
-    this->menuReset->setEnabled(inEmulation && !CoreHasInitNetplay() && !CoreHasInitKaillera());
+    this->menuReset->setEnabled(inEmulation && !netplaySessionActive);
     keyBinding = QString::fromStdString(CoreSettingsGetStringValue(SettingsID::KeyBinding_SoftReset));
 #ifdef NETPLAY
     this->action_Netplay_Start->setEnabled(!inEmulation && this->netplaySessionDialog == nullptr && this->kailleraSessionManager == nullptr);
@@ -1285,20 +2644,20 @@ void MainWindow::updateActions(bool inEmulation, bool isPaused)
 #endif
     this->action_Netplay_Start->setShortcut(QKeySequence(keyBinding));
     keyBinding = QString::fromStdString(CoreSettingsGetStringValue(SettingsID::KeyBinding_HardReset));
-    this->action_System_HardReset->setEnabled(inEmulation && !CoreHasInitNetplay() && !CoreHasInitKaillera());
+    this->action_System_HardReset->setEnabled(inEmulation && !netplaySessionActive);
     this->action_System_HardReset->setShortcut(QKeySequence(keyBinding));
     keyBinding = QString::fromStdString(CoreSettingsGetStringValue(SettingsID::KeyBinding_Resume));
     this->action_System_Pause->setChecked(isPaused);
-    this->action_System_Pause->setEnabled(inEmulation && !CoreHasInitNetplay() && !CoreHasInitKaillera());
+    this->action_System_Pause->setEnabled(inEmulation && !synchronizedNetplayActive);
     this->action_System_Pause->setShortcut(QKeySequence(keyBinding));
     keyBinding = QString::fromStdString(CoreSettingsGetStringValue(SettingsID::KeyBinding_Screenshot));
     this->action_System_Screenshot->setEnabled(inEmulation);
     this->action_System_Screenshot->setShortcut(QKeySequence(keyBinding));
     keyBinding = QString::fromStdString(CoreSettingsGetStringValue(SettingsID::KeyBinding_LimitFPS));
-    this->action_System_LimitFPS->setEnabled(inEmulation && !CoreHasInitNetplay());
+    this->action_System_LimitFPS->setEnabled(inEmulation && !synchronizedNetplayActive);
     this->action_System_LimitFPS->setShortcut(QKeySequence(keyBinding));
     this->action_System_LimitFPS->setChecked(CoreIsSpeedLimiterEnabled());
-    this->menuSpeedFactor->setEnabled(inEmulation && !CoreHasInitNetplay());
+    this->menuSpeedFactor->setEnabled(inEmulation && !synchronizedNetplayActive);
     keyBinding = QString::fromStdString(CoreSettingsGetStringValue(SettingsID::KeyBinding_SaveState));
     this->action_System_SaveState->setEnabled(inEmulation);
     this->action_System_SaveState->setShortcut(QKeySequence(keyBinding));
@@ -1306,20 +2665,33 @@ void MainWindow::updateActions(bool inEmulation, bool isPaused)
     this->action_System_SaveAs->setEnabled(inEmulation);
     this->action_System_SaveAs->setShortcut(QKeySequence(keyBinding));
     keyBinding = QString::fromStdString(CoreSettingsGetStringValue(SettingsID::KeyBinding_LoadState));
-    this->action_System_LoadState->setEnabled(inEmulation && !CoreHasInitNetplay());
+    this->action_System_LoadState->setEnabled(inEmulation && !synchronizedNetplayActive);
     this->action_System_LoadState->setShortcut(QKeySequence(keyBinding));
     keyBinding = QString::fromStdString(CoreSettingsGetStringValue(SettingsID::KeyBinding_Load));
-    this->action_System_Load->setEnabled(inEmulation && !CoreHasInitNetplay());
+    this->action_System_Load->setEnabled(inEmulation && !synchronizedNetplayActive);
     this->action_System_Load->setShortcut(QKeySequence(keyBinding));
     this->menuCurrent_Save_State->setEnabled(inEmulation);
     keyBinding = QString::fromStdString(CoreSettingsGetStringValue(SettingsID::KeyBinding_Cheats));
-    this->action_System_Cheats->setEnabled(inEmulation && !CoreHasInitNetplay());
+    this->action_System_Cheats->setEnabled(inEmulation && !synchronizedNetplayActive);
     this->action_System_Cheats->setShortcut(QKeySequence(keyBinding));
     keyBinding = QString::fromStdString(CoreSettingsGetStringValue(SettingsID::KeyBinding_GSButton));
-    this->action_System_GSButton->setEnabled(inEmulation && !CoreHasInitNetplay());
+    this->action_System_GSButton->setEnabled(inEmulation && !synchronizedNetplayActive);
     this->action_System_GSButton->setShortcut(QKeySequence(keyBinding));
     keyBinding = QString::fromStdString(CoreSettingsGetStringValue(SettingsID::KeyBinding_Exit));
     this->action_System_Exit->setShortcut(QKeySequence(keyBinding));
+
+    // rollback actions
+    this->action_Rollback_SaveState->setEnabled(inEmulation && rollbackDebugReplayIdle);
+    this->action_Rollback_LoadState->setEnabled(inEmulation && rollbackDebugReplayIdle && this->ui_RollbackDebugState.buffer != nullptr);
+    this->action_Rollback_StartDebugReplay->setEnabled(inEmulation && rollbackDebugReplayIdle);
+    this->action_Rollback_VerifyDebugReplay->setEnabled(inEmulation && rollbackDebugReplayReady && rollbackDebugReplayIdle);
+    this->action_Rollback_VerifyDebugReplayWithGraphics->setEnabled(inEmulation && rollbackDebugReplayReady && rollbackDebugReplayIdle);
+    this->action_Rollback_StressDebugReplay->setEnabled(inEmulation && rollbackDebugReplayReady && rollbackDebugReplayIdle);
+    this->action_Rollback_ClientInputReplay->setEnabled(inEmulation);
+    if (!inEmulation)
+    {
+        this->action_Rollback_ClientInputReplay->setChecked(false);
+    }
 
     // configure keybindings for speed factor
     QAction* speedActions[] =
@@ -1374,9 +2746,11 @@ void MainWindow::updateActions(bool inEmulation, bool isPaused)
     this->action_Settings_Rsp->setEnabled(CorePluginsHasConfig(CorePluginType::Rsp));
     this->action_Settings_Rsp->setShortcut(QKeySequence(keyBinding));
     keyBinding = QString::fromStdString(CoreSettingsGetStringValue(SettingsID::KeyBinding_InputSettings));
-    this->action_Settings_Input->setEnabled(CorePluginsHasConfig(CorePluginType::Input));
+    bool hasInputConfig = CorePluginsHasConfig(CorePluginType::Input);
+    bool hasRaphnetRawInputTest = isRaphnetRawPlugin() && !inEmulation;
+    this->action_Settings_Input->setEnabled(hasInputConfig || hasRaphnetRawInputTest);
     this->action_Settings_Input->setShortcut(QKeySequence(keyBinding));
-    this->action_Toolbar_Input->setEnabled(CorePluginsHasConfig(CorePluginType::Input));
+    this->action_Toolbar_Input->setEnabled(hasInputConfig || hasRaphnetRawInputTest);
     keyBinding = QString::fromStdString(CoreSettingsGetStringValue(SettingsID::KeyBinding_Settings));
     this->action_Settings_Settings->setShortcut(QKeySequence(keyBinding));
 
@@ -1533,7 +2907,7 @@ Qt::ToolBarArea MainWindow::getToolbarAreaFromSettingArea(int value)
         return Qt::ToolBarArea::TopToolBarArea;
     case 1:
         return Qt::ToolBarArea::BottomToolBarArea;
-    case 2: 
+    case 2:
         return Qt::ToolBarArea::LeftToolBarArea;
     case 3:
         return Qt::ToolBarArea::RightToolBarArea;
@@ -1579,6 +2953,10 @@ void MainWindow::configureActions(void)
         this->actionSlot_6, this->actionSlot_7, this->actionSlot_8,
         this->actionSlot_9, this->action_System_Cheats,
         this->action_System_GSButton, this->action_System_Exit,
+        this->action_Rollback_SaveState, this->action_Rollback_LoadState,
+        this->action_Rollback_StartDebugReplay, this->action_Rollback_VerifyDebugReplay,
+        this->action_Rollback_VerifyDebugReplayWithGraphics, this->action_Rollback_StressDebugReplay,
+        this->action_Rollback_ClientInputReplay,
         // Settings actions
         this->action_Settings_Graphics, this->action_Settings_Audio,
         this->action_Settings_Rsp, this->action_Settings_Input,
@@ -1705,6 +3083,14 @@ void MainWindow::connectActionSignals(void)
     connect(this->action_System_Cheats, &QAction::triggered, this, &MainWindow::on_Action_System_Cheats);
     connect(this->action_System_GSButton, &QAction::triggered, this, &MainWindow::on_Action_System_GSButton);
 
+    connect(this->action_Rollback_SaveState, &QAction::triggered, this, &MainWindow::on_Action_Rollback_SaveState);
+    connect(this->action_Rollback_LoadState, &QAction::triggered, this, &MainWindow::on_Action_Rollback_LoadState);
+    connect(this->action_Rollback_StartDebugReplay, &QAction::triggered, this, &MainWindow::on_Action_Rollback_StartDebugReplay);
+    connect(this->action_Rollback_VerifyDebugReplay, &QAction::triggered, this, &MainWindow::on_Action_Rollback_VerifyDebugReplay);
+    connect(this->action_Rollback_VerifyDebugReplayWithGraphics, &QAction::triggered, this, &MainWindow::on_Action_Rollback_VerifyDebugReplayWithGraphics);
+    connect(this->action_Rollback_StressDebugReplay, &QAction::triggered, this, &MainWindow::on_Action_Rollback_StressDebugReplay);
+    connect(this->action_Rollback_ClientInputReplay, &QAction::triggered, this, &MainWindow::on_Action_Rollback_ClientInputReplay);
+
     connect(this->action_Settings_Graphics, &QAction::triggered, this, &MainWindow::on_Action_Settings_Graphics);
     connect(this->action_Settings_Audio, &QAction::triggered, this, &MainWindow::on_Action_Settings_Audio);
     connect(this->action_Settings_Rsp, &QAction::triggered, this, &MainWindow::on_Action_Settings_Rsp);
@@ -1791,7 +3177,7 @@ void MainWindow::showNetplaySessionDialog(QWebSocket* webSocket, QJsonObject jso
         this->netplaySessionDialog->deleteLater();
         this->netplaySessionDialog = nullptr;
     }
-    
+
     this->netplaySessionDialog = new Dialog::NetplaySessionDialog(nullptr, webSocket, json, sessionFile);
     connect(this->netplaySessionDialog, &Dialog::NetplaySessionDialog::OnPlayGame, this, &MainWindow::on_Netplay_PlayGame);
     connect(this->netplaySessionDialog, &Dialog::NetplaySessionDialog::rejected, this, &MainWindow::on_NetplaySessionDialog_rejected);
@@ -1917,6 +3303,13 @@ void MainWindow::timerEvent(QTimerEvent *event)
     }
     else if (timerId == this->ui_CheckVideoSizeTimerId)
     {
+#ifdef NETPLAY
+        if (this->ui_RollbackLivePumpPending)
+        {
+            return;
+        }
+#endif // NETPLAY
+
         if (!CoreIsEmulationRunning())
         {
             return;
@@ -1971,6 +3364,13 @@ void MainWindow::timerEvent(QTimerEvent *event)
 
         this->killTimer(this->ui_LoadSaveStateSlotTimerId);
     }
+#ifdef NETPLAY
+    else if (timerId == this->ui_RollbackLivePumpTimerId)
+    {
+        this->killTimer(timerId);
+        this->ui_RollbackLivePumpTimerId = 0;
+    }
+#endif // NETPLAY
 }
 
 void MainWindow::on_EventFilter_KeyPressed(QKeyEvent *event)
@@ -2045,7 +3445,7 @@ void MainWindow::on_EventFilter_FileDropped(QDropEvent *event)
     if (inEmulation && confirmDragDrop)
     {
         confirmDragDrop = false;
-        bool ret = QtMessageBox::Question(this, "Are you sure you want to launch the drag & dropped ROM?", 
+        bool ret = QtMessageBox::Question(this, "Are you sure you want to launch the drag & dropped ROM?",
                                                 "Don't ask for confirmation again", confirmDragDrop);
         if (!ret)
         {
@@ -2072,40 +3472,54 @@ void MainWindow::on_EventFilter_FileDropped(QDropEvent *event)
     this->launchEmulationThread(file, "", refreshRomList, -1, false, true);
 }
 
-void MainWindow::on_QGuiApplication_applicationStateChanged(Qt::ApplicationState state)
+#ifdef UPDATER
+
+namespace
 {
-    bool isRunning = CoreIsEmulationRunning();
-    bool isPaused = CoreIsEmulationPaused();
-
-    bool pauseOnFocusLoss = CoreSettingsGetBoolValue(SettingsID::GUI_PauseEmulationOnFocusLoss);
-    bool resumeOnFocus = CoreSettingsGetBoolValue(SettingsID::GUI_ResumeEmulationOnFocus);
-
-    switch (state)
+    // Parse a semver-ish version tag ("0.9.3", "v0.9.3") into numeric
+    // parts. Returns an empty vector for inputs that aren't pure
+    // dot-separated integers (e.g. "vdev-100", "0.9.3-rc1"); callers
+    // treat empty as "newer than any released version" so dev builds
+    // never get prompted to downgrade.
+    QVector<int> parseSemverParts(const QString& in)
     {
-        default:
-            break;
+        QString s = in.trimmed();
+        if (s.startsWith('v') || s.startsWith('V')) s.remove(0, 1);
+        if (s.isEmpty()) return {};
 
-        case Qt::ApplicationState::ApplicationInactive:
+        const QStringList parts = s.split('.');
+        QVector<int> out;
+        out.reserve(parts.size());
+        for (const QString& p : parts)
         {
-            // Don't pause if Kaillera netplay is active (can't pause during synchronized netplay)
-            if (pauseOnFocusLoss && isRunning && !isPaused && !CoreHasInitKaillera())
-            {
-                this->on_Action_System_Pause();
-                this->ui_ManuallyPaused = false;
-            }
-        } break;
+            bool ok = false;
+            const int v = p.toInt(&ok);
+            if (!ok) return {};
+            out.append(v);
+        }
+        return out;
+    }
 
-        case Qt::ApplicationState::ApplicationActive:
+    // Returns -1 if a < b, 0 if a == b, +1 if a > b. Treat an empty
+    // parts vector as "+inf" so unparseable dev builds compare as
+    // newer than anything tagged.
+    int compareSemver(const QVector<int>& a, const QVector<int>& b)
+    {
+        if (a.isEmpty() && b.isEmpty()) return 0;
+        if (a.isEmpty()) return 1;
+        if (b.isEmpty()) return -1;
+        const int n = std::max(a.size(), b.size());
+        for (int i = 0; i < n; ++i)
         {
-            if (resumeOnFocus && isPaused && !this->ui_ManuallyPaused)
-            {
-                this->on_Action_System_Pause();
-            }
-        } break;
+            const int av = (i < a.size()) ? a[i] : 0;
+            const int bv = (i < b.size()) ? b[i] : 0;
+            if (av < bv) return -1;
+            if (av > bv) return 1;
+        }
+        return 0;
     }
 }
 
-#ifdef UPDATER
 void MainWindow::on_networkAccessManager_Finished(QNetworkReply* reply)
 {
     if (reply->error())
@@ -2126,8 +3540,15 @@ void MainWindow::on_networkAccessManager_Finished(QNetworkReply* reply)
 
     reply->deleteLater();
 
-    // do nothing when versions match
-    if (currentVersion == latestVersion)
+    // GitHub's /releases/latest endpoint only returns the latest
+    // *non-prerelease*. If we're running a pre-release tag (e.g. 0.9.3
+    // marked prerelease on GitHub), the API hands back the previous
+    // stable (0.9.2). A naive string compare then prompts the user to
+    // "update" to an older version. Compare semantically and only
+    // prompt when latest is genuinely newer.
+    const QVector<int> currentParts = parseSemverParts(currentVersion);
+    const QVector<int> latestParts  = parseSemverParts(latestVersion);
+    if (compareSemver(currentParts, latestParts) >= 0)
     {
         if (!this->ui_SilentUpdateCheck)
         {
@@ -2312,7 +3733,6 @@ void MainWindow::on_Action_System_Pause(void)
     }
 
     this->updateUI(true, (!isPaused && ret));
-    this->ui_ManuallyPaused = true;
 }
 
 void MainWindow::on_Action_System_Screenshot(void)
@@ -2371,7 +3791,7 @@ void MainWindow::on_Action_System_SaveAs(void)
     {
         this->ui_ManuallySavedState = true;
 
-        CoreSaveStateType type = fileName.endsWith(".pj") ? 
+        CoreSaveStateType type = fileName.endsWith(".pj") ?
                                     CoreSaveStateType::Project64 :
                                     CoreSaveStateType::Mupen64Plus;
 
@@ -2499,8 +3919,21 @@ void MainWindow::on_Action_Settings_Rsp(void)
     CorePluginsOpenConfig(CorePluginType::Rsp, this);
 }
 
+
 void MainWindow::on_Action_Settings_Input(void)
 {
+    // If raphnetraw is the active input plugin, open the input test dialog
+    // (only when no ROM is running to avoid interfering with game input)
+    if (isRaphnetRawPlugin())
+    {
+        if (!CoreIsEmulationRunning())
+        {
+            UserInterface::RaphnetInputDialog dialog(this);
+            dialog.exec();
+        }
+        return;
+    }
+
     // Clear the plugin switch flag before opening config
     CoreSettingsSetValue(SettingsID::Internal_InputPluginSwitchRequested, false);
 
@@ -2516,7 +3949,8 @@ void MainWindow::on_Action_Settings_Input(void)
         }
 
         // Update input settings button enabled state
-        bool hasInputConfig = CorePluginsHasConfig(CorePluginType::Input);
+        bool hasInputConfig = CorePluginsHasConfig(CorePluginType::Input) ||
+            (isRaphnetRawPlugin() && !CoreIsEmulationRunning());
         this->action_Settings_Input->setEnabled(hasInputConfig);
         this->action_Toolbar_Input->setEnabled(hasInputConfig);
     }
@@ -2524,7 +3958,7 @@ void MainWindow::on_Action_Settings_Input(void)
 
 void MainWindow::on_Action_Playback(void)
 {
-#if defined(NETPLAY) && defined(_WIN32)
+#ifdef NETPLAY
     // If already open, just bring it to front
     auto* existing = findChild<KailleraPlaybackDialog*>();
     if (existing)
@@ -2584,7 +4018,7 @@ void MainWindow::on_Action_Playback(void)
         }
     });
     dialog->show();
-#endif // NETPLAY && _WIN32
+#endif // NETPLAY
 }
 
 void MainWindow::on_Action_Settings_Settings(void)
@@ -2604,6 +4038,7 @@ void MainWindow::on_Action_Settings_Settings(void)
 
     if (result == QDialog::Accepted)
     {
+        CoreRollbackSetVerboseStats(CoreSettingsGetBoolValue(SettingsID::Rollback_VerboseStats));
         const QString currentTheme = QString::fromStdString(CoreSettingsGetStringValue(SettingsID::GUI_Theme));
         const QString currentIconTheme = QString::fromStdString(CoreSettingsGetStringValue(SettingsID::GUI_IconTheme));
         if (currentTheme != previousTheme || currentIconTheme != previousIconTheme)
@@ -2644,6 +4079,7 @@ void MainWindow::on_Action_Settings_Plugins(void)
 
     if (result == QDialog::Accepted)
     {
+        CoreRollbackSetVerboseStats(CoreSettingsGetBoolValue(SettingsID::Rollback_VerboseStats));
         const QString currentTheme = QString::fromStdString(CoreSettingsGetStringValue(SettingsID::GUI_Theme));
         const QString currentIconTheme = QString::fromStdString(CoreSettingsGetStringValue(SettingsID::GUI_IconTheme));
         if (currentTheme != previousTheme || currentIconTheme != previousIconTheme)
@@ -2832,16 +4268,20 @@ void MainWindow::on_Action_Netplay_BrowseSessions(void)
     // Connect signals
     connect(this->kailleraSessionManager, &KailleraSessionManager::gameStarted,
             this, &MainWindow::on_Kaillera_GameStarted);
+    connect(this->kailleraSessionManager, &KailleraSessionManager::rollbackSessionPreparing,
+            this, [this]() {
+                this->ui_RollbackNetplayRoomActive = true;
+            });
+    connect(this->kailleraSessionManager, &KailleraSessionManager::rollbackSessionRequested,
+            this, &MainWindow::on_Rollback_SessionRequested);
     connect(this->kailleraSessionManager, &KailleraSessionManager::chatReceived,
             this, &MainWindow::on_Kaillera_ChatReceived);
-#ifdef _WIN32
     connect(&KailleraUIBridge::instance(), &KailleraUIBridge::kailleraGameChatReceived,
             this, &MainWindow::on_Kaillera_ChatReceived);
     connect(&KailleraUIBridge::instance(), &KailleraUIBridge::p2pChatReceived,
             this, &MainWindow::on_Kaillera_ChatReceived);
     connect(&KailleraUIBridge::instance(), &KailleraUIBridge::recordingFileClosed,
             this, &MainWindow::on_Kaillera_RecordingFileClosed);
-#endif
     connect(this->kailleraSessionManager, &KailleraSessionManager::playerDropped,
             this, &MainWindow::on_Kaillera_PlayerDropped);
     connect(this->kailleraSessionManager, &KailleraSessionManager::gameEnded,
@@ -2857,20 +4297,22 @@ void MainWindow::on_Action_Netplay_BrowseSessions(void)
     // When they start a game, gameStarted signal will be emitted
     // Dialog stays open until user closes it
     this->kailleraSessionManager->showServerDialog();
+    if (!this->ui_RollbackNetplayLaunchActive)
+    {
+        this->ui_RollbackNetplayRoomActive = false;
+    }
 
     // Dialog closed - clean up Kaillera session
     // (emulation may still be running - user can manually stop it)
     // Guard: closeEvent may have already cleaned up if the main window was closed
     if (this->kailleraSessionManager != nullptr)
     {
-#ifdef _WIN32
         disconnect(&KailleraUIBridge::instance(), &KailleraUIBridge::kailleraGameChatReceived,
                    this, &MainWindow::on_Kaillera_ChatReceived);
         disconnect(&KailleraUIBridge::instance(), &KailleraUIBridge::p2pChatReceived,
                    this, &MainWindow::on_Kaillera_ChatReceived);
         disconnect(&KailleraUIBridge::instance(), &KailleraUIBridge::recordingFileClosed,
                    this, &MainWindow::on_Kaillera_RecordingFileClosed);
-#endif
         delete this->kailleraSessionManager;
         this->kailleraSessionManager = nullptr;
         CoreShutdownKaillera();
@@ -2898,6 +4340,11 @@ void MainWindow::on_Action_Netplay_ViewSession(void)
 #ifdef NETPLAY
 void MainWindow::on_Kaillera_GameStarted(QString gameName, int playerNum, int totalPlayers)
 {
+    if (this->ui_RollbackNetplayRoomActive || this->ui_RollbackNetplayLaunchActive)
+    {
+        return;
+    }
+
     // Find ROM file by game name
     QString romFile = this->findRomByName(gameName);
     if (romFile.isEmpty())
@@ -2925,12 +4372,52 @@ void MainWindow::on_Kaillera_GameStarted(QString gameName, int playerNum, int to
     }
 
     this->emulationThread->SetNetplay("KAILLERA", 0, playerNum); // "KAILLERA" is the marker
+#ifdef _WIN32
+    OnScreenDisplaySetKailleraPortLabels(totalPlayers, GetLiveKailleraPortLabelNames());
+#endif
+    this->launchEmulationThread(romFile, "", false, -1, true);
+}
+
+void MainWindow::on_Rollback_SessionRequested(QString gameName, QString remoteAddress, int localPort, int remotePort, int localPlayer, int frameDelay, int predictionWindow)
+{
+    QString romFile = this->findRomByName(gameName);
+    if (romFile.isEmpty())
+    {
+        this->showErrorMessage("ROM Not Found",
+            "Could not find ROM: " + gameName + "\n\nPlease add it to your ROM directory and refresh the list.");
+        return;
+    }
+
+    if (this->emulationThread->isRunning())
+    {
+        CoreStopEmulation();
+        QTimer::singleShot(50, this,
+            [this, gameName, remoteAddress, localPort, remotePort, localPlayer, frameDelay, predictionWindow]()
+            {
+                this->on_Rollback_SessionRequested(gameName, remoteAddress, localPort, remotePort, localPlayer, frameDelay, predictionWindow);
+            });
+        return;
+    }
+
+    if (this->ui_RollbackNetplayLaunchActive)
+    {
+        return;
+    }
+
+    this->ui_RollbackNetplayLaunchActive = true;
+
+    if (this->ui_CheckVideoSizeTimerId != 0)
+    {
+        this->killTimer(this->ui_CheckVideoSizeTimerId);
+        this->ui_CheckVideoSizeTimerId = 0;
+    }
+
+    this->emulationThread->SetGekkoNetplay(remoteAddress, localPort, remotePort, localPlayer, frameDelay, predictionWindow);
     this->launchEmulationThread(romFile, "", false, -1, true);
 }
 
 void MainWindow::on_Kaillera_ChatReceived(QString nickname, QString message)
 {
-#ifdef _WIN32
     // Only show in-game Kaillera chat (not lobby chat).
     if (!CoreHasInitKaillera() || !this->emulationThread->isRunning())
     {
@@ -2972,10 +4459,6 @@ void MainWindow::on_Kaillera_ChatReceived(QString nickname, QString message)
         const std::string chatLine = "<" + nickname.toStdString() + "> " + message.toStdString();
         OnScreenDisplaySetKailleraChatMessage(chatLine);
     }
-#else
-    (void)nickname;
-    (void)message;
-#endif
 }
 
 void MainWindow::on_Kaillera_PlayerDropped(QString nickname, int playerNum)
@@ -2996,10 +4479,16 @@ void MainWindow::on_Kaillera_PlayerDropped(QString nickname, int playerNum)
 
 void MainWindow::on_Kaillera_GameEnded(void)
 {
+    if (this->ui_RollbackNetplayRoomActive || this->ui_RollbackNetplayLaunchActive)
+    {
+        return;
+    }
+
     // Mark game as inactive to re-enable UI buttons
     CoreMarkKailleraGameInactive();
 
     OnScreenDisplaySetKailleraChatMessage("");
+    OnScreenDisplayClearKailleraPortLabels();
 #ifdef NETPLAY
     this->ui_PendingLocalChatEchoes.clear();
     this->closeNetplayChatPrompt();
@@ -3049,11 +4538,7 @@ bool MainWindow::handleNetplayChatKeyPress(QKeyEvent *event)
                 this->kailleraSessionManager->sendChatMessage(normalizedMessage);
 
                 const QString localNickname = QString::fromStdString(CoreSettingsGetStringValue(SettingsID::Kaillera_Username)).trimmed();
-#if defined(_WIN32)
                 const bool useImmediateLocalEcho = (n02::getActiveMode() != 1);
-#else
-                const bool useImmediateLocalEcho = true;
-#endif
                 if (useImmediateLocalEcho && !localNickname.isEmpty())
                 {
                     const auto now = std::chrono::steady_clock::now();
@@ -3174,6 +4659,13 @@ void MainWindow::closeNetplayChatPrompt(void)
     this->ui_NetplayChatInputActive = false;
     this->ui_NetplayChatInput.clear();
     OnScreenDisplaySetInputPrompt("");
+}
+#endif // NETPLAY
+
+#ifdef NETPLAY
+QString MainWindow::ResolveKailleraRomByName(QString gameName)
+{
+    return this->findRomByName(gameName);
 }
 #endif // NETPLAY
 
@@ -3311,6 +4803,18 @@ void MainWindow::on_Emulation_Finished(bool ret, QString error)
 #ifdef _WIN32
     this->restoreDisplayMode();
 #endif
+
+#ifdef NETPLAY
+    if (this->ui_RollbackLivePumpTimerId != 0)
+    {
+        this->killTimer(this->ui_RollbackLivePumpTimerId);
+        this->ui_RollbackLivePumpTimerId = 0;
+    }
+    this->ui_RollbackLivePumpPending = false;
+    this->ui_RollbackLivePumpActive = false;
+    this->ui_RollbackNetplayRoomActive = false;
+    this->ui_RollbackNetplayLaunchActive = false;
+#endif // NETPLAY
 
     if (!ret)
     {
@@ -3471,6 +4975,7 @@ void MainWindow::on_RomBrowser_EditGameSettings(QString file)
 
     if (result == QDialog::Accepted)
     {
+        CoreRollbackSetVerboseStats(CoreSettingsGetBoolValue(SettingsID::Rollback_VerboseStats));
         const QString currentTheme = QString::fromStdString(CoreSettingsGetStringValue(SettingsID::GUI_Theme));
         const QString currentIconTheme = QString::fromStdString(CoreSettingsGetStringValue(SettingsID::GUI_IconTheme));
         if (currentTheme != previousTheme || currentIconTheme != previousIconTheme)
@@ -3935,6 +5440,10 @@ void MainWindow::on_Core_StateCallback(CoreStateCallbackType type, int value)
             {
                 OnScreenDisplayResume();
             }
+
+            if (value == static_cast<int>(CoreEmulationState::Paused))
+            {
+            }
         } break;
         case CoreStateCallbackType::SaveStateSlot:
         {
@@ -3998,7 +5507,7 @@ void MainWindow::on_Core_StateCallback(CoreStateCallbackType type, int value)
                 }
                 else
                 {
-                    this->ui_LoadSaveStateSlotTimerId = this->startTimer(500);   
+                    this->ui_LoadSaveStateSlotTimerId = this->startTimer(500);
                 }
             }
             else if (this->ui_LoadSaveStateSlotTimerId != -1 && value != 0)
@@ -4038,6 +5547,8 @@ void MainWindow::on_Core_StateCallback(CoreStateCallbackType type, int value)
             }
             this->ui_UpdateSaveStateSlotTimerId = this->startTimer(1000);
 
+            this->action_Rollback_LoadState->setEnabled(this->ui_RollbackDebugState.buffer != nullptr);
+
             this->ui_ManuallySavedState = false;
         } break;
         case CoreStateCallbackType::ScreenshotCaptured:
@@ -4052,6 +5563,306 @@ void MainWindow::on_Core_StateCallback(CoreStateCallbackType type, int value)
             }
         } break;
     }
+}
+
+void MainWindow::on_Action_Rollback_SaveState(void)
+{
+    if (!RollbackDebugEnsureStableFrameControl())
+    {
+        this->showErrorMessage("Save Rollback State Failed", QString::fromStdString(CoreGetError()));
+        return;
+    }
+
+    CoreRollbackFreeGameState(this->ui_RollbackDebugState);
+    this->action_Rollback_LoadState->setEnabled(false);
+
+    if (!CoreRollbackSaveGameState(this->ui_RollbackDebugState, CoreGetCurrentFrameCount()))
+    {
+        this->showErrorMessage("Save Rollback State Failed", QString::fromStdString(CoreGetError()));
+        return;
+    }
+
+    this->action_Rollback_LoadState->setEnabled(true);
+    OnScreenDisplaySetMessage("Saved rollback state: " + std::to_string(this->ui_RollbackDebugState.len) + " bytes");
+}
+
+void MainWindow::on_Action_Rollback_LoadState(void)
+{
+    if (!RollbackDebugEnsureStableFrameControl())
+    {
+        this->showErrorMessage("Load Rollback State Failed", QString::fromStdString(CoreGetError()));
+        return;
+    }
+
+    if (this->ui_RollbackDebugState.buffer == nullptr)
+    {
+        return;
+    }
+
+    if (!CoreRollbackLoadGameState(this->ui_RollbackDebugState))
+    {
+        this->showErrorMessage("Load Rollback State Failed", QString::fromStdString(CoreGetError()));
+        return;
+    }
+
+    OnScreenDisplaySetMessage("Loaded rollback state from frame " + std::to_string(this->ui_RollbackDebugState.frame));
+}
+
+void MainWindow::on_Action_Rollback_StartDebugReplay(void)
+{
+    if (!RollbackDebugEnsureStableFrameControl())
+    {
+        this->showErrorMessage("Debug Replay Pause Failed", QString::fromStdString(CoreGetError()));
+        return;
+    }
+
+    CoreRollbackFreeGameState(g_RollbackDebugReplay.initialState);
+    CoreRollbackFreeGameState(g_RollbackDebugReplay.finalState);
+    {
+        std::lock_guard<std::mutex> lock(g_RollbackDebugReplay.mutex);
+        g_RollbackDebugReplay.inputs.clear();
+        g_RollbackDebugReplay.inputHashes.clear();
+        g_RollbackDebugReplay.frameHashes.clear();
+        g_RollbackDebugReplay.verifyInputIndex = 0;
+        g_RollbackDebugReplay.verifyFrameIndex = 0;
+        g_RollbackDebugReplay.firstInputMismatchFrame = -1;
+        g_RollbackDebugReplay.firstInputMismatchExpectedHash = 0;
+        g_RollbackDebugReplay.firstInputMismatchActualHash = 0;
+        g_RollbackDebugReplay.firstMismatchFrame = -1;
+        g_RollbackDebugReplay.firstMismatchExpectedHash = 0;
+        g_RollbackDebugReplay.firstMismatchActualHash = 0;
+        g_RollbackDebugReplay.recordedInputHash = 0;
+        g_RollbackDebugReplay.replayedInputHash = 0;
+        g_RollbackDebugReplay.finalHash = 0;
+        g_RollbackDebugReplay.frameAdvancedThisFrame = false;
+        g_RollbackDebugReplay.pendingInitialSave = true;
+        g_RollbackDebugReplay.pendingInitialLoad = false;
+        g_RollbackDebugReplay.countReplayInputHash = true;
+        g_RollbackDebugReplay.verifyWithGraphics = false;
+        g_RollbackDebugReplay.stressRollbackCount = 0;
+        g_RollbackDebugReplay.stressRollbackFrames = 0;
+        g_RollbackDebugReplay.stressResimulatedFrames = 0;
+        g_RollbackDebugReplay.ready = false;
+        g_RollbackDebugReplay.mode = RollbackDebugReplayMode::Idle;
+    }
+
+    if (!CoreRollbackSetDeterministic(true))
+    {
+        this->showErrorMessage("Debug Replay Deterministic Mode Failed", QString::fromStdString(CoreGetError()));
+        return;
+    }
+
+    rmgk_gekko::set_debug_hooks(RollbackDebugReplayInputProvider, RollbackDebugReplayBeginFrame, RollbackDebugReplayEndFrame, nullptr);
+    CoreSetFrameOutput(CoreFrameOutput_All);
+    rmgk_gekko::set_debug_frame_output(CoreFrameOutput_All);
+
+    {
+        std::lock_guard<std::mutex> lock(g_RollbackDebugReplay.mutex);
+        g_RollbackDebugReplay.mode = RollbackDebugReplayMode::Recording;
+    }
+
+    this->updateActions(true, true);
+    this->setDebugReplayStatusMessage("Recording debug replay for " + std::to_string(kRollbackDebugReplayFrames) + " frames");
+
+    QTimer* progressTimer = new QTimer(this);
+    progressTimer->setInterval(250);
+    connect(progressTimer, &QTimer::timeout, this, [this, progressTimer]()
+    {
+        RollbackDebugReplayMode mode;
+        bool ready;
+        size_t recordedInputFrames;
+        uint64_t finalHash;
+        {
+            std::lock_guard<std::mutex> lock(g_RollbackDebugReplay.mutex);
+            mode = g_RollbackDebugReplay.mode;
+            ready = g_RollbackDebugReplay.ready;
+            recordedInputFrames = g_RollbackDebugReplay.inputs.size();
+            finalHash = g_RollbackDebugReplay.finalHash;
+        }
+
+        if (mode == RollbackDebugReplayMode::Recording)
+        {
+            this->setDebugReplayStatusMessage("Recording debug replay: " + std::to_string(recordedInputFrames) +
+                "/" + std::to_string(kRollbackDebugReplayFrames) + " frames");
+            return;
+        }
+
+        progressTimer->stop();
+        progressTimer->deleteLater();
+        this->updateActions(true, false);
+        if (ready)
+        {
+            this->setDebugReplayStatusMessage("Recorded debug replay: " + std::to_string(recordedInputFrames) +
+                " input frames, payload hash " + std::to_string(finalHash) + ", wrote " + kRollbackDebugReplayFilePath +
+                " and " + kRollbackDebugReplayLogPath);
+        }
+        else
+        {
+            this->setDebugReplayStatusMessage("Debug replay recording stopped before a replay was written; wrote " +
+                std::string(kRollbackDebugReplayLogPath));
+        }
+    });
+    progressTimer->start();
+}
+
+void MainWindow::on_Action_Rollback_VerifyDebugReplay(void)
+{
+    this->startVerifyDebugReplay(false);
+}
+
+void MainWindow::on_Action_Rollback_VerifyDebugReplayWithGraphics(void)
+{
+    this->startVerifyDebugReplay(true);
+}
+
+void MainWindow::on_Action_Rollback_StressDebugReplay(void)
+{
+    this->startVerifyDebugReplay(true, true);
+}
+
+void MainWindow::on_Action_Rollback_ClientInputReplay(bool checked)
+{
+    if (!rmgk_gekko::toggle_client_input_replay())
+    {
+        this->action_Rollback_ClientInputReplay->setChecked(false);
+        OnScreenDisplaySetMessage("Client input replay only works on the rollback client while netplay is active.");
+        return;
+    }
+
+    if (checked)
+    {
+        OnScreenDisplaySetMessage("Client input replay: recording 600 frames, then looping them.");
+    }
+    else
+    {
+        OnScreenDisplaySetMessage("Client input replay disabled.");
+    }
+}
+
+void MainWindow::startVerifyDebugReplay(bool withGraphics, bool stress)
+{
+    if (!RollbackDebugEnsureStableFrameControl())
+    {
+        this->showErrorMessage("Debug Replay Pause Failed", QString::fromStdString(CoreGetError()));
+        return;
+    }
+
+    std::string replayFileError;
+    if (!LoadRollbackDebugReplayFile(replayFileError))
+    {
+        this->setDebugReplayStatusMessage("Could not load debug replay: " + replayFileError);
+        WriteRollbackDebugReplayEventLog("verify_load_failed", replayFileError);
+        return;
+    }
+    FreeRollbackDebugStressCheckpoints();
+
+    {
+        std::lock_guard<std::mutex> lock(g_RollbackDebugReplay.mutex);
+        if (!g_RollbackDebugReplay.ready || g_RollbackDebugReplay.initialState.buffer == nullptr)
+        {
+            this->setDebugReplayStatusMessage("No debug replay recorded yet");
+            return;
+        }
+        g_RollbackDebugReplay.verifyInputIndex = 0;
+        g_RollbackDebugReplay.verifyFrameIndex = 0;
+        g_RollbackDebugReplay.firstInputMismatchFrame = -1;
+        g_RollbackDebugReplay.firstInputMismatchExpectedHash = 0;
+        g_RollbackDebugReplay.firstInputMismatchActualHash = 0;
+        g_RollbackDebugReplay.firstMismatchFrame = -1;
+        g_RollbackDebugReplay.firstMismatchExpectedHash = 0;
+        g_RollbackDebugReplay.firstMismatchActualHash = 0;
+        g_RollbackDebugReplay.replayedInputHash = 0;
+        g_RollbackDebugReplay.frameAdvancedThisFrame = false;
+        g_RollbackDebugReplay.pendingInitialSave = false;
+        g_RollbackDebugReplay.pendingInitialLoad = true;
+        g_RollbackDebugReplay.countReplayInputHash = true;
+        g_RollbackDebugReplay.verifyWithGraphics = withGraphics;
+        g_RollbackDebugReplay.lastVerifyCompleted = false;
+        g_RollbackDebugReplay.lastVerifyMatched = false;
+        g_RollbackDebugReplay.lastVerifyExpectedHash = 0;
+        g_RollbackDebugReplay.lastVerifyActualHash = 0;
+        g_RollbackDebugReplay.lastVerifyRecordedInputFrames = 0;
+        g_RollbackDebugReplay.lastVerifyReplayedInputFrames = 0;
+        g_RollbackDebugReplay.stressRollbackCount = 0;
+        g_RollbackDebugReplay.stressRollbackFrames = 0;
+        g_RollbackDebugReplay.stressResimulatedFrames = 0;
+        g_RollbackDebugReplay.mode = stress ? RollbackDebugReplayMode::Stressing : RollbackDebugReplayMode::Verifying;
+    }
+
+    if (!CoreRollbackSetDeterministic(true))
+    {
+        this->showErrorMessage("Debug Replay Deterministic Mode Failed", QString::fromStdString(CoreGetError()));
+        return;
+    }
+
+    rmgk_gekko::set_debug_hooks(RollbackDebugReplayInputProvider, RollbackDebugReplayBeginFrame, RollbackDebugReplayEndFrame, nullptr);
+    CoreSetFrameOutput(withGraphics ? CoreFrameOutput_All : CoreFrameOutput_None);
+    rmgk_gekko::set_debug_frame_output(withGraphics ? CoreFrameOutput_All : CoreFrameOutput_None);
+
+    this->updateActions(true, true);
+    this->setDebugReplayStatusMessage(std::string(stress ? "Stress verifying debug replay" : "Verifying debug replay") +
+        (withGraphics ? " with graphics" : "") + " for " + std::to_string(kRollbackDebugReplayFrames) + " frames");
+    WriteRollbackDebugReplayEventLog(stress ? "stress_started" : "verify_started",
+        stress ? "with graphics; rollback 2 frames every 5 frames" : (withGraphics ? "with graphics" : "hidden"));
+
+    QTimer* progressTimer = new QTimer(this);
+    progressTimer->setInterval(250);
+    connect(progressTimer, &QTimer::timeout, this, [this, progressTimer, withGraphics, stress]()
+    {
+        RollbackDebugReplayMode mode;
+        bool completed;
+        bool matched;
+        uint64_t expectedHash;
+        uint64_t actualHash;
+        size_t verifyFrameIndex;
+        size_t recordedInputFrames;
+        size_t replayedInputFrames;
+        {
+            std::lock_guard<std::mutex> lock(g_RollbackDebugReplay.mutex);
+            mode = g_RollbackDebugReplay.mode;
+            completed = g_RollbackDebugReplay.lastVerifyCompleted;
+            matched = g_RollbackDebugReplay.lastVerifyMatched;
+            expectedHash = g_RollbackDebugReplay.lastVerifyExpectedHash;
+            actualHash = g_RollbackDebugReplay.lastVerifyActualHash;
+            verifyFrameIndex = g_RollbackDebugReplay.verifyFrameIndex;
+            recordedInputFrames = g_RollbackDebugReplay.lastVerifyRecordedInputFrames != 0 ?
+                g_RollbackDebugReplay.lastVerifyRecordedInputFrames : g_RollbackDebugReplay.inputs.size();
+            replayedInputFrames = g_RollbackDebugReplay.lastVerifyReplayedInputFrames != 0 ?
+                g_RollbackDebugReplay.lastVerifyReplayedInputFrames : g_RollbackDebugReplay.verifyInputIndex;
+        }
+
+        if (RollbackDebugIsPlaybackMode(mode))
+        {
+            this->setDebugReplayStatusMessage(std::string(stress ? "Stress verifying debug replay" : "Verifying debug replay") +
+                (withGraphics ? " with graphics: " : ": ") +
+                std::to_string(verifyFrameIndex) + "/" + std::to_string(kRollbackDebugReplayFrames) + " frames");
+            return;
+        }
+
+        progressTimer->stop();
+        progressTimer->deleteLater();
+        this->updateActions(true, false);
+        if (!completed)
+        {
+            this->setDebugReplayStatusMessage("Debug replay verify stopped before completion; wrote " +
+                std::string(kRollbackDebugReplayLogPath));
+            return;
+        }
+
+        if (matched)
+        {
+            this->setDebugReplayStatusMessage("Debug replay matched: " + std::to_string(replayedInputFrames) +
+                "/" + std::to_string(recordedInputFrames) + " input frames, payload hash " +
+                std::to_string(actualHash) + ", wrote " + kRollbackDebugReplayLogPath);
+        }
+        else
+        {
+            this->setDebugReplayStatusMessage("Debug replay mismatch: expected " + std::to_string(expectedHash) +
+                ", got " + std::to_string(actualHash) + ", replayed " + std::to_string(replayedInputFrames) +
+                "/" + std::to_string(recordedInputFrames) + " input frames, wrote " + kRollbackDebugReplayLogPath);
+        }
+    });
+    progressTimer->start();
 }
 
 void MainWindow::on_VidExt_Quit(void)

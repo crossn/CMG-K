@@ -56,4 +56,13 @@ bool CoreLoadSaveState(void);
 // loads saved state from file
 bool CoreLoadSaveState(std::filesystem::path file);
 
+// saves state to memory buffer for rollback
+bool CoreSaveRollbackState(void);
+
+// loads state from memory buffer for rollback
+bool CoreLoadRollbackState(void);
+
+// checks if rollback state is available
+bool CoreHasRollbackState(void);
+
 #endif // CORE_SAVESTATE_HPP

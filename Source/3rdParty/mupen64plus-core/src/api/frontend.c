@@ -59,6 +59,39 @@ static int l_ROMOpen = 0;
 static int l_DiskOpen = 0;
 static int l_CallerUsingSDL = 0;
 
+static uint32_t rollback_sample_input_value(BUTTONS keys)
+{
+    const uint8_t* bytes = (const uint8_t*)&keys.Value;
+    return ((uint32_t)bytes[0] << 24)
+        | ((uint32_t)bytes[1] << 16)
+        | ((uint32_t)bytes[2] << 8)
+        | (uint32_t)bytes[3];
+}
+
+static m64p_error rollback_sample_input(m64p_rollback_input_sample* sample)
+{
+    int i;
+    uint32_t* values;
+
+    if (sample == NULL || sample->values == NULL)
+        return M64ERR_INPUT_ASSERT;
+    if (sample->size != (int)sizeof(uint32_t) || sample->players < 1 || sample->players > 4)
+        return M64ERR_INPUT_INVALID;
+    if (input.getKeys == NULL)
+        return M64ERR_INVALID_STATE;
+
+    values = (uint32_t*)sample->values;
+    for (i = 0; i < sample->players; ++i)
+    {
+        BUTTONS keys;
+        memset(&keys, 0, sizeof(keys));
+        input.getKeys(i, &keys);
+        values[i] = rollback_sample_input_value(keys);
+    }
+
+    return M64ERR_SUCCESS;
+}
+
 /* functions exported outside of libmupen64plus to front-end application */
 EXPORT m64p_error CALL CoreStartup(int APIVersion, const char *ConfigPath, const char *DataPath, void *Context,
                                    void (*DebugCallback)(void *, int, const char *), void *Context2,
@@ -273,6 +306,25 @@ EXPORT m64p_error CALL CoreDoCommand(m64p_command Command, int ParamInt, void *P
             /* the main_run() function will not return until the player has quit the game */
             rval = main_run();
             return rval;
+        case M64CMD_ROLLBACK_EXECUTE:
+            if (g_EmulatorRunning || (!l_ROMOpen && !l_DiskOpen))
+                return M64ERR_INVALID_STATE;
+            if (ParamPtr == NULL)
+                return M64ERR_INPUT_ASSERT;
+            main_set_rollback_execute_callbacks((m64p_rollback_execute_callbacks*)ParamPtr);
+            plugin_check();
+            rval = main_run();
+            main_set_rollback_execute_callbacks(NULL);
+            return rval;
+        case M64CMD_ROLLBACK_RUN_FRAME:
+            if (!g_EmulatorRunning)
+                return M64ERR_INVALID_STATE;
+            return main_rollback_run_frame(ParamInt) ? M64ERR_SUCCESS : M64ERR_INVALID_STATE;
+        case M64CMD_ROLLBACK_GET_RUN_FRAME_STATS:
+            if (ParamPtr == NULL)
+                return M64ERR_INPUT_ASSERT;
+            main_get_rollback_run_frame_stats((m64p_rollback_run_frame_stats*)ParamPtr);
+            return M64ERR_SUCCESS;
         case M64CMD_STOP:
             if (!g_EmulatorRunning)
                 return M64ERR_INVALID_STATE;
@@ -347,7 +399,61 @@ EXPORT m64p_error CALL CoreDoCommand(m64p_command Command, int ParamInt, void *P
         case M64CMD_ADVANCE_FRAME:
             if (!g_EmulatorRunning)
                 return M64ERR_INVALID_STATE;
-            main_advance_one();
+            main_advance_frames(ParamInt > 1 ? ParamInt : 1);
+            return M64ERR_SUCCESS;
+        case M64CMD_RUN_FRAMES:
+            if (!g_EmulatorRunning)
+                return M64ERR_INVALID_STATE;
+            main_run_frames(ParamInt > 1 ? ParamInt : 1, ParamPtr != NULL ? *(int*)ParamPtr : M64FRAME_OUTPUT_ALL);
+            return M64ERR_SUCCESS;
+        case M64CMD_ROLLBACK_SAVE_STATE:
+            if (!g_EmulatorRunning)
+                return M64ERR_INVALID_STATE;
+            if (ParamPtr == NULL)
+                return M64ERR_INPUT_ASSERT;
+            return savestates_save_rollback_buffer(
+                &((m64p_rollback_state*)ParamPtr)->buffer,
+                &((m64p_rollback_state*)ParamPtr)->len,
+                &((m64p_rollback_state*)ParamPtr)->checksum,
+                ((m64p_rollback_state*)ParamPtr)->frame) ? M64ERR_SUCCESS : M64ERR_INTERNAL;
+        case M64CMD_ROLLBACK_LOAD_STATE:
+            if (!g_EmulatorRunning)
+                return M64ERR_INVALID_STATE;
+            if (ParamPtr == NULL)
+                return M64ERR_INPUT_ASSERT;
+            return savestates_load_rollback_buffer(
+                ((m64p_rollback_state*)ParamPtr)->buffer,
+                ((m64p_rollback_state*)ParamPtr)->len) ? M64ERR_SUCCESS : M64ERR_INTERNAL;
+        case M64CMD_ROLLBACK_FREE_STATE:
+            if (ParamPtr == NULL)
+                return M64ERR_INPUT_ASSERT;
+            savestates_free_rollback_buffer(ParamPtr);
+            return M64ERR_SUCCESS;
+        case M64CMD_ROLLBACK_SET_INPUT_CALLBACK:
+            pif_set_rollback_input_callback((m64p_rollback_input_callback)ParamPtr);
+            return M64ERR_SUCCESS;
+        case M64CMD_ROLLBACK_SET_INPUT_PLAYERS:
+            pif_set_rollback_input_players(ParamInt);
+            return M64ERR_SUCCESS;
+        case M64CMD_ROLLBACK_SET_DETERMINISTIC:
+            g_dev.r4300.randomize_interrupt = ParamInt ? 0 : ConfigGetParamBool(g_CoreConfig, "RandomizeInterrupt");
+            return M64ERR_SUCCESS;
+        case M64CMD_ROLLBACK_SET_VERBOSE_STATS:
+            savestates_set_rollback_verbose_stats(ParamInt != 0);
+            return M64ERR_SUCCESS;
+        case M64CMD_ROLLBACK_SET_TIMESYNC_SCALE:
+            if (ParamPtr == NULL)
+                return M64ERR_INPUT_ASSERT;
+            main_set_rollback_timesync_scale(*(double*)ParamPtr);
+            return M64ERR_SUCCESS;
+        case M64CMD_ROLLBACK_SAMPLE_INPUT:
+            return rollback_sample_input((m64p_rollback_input_sample*)ParamPtr);
+        case M64CMD_FRAME_OUTPUT_SET:
+            main_set_frame_output(
+                (ParamInt & M64FRAME_OUTPUT_VIDEO) != 0,
+                (ParamInt & M64FRAME_OUTPUT_AUDIO) != 0,
+                (ParamInt & M64FRAME_OUTPUT_PACING) != 0,
+                (ParamInt & M64FRAME_OUTPUT_INPUT) != 0);
             return M64ERR_SUCCESS;
         case M64CMD_SET_MEDIA_LOADER:
             if (ParamInt != sizeof(m64p_media_loader) || ParamPtr == NULL)
@@ -461,5 +567,3 @@ EXPORT m64p_error CALL CoreGetRomSettings(m64p_rom_settings *RomSettings, int Ro
 
     return M64ERR_SUCCESS;
 }
-
-

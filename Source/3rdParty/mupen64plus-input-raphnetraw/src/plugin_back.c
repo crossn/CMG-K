@@ -94,6 +94,8 @@ struct rawChannel {
 static struct rawChannel g_channels[MAX_CHANNELS] = { };
 static int g_n_channels = 0;
 
+static int pb_commandIsValid(int Control, unsigned char *Command);
+
 int pb_init(pb_debugFunc debugFn)
 {
 	DebugMessage = debugFn;
@@ -298,6 +300,35 @@ int pb_controllerCommand(int Control, unsigned char *Command)
 	return 0;
 }
 
+int pb_getKeys(int Control, unsigned int *Keys)
+{
+	unsigned char command[7] = { 0x01, 0x04, 0x01, 0x00, 0x00, 0x00, 0x00 };
+	unsigned char *rx = command + 3;
+
+	if (!Keys) {
+		return 0;
+	}
+
+	*Keys = 0;
+
+	if (!pb_commandIsValid(Control, command)) {
+		return 0;
+	}
+
+	pb_readController(Control, command);
+	pb_readController(-1, NULL);
+
+	if ((command[1] & (BIO_RX_LEN_TIMEDOUT | BIO_RX_LEN_PARTIAL)) || ((command[1] & BIO_RXTX_MASK) < 4)) {
+		return 0;
+	}
+
+	*Keys = ((unsigned int)rx[0])
+		| ((unsigned int)rx[1] << 8)
+		| ((unsigned int)rx[2] << 16)
+		| ((unsigned int)rx[3] << 24);
+	return 1;
+}
+
 static int pb_performIo(void)
 {
 	struct adapter *adap;
@@ -373,8 +404,17 @@ static int pb_performIo(void)
 
 static int pb_commandIsValid(int Control, unsigned char *Command)
 {
-	if (Control < 0 || Control >= g_n_channels) {
+	// A negative Control is genuinely malformed and worth flagging.
+	if (Control < 0) {
 		DebugMessage(PB_MSG_WARNING, "pb_readController called with Control=%d", Control);
+		return 0;
+	}
+
+	// Control >= g_n_channels means the PIF is polling a slot beyond what
+	// this adapter has channels for. InitiateControllers already declared
+	// those slots Present=0, so the poll happening is expected hardware
+	// behavior (N64 PIF polls all 4 slots every frame) — not an error.
+	if (Control >= g_n_channels) {
 		return 0;
 	}
 

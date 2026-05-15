@@ -61,6 +61,12 @@ const char* get_savestatefilename(void);
 
 void new_frame(void);
 void new_vi(void);
+void main_set_frame_output(int video, int audio, int pacing, int frontend_input);
+void main_set_rollback_timesync_scale(double scale);
+int main_frame_video_enabled(void);
+int main_frame_audio_enabled(void);
+int main_frame_pacing_enabled(void);
+int main_frame_frontend_input_enabled(void);
 
 void main_switch_next_pak(int control_id);
 void main_switch_plugin_pak(int control_id);
@@ -73,6 +79,20 @@ m64p_error main_run(void);
 void main_stop(void);
 void main_toggle_pause(void);
 void main_advance_one(void);
+void main_advance_frames(int frames);
+void main_run_frames(int frames, int output_flags);
+int main_rollback_run_frame(int output_flags);
+void main_get_rollback_run_frame_stats(m64p_rollback_run_frame_stats* stats);
+void main_set_rollback_execute_callbacks(m64p_rollback_execute_callbacks* callbacks);
+int main_rollback_execute_active(void);
+int main_rollback_execute_begin_frame(void);
+int main_rollback_execute_end_frame(void);
+void main_rollback_visible_frame_begin(void);
+int main_rollback_visible_frame_completed(void);
+int main_rollback_hidden_frame_active(void);
+void main_rollback_capture_load_before_probe(void);
+void main_rollback_capture_load_probe(void);
+void main_rollback_capture_resume_probe(void);
 
 void main_speedup(int percent);
 void main_speeddown(int percent);
@@ -105,4 +125,3 @@ m64p_error open_pif(const unsigned char* pifimage, unsigned int size);
 m64p_error close_pif(void);
 
 #endif /* __MAIN_H__ */
-
