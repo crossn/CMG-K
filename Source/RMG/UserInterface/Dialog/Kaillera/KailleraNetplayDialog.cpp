@@ -82,9 +82,9 @@ static constexpr int kMaxP2PRecentEntries = 12;
 
 namespace {
 
-bool containsForbiddenGameNameCharacter(const QString& gameName)
+bool containsForbiddenNetplayListCharacter(const QString& text)
 {
-    return gameName.contains('{') || gameName.contains('}') || gameName.contains('|');
+    return text.contains('{') || text.contains('}') || text.contains('|');
 }
 
 static constexpr int kMaxTraversalDigits = 3;
@@ -4239,9 +4239,17 @@ void KailleraNetplayDialog::onP2PHost()
         QMessageBox::warning(this, "P2P Host", "No game selected. Choose a ROM to host.");
         return;
     }
-    if (containsForbiddenGameNameCharacter(gameName))
+    if (containsForbiddenNetplayListCharacter(gameName))
     {
         QMessageBox::warning(this, "P2P Host", "Game names containing {, }, or | are not permitted.");
+        return;
+    }
+
+    QString username = (m_usernameEdit != nullptr) ? m_usernameEdit->text() : QString();
+    if (username.isEmpty()) username = "Player";
+    if (containsForbiddenNetplayListCharacter(username))
+    {
+        QMessageBox::warning(this, "P2P Host", "Usernames containing {, }, or | are not permitted.");
         return;
     }
 
@@ -4257,10 +4265,9 @@ void KailleraNetplayDialog::onP2PHost()
         return;
     }
 
-    QByteArray usernameBytes = m_usernameEdit->text().toUtf8();
-    if (usernameBytes.isEmpty()) usernameBytes = "Player";
+    QByteArray usernameBytes = username.toUtf8();
     CoreSettingsSetValue(SettingsID::Kaillera_Username,
-                         QString::fromUtf8(usernameBytes).toStdString());
+                         username.toStdString());
 
     QByteArray gameBytes = gameName.toUtf8();
 
