@@ -47,6 +47,11 @@
 
 namespace
 {
+bool containsForbiddenGameNameCharacter(const QString& gameName)
+{
+    return gameName.contains('{') || gameName.contains('}') || gameName.contains('|');
+}
+
 QString infoMessageColor()
 {
     return (QApplication::palette().window().color().value() < 128) ? "cornflowerblue" : "darkblue";
@@ -1813,6 +1818,11 @@ void KailleraServerBrowserDialog::requestCreateGame(const QString& gameName)
 {
     if (gameName.isEmpty())
     {
+        return;
+    }
+    if (containsForbiddenGameNameCharacter(gameName))
+    {
+        QMessageBox::warning(this, "Create Game", "Game names containing {, }, or | are not permitted.");
         return;
     }
 

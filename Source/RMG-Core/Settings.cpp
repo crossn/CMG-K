@@ -246,7 +246,7 @@ static l_Setting get_setting(SettingsID settingId)
         setting = {SETTING_SECTION_KAILLERA, "MaxPing", 999};
         break;
     case SettingsID::Kaillera_FlashOnJoin:
-        setting = {SETTING_SECTION_KAILLERA, "FlashOnJoin", false};
+        setting = {SETTING_SECTION_KAILLERA, "FlashOnJoin", true};
         break;
     case SettingsID::Kaillera_BeepOnJoin:
         setting = {SETTING_SECTION_KAILLERA, "BeepOnJoin", true};
@@ -334,7 +334,7 @@ static l_Setting get_setting(SettingsID settingId)
         setting = {SETTING_SECTION_ROLLBACK, "VerboseStats", false};
         break;
     case SettingsID::Rollback_EnableLocalTesting:
-        setting = {SETTING_SECTION_ROLLBACK, "EnableLocalTesting", true};
+        setting = {SETTING_SECTION_ROLLBACK, "EnableLocalTesting", false};
         break;
 
     case SettingsID::Core_GFX_Plugin:
