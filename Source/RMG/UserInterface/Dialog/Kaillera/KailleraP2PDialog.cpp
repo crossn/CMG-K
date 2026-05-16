@@ -29,6 +29,7 @@
 #include <QApplication>
 #include <QIcon>
 #include <QFrame>
+#include <QFont>
 #include <QListView>
 #include <QMessageBox>
 #include <QSettings>
@@ -61,6 +62,8 @@ static constexpr int kRollbackMinFrameDelay = 1;
 static constexpr int kRollbackMaxFrameDelay = 9;
 static constexpr int kDefaultRollbackFrameDelay = 2;
 static constexpr int kDefaultRollbackPredictionWindow = 7;
+static const char* kRollbackDelayHelpText =
+    "Lower input delay reduces latency but can increase rollbacks. Higher input delay can reduce rollbacks.";
 
 static int clampRollbackFrameDelay(int delay)
 {
@@ -146,6 +149,10 @@ static QString buildP2PStyleSheet(const QString& theme)
         "  color: palette(text);"
         "  padding: 0 2px;"
         "  font-weight: 600;"
+        "}"
+        "QLabel#KailleraP2PHelpText {"
+        "  color: palette(mid);"
+        "  padding: 0 2px;"
         "}"
         "QTextBrowser#KailleraP2PSurface {"
         "  border: 1px solid palette(mid);"
@@ -611,7 +618,7 @@ void KailleraP2PDialog::setupUI()
 
     m_gameLabel = new QLabel(topBar);
     m_gameLabel->setObjectName("KailleraP2PGameBanner");
-    m_gameLabel->setText("Game: " + m_gameName);
+    m_gameLabel->setText((m_isHost ? "Hosting: " : "Game: ") + m_gameName);
     m_gameLabel->setMinimumWidth(0);
     topBarLayout->addWidget(m_gameLabel, 1);
 
@@ -636,6 +643,17 @@ void KailleraP2PDialog::setupUI()
     m_chat->setObjectName("KailleraP2PSurface");
     m_chat->setOpenExternalLinks(true);
     m_chat->document()->setMaximumBlockCount(1000);
+    QFont chatFont = m_chat->font();
+    if (chatFont.pointSize() > 0)
+    {
+        chatFont.setPointSize(chatFont.pointSize() + 2);
+    }
+    else if (chatFont.pointSizeF() > 0.0)
+    {
+        chatFont.setPointSizeF(chatFont.pointSizeF() + 2.0);
+    }
+    m_chat->setFont(chatFont);
+    m_chat->document()->setDefaultFont(chatFont);
     mainLayout->addWidget(m_chat, 1);
 
     // Chat input row
@@ -878,6 +896,11 @@ void KailleraP2PDialog::setupUI()
     fdlyLayout->addWidget(m_frameDelaySpin);
     fdlyLayout->addStretch();
     hostLayout->addWidget(m_frameDelayRow);
+
+    m_frameDelayHelpLabel = new QLabel(kRollbackDelayHelpText, m_hostGroup);
+    m_frameDelayHelpLabel->setObjectName("KailleraP2PHelpText");
+    m_frameDelayHelpLabel->setWordWrap(true);
+    hostLayout->addWidget(m_frameDelayHelpLabel);
 
     if (m_isHost)
     {
@@ -1227,6 +1250,11 @@ void KailleraP2PDialog::updateRollbackDelayControls()
         m_frameDelaySpin->blockSignals(blocked);
     }
 
+    if (m_frameDelayHelpLabel != nullptr)
+    {
+        m_frameDelayHelpLabel->setVisible(true);
+    }
+
     if (m_delayLabel != nullptr)
     {
         m_delayLabel->setText(QString("Delay: %1f").arg(delay));
@@ -1422,6 +1450,10 @@ void KailleraP2PDialog::applyGameLayerUI()
     if (!rollback && m_delayLabel != nullptr)
     {
         m_delayLabel->setText("Delay: --");
+    }
+    if (m_frameDelayHelpLabel != nullptr)
+    {
+        m_frameDelayHelpLabel->setVisible(rollback);
     }
 
     // Frame delay is baked into the GekkoNet (or Kaillera) session at start —
@@ -2101,7 +2133,7 @@ void KailleraP2PDialog::onHostedGame(QString game)
     m_gameName = game;
     if (m_gameLabel != nullptr)
     {
-        m_gameLabel->setText("Game: " + m_gameName);
+        m_gameLabel->setText((m_isHost ? "Hosting: " : "Game: ") + m_gameName);
     }
 
     if (localGameListContains(m_gameName))
@@ -2191,6 +2223,7 @@ void KailleraP2PDialog::onPeerLeft()
     m_peerKickPending = false;
     if (m_pingLabel) m_pingLabel->setText("Ping: --");
     m_peerConnected = false;
+    m_peerName.clear();
     m_lastPing = -1;
     m_hasRemoteRollbackDelaySettings = false;
     m_hasSentRollbackDelaySettings = false;
@@ -2319,6 +2352,7 @@ void KailleraP2PDialog::onKickPeer()
     if (p2p_kick_peer())
     {
         m_peerConnected = false;
+        m_peerName.clear();
         updatePeerConnectionUI();
         m_chat->append("<span style='color:red;'>" + timestamp() +
                        "Kicked " + kickedName.toHtmlEscaped() + " from the lobby.</span>");

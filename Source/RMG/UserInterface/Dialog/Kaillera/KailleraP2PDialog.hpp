@@ -152,6 +152,7 @@ private:
     QWidget* m_frameDelayRow = nullptr;
     QComboBox* m_frameDelayCombo = nullptr;
     QSpinBox* m_frameDelaySpin = nullptr;
+    QLabel* m_frameDelayHelpLabel = nullptr;
     QPushButton* m_advancedSettingsButton = nullptr;
     QComboBox* m_predictionWindowCombo = nullptr;
     QLineEdit* m_connectCodeEdit = nullptr;
