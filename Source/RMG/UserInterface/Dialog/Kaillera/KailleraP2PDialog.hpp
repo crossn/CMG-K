@@ -22,6 +22,7 @@
 #include <QTimer>
 #include <QGroupBox>
 #include <QAction>
+#include <QSpinBox>
 
 class KailleraP2PDialog : public QDialog
 {
@@ -58,6 +59,7 @@ private slots:
     void onSendChat();
     void onReady();
     void onDrop();
+    void onKickPeer();
     void onCopyConnectCode();
     void onStepTimer();
     void onTravTimer();
@@ -75,6 +77,16 @@ private:
     void setGameLayer(GameLayer layer, bool announceToPeer, bool resetReady);
     void applyGameLayerUI();
     void sendGameLayer();
+    void sendRollbackDelaySettings(bool force);
+    void setRollbackDelayMode(int mode, bool announceToPeer, bool resetReady);
+    void setRollbackCustomFrameDelay(int delay, bool announceToPeer, bool resetReady);
+    void updateRollbackDelayControls();
+    void updatePeerConnectionUI();
+    void updateNetcodeModeStatus();
+    bool parseRollbackDelayMessage(const QString& message, int& mode, int& delay) const;
+    int effectiveRollbackFrameDelay() const;
+    int calculatedRollbackFrameDelay() const;
+    int automaticRollbackFrameDelay() const;
     void resetReadyState();
     bool parseGameLayerMessage(const QString& message, GameLayer& layer) const;
     bool isRollbackMode() const;
@@ -105,11 +117,17 @@ private:
     bool m_rollbackGameActive = false;
     bool m_closeCleanupDone = false;
     bool m_ready = false;
+    bool m_peerConnected = false;
+    bool m_peerKickPending = false;
+    bool m_suppressAdvancedSettingsPopup = false;
     QString m_gameName;
     QString m_username;
+    QString m_peerName;
 
     // Top
     QLabel* m_gameLabel = nullptr;
+    QLabel* m_peerStatusLabel = nullptr;
+    QPushButton* m_btnKickPeer = nullptr;
 
     // Chat area
     QTextBrowser* m_chat = nullptr;
@@ -121,7 +139,9 @@ private:
     QPushButton* m_btnDrop = nullptr;
     QCheckBox* m_recordCheck = nullptr;
     QCheckBox* m_enlistCheck = nullptr;
+    QLabel* m_netcodeModeLabel = nullptr;
     QLabel* m_pingLabel = nullptr;
+    QLabel* m_delayLabel = nullptr;
     QPushButton* m_standardLayerButton = nullptr;
     QPushButton* m_rollbackLayerButton = nullptr;
 
@@ -131,10 +151,20 @@ private:
     QLabel* m_frameDelayLabel = nullptr;
     QWidget* m_frameDelayRow = nullptr;
     QComboBox* m_frameDelayCombo = nullptr;
-    QWidget* m_predictionWindowRow = nullptr;
+    QSpinBox* m_frameDelaySpin = nullptr;
+    QPushButton* m_advancedSettingsButton = nullptr;
     QComboBox* m_predictionWindowCombo = nullptr;
     QLineEdit* m_connectCodeEdit = nullptr;
     QAction* m_copyAction = nullptr;
+
+    int m_lastPing = -1;
+    int m_rollbackDelayMode = 0;
+    int m_customRollbackFrameDelay = 2;
+    int m_rollbackFrameDelay = 2;
+    bool m_hasRemoteRollbackDelaySettings = false;
+    bool m_hasSentRollbackDelaySettings = false;
+    int m_lastSentRollbackDelayMode = -1;
+    int m_lastSentRollbackFrameDelay = -1;
 
     // Timers
     QTimer* m_stepTimer = nullptr;

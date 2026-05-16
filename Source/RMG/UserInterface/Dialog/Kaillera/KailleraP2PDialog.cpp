@@ -32,6 +32,11 @@
 #include <QListView>
 #include <QMessageBox>
 #include <QSettings>
+#include <QAbstractSpinBox>
+#include <QCursor>
+#include <QMenu>
+#include <QPoint>
+#include <QWidgetAction>
 
 #include <algorithm>
 #include <cstring>
@@ -47,6 +52,29 @@ static const int kSsrvPort = 27887;
 static const char* kGameLayerMessagePrefix = "RMGK:MODE:";
 static const char* kGameLayerStandard = "STD";
 static const char* kGameLayerRollback = "RB";
+static const char* kRollbackDelayMessagePrefix = "RMGK:RBDELAY:";
+static constexpr int kRollbackDelayModeDefault = 0;
+static constexpr int kRollbackDelayModeLower = 1;
+static constexpr int kRollbackDelayModeHigher = 2;
+static constexpr int kRollbackDelayModeCustom = 3;
+static constexpr int kRollbackMinFrameDelay = 1;
+static constexpr int kRollbackMaxFrameDelay = 9;
+static constexpr int kDefaultRollbackFrameDelay = 2;
+static constexpr int kDefaultRollbackPredictionWindow = 7;
+
+static int clampRollbackFrameDelay(int delay)
+{
+    return std::clamp(delay, kRollbackMinFrameDelay, kRollbackMaxFrameDelay);
+}
+
+static int normalizeRollbackDelayMode(int mode)
+{
+    if (mode < kRollbackDelayModeDefault || mode > kRollbackDelayModeCustom)
+    {
+        return kRollbackDelayModeDefault;
+    }
+    return mode;
+}
 
 static QString timestamp()
 {
@@ -100,12 +128,19 @@ static QString buildP2PStyleSheet(const QString& theme)
         "QDialog#KailleraP2PDialog {"
         "  background-color: palette(window);"
         "}"
-        "QLabel#KailleraP2PGameBanner {"
+        "QFrame#KailleraP2PTopBar {"
         "  border: 1px solid palette(mid);"
         "  border-radius: 10px;"
         "  background-color: palette(base);"
-        "  padding: 6px 10px;"
+        "}"
+        "QLabel#KailleraP2PGameBanner {"
+        "  padding: 0px;"
         "  font-weight: 500;"
+        "}"
+        "QLabel#KailleraP2PPeerStatus {"
+        "  color: palette(text);"
+        "  padding: 0px 2px;"
+        "  font-weight: 600;"
         "}"
         "QLabel#KailleraP2PStatusLabel {"
         "  color: palette(text);"
@@ -168,6 +203,16 @@ static QString buildP2PStyleSheet(const QString& theme)
         "  min-height: 18px;"
         "  margin: 0px;"
         "}"
+        "QSpinBox#KailleraP2PSpin {"
+        "  border: 1px solid palette(mid);"
+        "  border-radius: 7px;"
+        "  background-color: palette(base);"
+        "  padding: 4px 8px;"
+        "  min-height: 24px;"
+        "}"
+        "QSpinBox#KailleraP2PSpin:focus {"
+        "  border-color: palette(highlight);"
+        "}"
         "QGroupBox#KailleraP2PGroup {"
         "  border: 1px solid palette(mid);"
         "  border-radius: 10px;"
@@ -216,6 +261,26 @@ static QString buildP2PStyleSheet(const QString& theme)
         "  border: 1px solid palette(mid);"
         "  background-color: palette(midlight);"
         "}"
+        "QPushButton#KailleraPlayerKickButton {"
+        "  border: 1px solid transparent;"
+        "  border-radius: 6px;"
+        "  min-width: 20px;"
+        "  max-width: 20px;"
+        "  min-height: 20px;"
+        "  max-height: 20px;"
+        "  padding: 0px;"
+        "  color: #c03a3a;"
+        "  background-color: transparent;"
+        "  font-weight: 800;"
+        "}"
+        "QPushButton#KailleraPlayerKickButton:hover {"
+        "  border-color: #d77a7a;"
+        "  background-color: rgba(208, 72, 72, 0.10);"
+        "}"
+        "QPushButton#KailleraPlayerKickButton:pressed {"
+        "  border-color: #b55a5a;"
+        "  background-color: rgba(208, 72, 72, 0.18);"
+        "}"
         "QPushButton#KailleraP2PPrimaryButton {"
         "  border: 1px solid #0066b4;"
         "  border-radius: 7px;"
@@ -249,6 +314,12 @@ static QString buildP2PStyleSheet(const QString& theme)
         "  background-color: palette(mid);"
         "  padding-top: 5px;"
         "  padding-bottom: 3px;"
+        "}"
+        "QMenu#KailleraP2PAdvancedMenu {"
+        "  border: 1px solid palette(mid);"
+        "  border-radius: 7px;"
+        "  background-color: palette(base);"
+        "  padding: 2px;"
         "}"
         "QWidget#KailleraP2PLayerToggle {"
         "  border: 1px solid palette(mid);"
@@ -456,6 +527,11 @@ KailleraP2PDialog::KailleraP2PDialog(bool isHost, const QString& gameName,
         QSettings settings("RMG-K", "n02");
         m_gameLayer = settings.value("P2P_GameLayer", QString(kGameLayerStandard)).toString() == kGameLayerRollback ?
             GameLayer::Rollback : GameLayer::Standard;
+        m_rollbackDelayMode = normalizeRollbackDelayMode(
+            settings.value("Rollback_FrameDelayMode", kRollbackDelayModeDefault).toInt());
+        m_customRollbackFrameDelay = clampRollbackFrameDelay(
+            settings.value("Rollback_FrameDelay", kDefaultRollbackFrameDelay).toInt());
+        m_rollbackFrameDelay = m_customRollbackFrameDelay;
     }
 
     setWindowIcon(QIcon(":Resource/Kaillera.svg"));
@@ -526,12 +602,34 @@ void KailleraP2PDialog::setupUI()
 
     auto* mainLayout = new QVBoxLayout(this);
 
-    // Game label at top
-    m_gameLabel = new QLabel(this);
+    auto* topBar = new QFrame(this);
+    topBar->setObjectName("KailleraP2PTopBar");
+    topBar->setFrameStyle(QFrame::Box | QFrame::Sunken);
+    auto* topBarLayout = new QHBoxLayout(topBar);
+    topBarLayout->setContentsMargins(10, 6, 8, 6);
+    topBarLayout->setSpacing(8);
+
+    m_gameLabel = new QLabel(topBar);
     m_gameLabel->setObjectName("KailleraP2PGameBanner");
     m_gameLabel->setText("Game: " + m_gameName);
-    m_gameLabel->setFrameStyle(QFrame::Box | QFrame::Sunken);
-    mainLayout->addWidget(m_gameLabel);
+    m_gameLabel->setMinimumWidth(0);
+    topBarLayout->addWidget(m_gameLabel, 1);
+
+    m_peerStatusLabel = new QLabel(topBar);
+    m_peerStatusLabel->setObjectName("KailleraP2PPeerStatus");
+    m_peerStatusLabel->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+    topBarLayout->addWidget(m_peerStatusLabel, 0);
+
+    m_btnKickPeer = new QPushButton("X", topBar);
+    m_btnKickPeer->setObjectName("KailleraPlayerKickButton");
+    m_btnKickPeer->setCursor(Qt::PointingHandCursor);
+    m_btnKickPeer->setToolTip("Kick opponent from the lobby");
+    m_btnKickPeer->setVisible(false);
+    connect(m_btnKickPeer, &QPushButton::clicked, this, &KailleraP2PDialog::onKickPeer);
+    topBarLayout->addWidget(m_btnKickPeer, 0);
+    updatePeerConnectionUI();
+
+    mainLayout->addWidget(topBar);
 
     // Chat / status area (takes most space)
     m_chat = new QTextBrowser(this);
@@ -607,9 +705,30 @@ void KailleraP2PDialog::setupUI()
     btnRow->addStretch();
     leftLayout->addLayout(btnRow);
 
+    m_advancedSettingsButton = new QPushButton("Advanced settings", leftWidget);
+    m_advancedSettingsButton->setObjectName("KailleraP2PSecondaryButton");
+    m_advancedSettingsButton->setIcon(themedP2PIcon("settings-3-line"));
+    m_advancedSettingsButton->setIconSize(QSize(14, 14));
+    leftLayout->addSpacing(12);
+    leftLayout->addWidget(m_advancedSettingsButton, 0, Qt::AlignLeft);
+
+    auto* advancedMenu = new QMenu(m_advancedSettingsButton);
+    advancedMenu->setObjectName("KailleraP2PAdvancedMenu");
+    auto* advancedMenuAction = new QWidgetAction(advancedMenu);
+    auto* advancedWidget = new QWidget(advancedMenu);
+    auto* advancedLayout = new QVBoxLayout(advancedWidget);
+    advancedLayout->setContentsMargins(10, 8, 10, 8);
+    advancedLayout->setSpacing(8);
+
     if (m_isHost)
     {
-        auto* layerToggle = new QWidget(this);
+        auto* layerRow = new QHBoxLayout();
+        layerRow->setContentsMargins(0, 0, 0, 0);
+        layerRow->setSpacing(8);
+        auto* layerLabel = new QLabel("Netcode:", advancedWidget);
+        layerRow->addWidget(layerLabel);
+
+        auto* layerToggle = new QWidget(advancedWidget);
         layerToggle->setObjectName("KailleraP2PLayerToggle");
         auto* layerToggleLayout = new QHBoxLayout(layerToggle);
         layerToggleLayout->setContentsMargins(2, 2, 2, 2);
@@ -628,11 +747,8 @@ void KailleraP2PDialog::setupUI()
         layerToggleLayout->addWidget(m_standardLayerButton);
         layerToggleLayout->addWidget(m_rollbackLayerButton);
 
-        auto* layerRow = new QHBoxLayout();
-        layerRow->setContentsMargins(0, 12, 0, 0);
-        layerRow->addWidget(layerToggle, 0, Qt::AlignLeft);
-        layerRow->addStretch();
-        leftLayout->addLayout(layerRow);
+        layerRow->addWidget(layerToggle);
+        advancedLayout->addLayout(layerRow);
 
         connect(m_standardLayerButton, &QPushButton::clicked, this, [this]() {
             setGameLayer(GameLayer::Standard, true, true);
@@ -641,6 +757,64 @@ void KailleraP2PDialog::setupUI()
             setGameLayer(GameLayer::Rollback, true, true);
         });
     }
+
+    auto* predictionLayout = new QHBoxLayout();
+    predictionLayout->setContentsMargins(0, 0, 0, 0);
+    predictionLayout->setSpacing(6);
+    auto* predictionWindowLabel = new QLabel("Prediction Window:", advancedWidget);
+    predictionLayout->addWidget(predictionWindowLabel);
+    m_predictionWindowCombo = new QComboBox(advancedWidget);
+    m_predictionWindowCombo->setObjectName("KailleraP2PCombo");
+    m_predictionWindowCombo->setMinimumWidth(120);
+    m_predictionWindowCombo->setSizeAdjustPolicy(QComboBox::AdjustToContentsOnFirstShow);
+    configureP2PComboPopup(m_predictionWindowCombo, theme);
+    for (int frames = 1; frames <= 10; frames++)
+    {
+        m_predictionWindowCombo->addItem(frames == 1 ? "1 frame" : QString("%1 frames").arg(frames));
+    }
+    QSettings settings("RMG-K", "n02");
+    int predictionWindow = settings.value("Rollback_PredictionWindow", kDefaultRollbackPredictionWindow).toInt();
+    if (predictionWindow < 1 || predictionWindow > 10) predictionWindow = kDefaultRollbackPredictionWindow;
+    m_predictionWindowCombo->setCurrentIndex(predictionWindow - 1);
+    connect(m_predictionWindowCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [](int index) {
+        QSettings settings("RMG-K", "n02");
+        settings.setValue("Rollback_PredictionWindow", index + 1);
+    });
+    predictionLayout->addWidget(m_predictionWindowCombo);
+    advancedLayout->addLayout(predictionLayout);
+    advancedMenuAction->setDefaultWidget(advancedWidget);
+    advancedMenu->addAction(advancedMenuAction);
+    connect(advancedMenu, &QMenu::aboutToHide, this, [this]() {
+        if (m_advancedSettingsButton == nullptr || QApplication::mouseButtons() == Qt::NoButton)
+        {
+            return;
+        }
+
+        const QPoint buttonPos = m_advancedSettingsButton->mapFromGlobal(QCursor::pos());
+        if (m_advancedSettingsButton->rect().contains(buttonPos))
+        {
+            m_suppressAdvancedSettingsPopup = true;
+        }
+    });
+    connect(m_advancedSettingsButton, &QPushButton::clicked, this, [this, advancedMenu]() {
+        if (m_advancedSettingsButton == nullptr)
+        {
+            return;
+        }
+        if (m_suppressAdvancedSettingsPopup)
+        {
+            m_suppressAdvancedSettingsPopup = false;
+            return;
+        }
+        if (advancedMenu->isVisible())
+        {
+            advancedMenu->hide();
+            return;
+        }
+
+        advancedMenu->popup(m_advancedSettingsButton->mapToGlobal(
+            QPoint(0, m_advancedSettingsButton->height())));
+    });
 
     bottomLayout->addWidget(leftWidget, 0, Qt::AlignTop);
 
@@ -663,18 +837,20 @@ void KailleraP2PDialog::setupUI()
     fdlyLayout->setContentsMargins(0, 0, 0, 0);
     fdlyLayout->setSpacing(6);
     m_frameDelayLabel = new QLabel(m_frameDelayRow);
+    m_frameDelayLabel->setText(isRollbackMode() ? "Input Delay:" : "Frame Delay:");
     fdlyLayout->addWidget(m_frameDelayLabel);
     m_frameDelayCombo = new QComboBox(m_frameDelayRow);
     m_frameDelayCombo->setObjectName("KailleraP2PCombo");
-    m_frameDelayCombo->setMinimumWidth(175);
+    m_frameDelayCombo->setMinimumWidth(126);
     m_frameDelayCombo->setSizeAdjustPolicy(QComboBox::AdjustToContentsOnFirstShow);
     configureP2PComboPopup(m_frameDelayCombo, theme);
     connect(m_frameDelayCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this](int index) {
         if (isRollbackMode())
         {
-            // Rollback dropdown lists delays 1..9, so persisted value = index + 1.
-            QSettings settings("RMG-K", "n02");
-            settings.setValue("Rollback_FrameDelay", index + 1);
+            if (m_isHost && index >= 0)
+            {
+                setRollbackDelayMode(m_frameDelayCombo->itemData(index).toInt(), true, true);
+            }
         }
         else
         {
@@ -682,33 +858,26 @@ void KailleraP2PDialog::setupUI()
         }
     });
     fdlyLayout->addWidget(m_frameDelayCombo);
-    hostLayout->addWidget(m_frameDelayRow);
 
-    m_predictionWindowRow = new QWidget(m_hostGroup);
-    auto* predictionLayout = new QHBoxLayout(m_predictionWindowRow);
-    predictionLayout->setContentsMargins(0, 0, 0, 0);
-    predictionLayout->setSpacing(6);
-    auto* predictionWindowLabel = new QLabel("Prediction Window:", m_predictionWindowRow);
-    predictionLayout->addWidget(predictionWindowLabel);
-    m_predictionWindowCombo = new QComboBox(m_predictionWindowRow);
-    m_predictionWindowCombo->setObjectName("KailleraP2PCombo");
-    m_predictionWindowCombo->setMinimumWidth(175);
-    m_predictionWindowCombo->setSizeAdjustPolicy(QComboBox::AdjustToContentsOnFirstShow);
-    configureP2PComboPopup(m_predictionWindowCombo, theme);
-    for (int frames = 1; frames <= 10; frames++)
-    {
-        m_predictionWindowCombo->addItem(frames == 1 ? "1 frame" : QString("%1 frames").arg(frames));
-    }
-    QSettings settings("RMG-K", "n02");
-    int predictionWindow = settings.value("Rollback_PredictionWindow", 4).toInt();
-    if (predictionWindow < 1 || predictionWindow > 10) predictionWindow = 4;
-    m_predictionWindowCombo->setCurrentIndex(predictionWindow - 1);
-    connect(m_predictionWindowCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [](int index) {
-        QSettings settings("RMG-K", "n02");
-        settings.setValue("Rollback_PredictionWindow", index + 1);
+    m_frameDelaySpin = new QSpinBox(m_frameDelayRow);
+    m_frameDelaySpin->setObjectName("KailleraP2PSpin");
+    m_frameDelaySpin->setRange(kRollbackMinFrameDelay, kRollbackMaxFrameDelay);
+    m_frameDelaySpin->setKeyboardTracking(false);
+    m_frameDelaySpin->setButtonSymbols(QAbstractSpinBox::NoButtons);
+    m_frameDelaySpin->setAlignment(Qt::AlignCenter);
+    m_frameDelaySpin->setSuffix("f");
+    m_frameDelaySpin->setMinimumWidth(48);
+    m_frameDelaySpin->setMaximumWidth(54);
+    m_frameDelaySpin->setValue(m_customRollbackFrameDelay);
+    connect(m_frameDelaySpin, QOverload<int>::of(&QSpinBox::valueChanged), this, [this](int value) {
+        if (isRollbackMode() && m_isHost && m_rollbackDelayMode == kRollbackDelayModeCustom)
+        {
+            setRollbackCustomFrameDelay(value, true, true);
+        }
     });
-    predictionLayout->addWidget(m_predictionWindowCombo);
-    hostLayout->addWidget(m_predictionWindowRow);
+    fdlyLayout->addWidget(m_frameDelaySpin);
+    fdlyLayout->addStretch();
+    hostLayout->addWidget(m_frameDelayRow);
 
     if (m_isHost)
     {
@@ -741,32 +910,53 @@ void KailleraP2PDialog::setupUI()
             else
                 unenlistGame();
         });
+
+        const int formLabelWidth = std::max({
+            m_frameDelayLabel->sizeHint().width(),
+            codeLabel->sizeHint().width()
+        });
+        m_frameDelayLabel->setMinimumWidth(formLabelWidth);
+        codeLabel->setMinimumWidth(formLabelWidth);
     }
 
     const QMargins hostMargins = hostLayout->contentsMargins();
-    const int labelWidth = std::max(m_frameDelayLabel->sizeHint().width(), predictionWindowLabel->sizeHint().width());
+    m_frameDelayLabel->setText(isRollbackMode() ? "Input Delay:" : "Frame Delay:");
+    const int labelWidth = m_frameDelayLabel->sizeHint().width();
     const int hostMinWidth =
         hostMargins.left() +
         labelWidth +
         fdlyLayout->spacing() +
         m_frameDelayCombo->minimumWidth() +
+        fdlyLayout->spacing() +
+        m_frameDelaySpin->minimumWidth() +
         hostMargins.right();
     m_hostGroup->setMinimumWidth(hostMinWidth);
+    applyGameLayerUI();
     bottomLayout->addWidget(m_hostGroup, 0, Qt::AlignTop);
     const int hostMinHeight = m_hostGroup->sizeHint().height();
     m_hostGroup->setMinimumHeight(hostMinHeight);
-    applyGameLayerUI();
 
     mainLayout->addLayout(bottomLayout);
 
     auto* statusLayout = new QHBoxLayout();
     statusLayout->setContentsMargins(0, 0, 0, 0);
-    statusLayout->setSpacing(0);
-    m_pingLabel = new QLabel("Ping: -- ms", this);
+    statusLayout->setSpacing(12);
+    m_netcodeModeLabel = new QLabel(this);
+    m_netcodeModeLabel->setObjectName("KailleraP2PStatusLabel");
+    statusLayout->addWidget(m_netcodeModeLabel, 0, Qt::AlignLeft | Qt::AlignVCenter);
+    m_pingLabel = new QLabel("Ping: --", this);
     m_pingLabel->setObjectName("KailleraP2PStatusLabel");
     statusLayout->addWidget(m_pingLabel, 0, Qt::AlignLeft | Qt::AlignVCenter);
+    m_delayLabel = new QLabel("Delay: --", this);
+    m_delayLabel->setObjectName("KailleraP2PStatusLabel");
+    statusLayout->addWidget(m_delayLabel, 0, Qt::AlignLeft | Qt::AlignVCenter);
     statusLayout->addStretch();
     mainLayout->addLayout(statusLayout);
+    updateNetcodeModeStatus();
+    if (isRollbackMode())
+    {
+        updateRollbackDelayControls();
+    }
 
     // Connect button actions
     connect(m_btnChat, &QPushButton::clicked, this, &KailleraP2PDialog::onSendChat);
@@ -860,6 +1050,236 @@ bool KailleraP2PDialog::isRollbackMode() const
     return m_gameLayer == GameLayer::Rollback;
 }
 
+int KailleraP2PDialog::automaticRollbackFrameDelay() const
+{
+    if (m_lastPing < 0)
+    {
+        return kDefaultRollbackFrameDelay;
+    }
+
+    const int oneWayMs = (m_lastPing / 2) + 5;
+    return clampRollbackFrameDelay(1 + ((oneWayMs * 60) / 1000));
+}
+
+int KailleraP2PDialog::calculatedRollbackFrameDelay() const
+{
+    int delay = automaticRollbackFrameDelay();
+
+    if (m_rollbackDelayMode == kRollbackDelayModeLower)
+    {
+        delay--;
+    }
+    else if (m_rollbackDelayMode == kRollbackDelayModeHigher)
+    {
+        delay++;
+    }
+    else if (m_rollbackDelayMode == kRollbackDelayModeCustom)
+    {
+        delay = m_customRollbackFrameDelay;
+    }
+
+    return clampRollbackFrameDelay(delay);
+}
+
+int KailleraP2PDialog::effectiveRollbackFrameDelay() const
+{
+    if (!m_isHost && m_hasRemoteRollbackDelaySettings)
+    {
+        return clampRollbackFrameDelay(m_rollbackFrameDelay);
+    }
+
+    return calculatedRollbackFrameDelay();
+}
+
+bool KailleraP2PDialog::parseRollbackDelayMessage(const QString& message, int& mode, int& delay) const
+{
+    QString text = message.trimmed().toUpper();
+    if (!text.startsWith(kRollbackDelayMessagePrefix))
+    {
+        return false;
+    }
+
+    text = text.mid(QString(kRollbackDelayMessagePrefix).size());
+    const int separator = text.indexOf(':');
+    bool modeOk = false;
+    bool delayOk = false;
+    const int parsedMode = (separator >= 0 ? text.left(separator) : text).toInt(&modeOk);
+    const int parsedDelay = (separator >= 0) ? text.mid(separator + 1).toInt(&delayOk) : kDefaultRollbackFrameDelay;
+
+    mode = modeOk ? normalizeRollbackDelayMode(parsedMode) : kRollbackDelayModeDefault;
+    delay = delayOk ? clampRollbackFrameDelay(parsedDelay) : kDefaultRollbackFrameDelay;
+    return true;
+}
+
+void KailleraP2PDialog::sendRollbackDelaySettings(bool force)
+{
+    if (!m_isHost || !isRollbackMode() || !p2p_is_connected())
+    {
+        return;
+    }
+
+    const int delay = effectiveRollbackFrameDelay();
+    if (!force && m_hasSentRollbackDelaySettings &&
+        m_lastSentRollbackDelayMode == m_rollbackDelayMode &&
+        m_lastSentRollbackFrameDelay == delay)
+    {
+        return;
+    }
+
+    QByteArray message = QByteArray(kRollbackDelayMessagePrefix) +
+        QByteArray::number(m_rollbackDelayMode) + ":" +
+        QByteArray::number(delay);
+    p2p_send_chat(message.data());
+
+    m_hasSentRollbackDelaySettings = true;
+    m_lastSentRollbackDelayMode = m_rollbackDelayMode;
+    m_lastSentRollbackFrameDelay = delay;
+}
+
+void KailleraP2PDialog::setRollbackDelayMode(int mode, bool announceToPeer, bool resetReady)
+{
+    mode = normalizeRollbackDelayMode(mode);
+    const int previousDelay = effectiveRollbackFrameDelay();
+    const bool changed = (m_rollbackDelayMode != mode);
+    m_rollbackDelayMode = mode;
+
+    if (changed && mode == kRollbackDelayModeCustom)
+    {
+        m_customRollbackFrameDelay = previousDelay;
+    }
+
+    if (m_isHost)
+    {
+        QSettings settings("RMG-K", "n02");
+        settings.setValue("Rollback_FrameDelayMode", m_rollbackDelayMode);
+        if (mode == kRollbackDelayModeCustom)
+        {
+            settings.setValue("Rollback_FrameDelay", m_customRollbackFrameDelay);
+        }
+    }
+
+    updateRollbackDelayControls();
+
+    if (changed && resetReady)
+    {
+        resetReadyState();
+    }
+    if (announceToPeer)
+    {
+        sendRollbackDelaySettings(true);
+    }
+}
+
+void KailleraP2PDialog::setRollbackCustomFrameDelay(int delay, bool announceToPeer, bool resetReady)
+{
+    delay = clampRollbackFrameDelay(delay);
+    const bool changed = (m_customRollbackFrameDelay != delay);
+    m_customRollbackFrameDelay = delay;
+
+    if (m_isHost)
+    {
+        QSettings settings("RMG-K", "n02");
+        settings.setValue("Rollback_FrameDelay", m_customRollbackFrameDelay);
+    }
+
+    updateRollbackDelayControls();
+
+    if (changed && resetReady)
+    {
+        resetReadyState();
+    }
+    if (changed && announceToPeer)
+    {
+        sendRollbackDelaySettings(true);
+    }
+}
+
+void KailleraP2PDialog::updateRollbackDelayControls()
+{
+    if (!isRollbackMode())
+    {
+        return;
+    }
+
+    const bool inGame = m_rollbackGameActive;
+    const int delay = effectiveRollbackFrameDelay();
+    const bool editableDelayInput = m_isHost && m_rollbackDelayMode == kRollbackDelayModeCustom;
+    m_rollbackFrameDelay = delay;
+
+    if (m_frameDelayCombo != nullptr)
+    {
+        const bool blocked = m_frameDelayCombo->blockSignals(true);
+        const int index = m_frameDelayCombo->findData(m_rollbackDelayMode);
+        if (index >= 0)
+        {
+            m_frameDelayCombo->setCurrentIndex(index);
+        }
+        m_frameDelayCombo->setEnabled(m_isHost && !inGame);
+        m_frameDelayCombo->blockSignals(blocked);
+    }
+
+    if (m_frameDelaySpin != nullptr)
+    {
+        const bool blocked = m_frameDelaySpin->blockSignals(true);
+        m_frameDelaySpin->setValue(delay);
+        m_frameDelaySpin->setVisible(true);
+        m_frameDelaySpin->setEnabled(editableDelayInput && !inGame);
+        m_frameDelaySpin->blockSignals(blocked);
+    }
+
+    if (m_delayLabel != nullptr)
+    {
+        m_delayLabel->setText(QString("Delay: %1f").arg(delay));
+    }
+}
+
+void KailleraP2PDialog::updateNetcodeModeStatus()
+{
+    if (m_netcodeModeLabel == nullptr)
+    {
+        return;
+    }
+
+    if (isRollbackMode())
+    {
+        m_netcodeModeLabel->setText("Rollback");
+        m_netcodeModeLabel->setStyleSheet(QString());
+    }
+    else
+    {
+        m_netcodeModeLabel->setText("Delay-only");
+        m_netcodeModeLabel->setStyleSheet("color: #c03a3a;");
+    }
+}
+
+void KailleraP2PDialog::updatePeerConnectionUI()
+{
+    if (m_peerStatusLabel != nullptr)
+    {
+        const QString displayName = m_peerName.trimmed().isEmpty() ? "Opponent" : m_peerName.trimmed();
+        if (m_peerConnected)
+        {
+            m_peerStatusLabel->setText("Connected: " + displayName);
+        }
+        else if (!m_peerName.trimmed().isEmpty())
+        {
+            m_peerStatusLabel->setText("Left: " + displayName);
+        }
+        else
+        {
+            m_peerStatusLabel->setText(m_isHost ? "Waiting for opponent" : "Opponent: Not connected");
+        }
+    }
+
+    if (m_btnKickPeer != nullptr)
+    {
+        const bool inGame = (isRollbackMode() && m_rollbackGameActive) || n02::isGameRunning();
+        const bool showKick = m_isHost && m_peerConnected && !inGame;
+        m_btnKickPeer->setVisible(showKick);
+        m_btnKickPeer->setEnabled(showKick);
+    }
+}
+
 void KailleraP2PDialog::resetReadyState()
 {
     if (!m_ready && (m_btnReady == nullptr || !m_btnReady->isChecked()))
@@ -933,6 +1353,7 @@ void KailleraP2PDialog::setGameLayer(GameLayer layer, bool announceToPeer, bool 
     if (announceToPeer)
     {
         sendGameLayer();
+        sendRollbackDelaySettings(true);
     }
 }
 
@@ -957,7 +1378,7 @@ void KailleraP2PDialog::applyGameLayerUI()
     {
         m_gameLayerStatusLabel->setText(rollback ?
             "Netcode: Rollback" :
-            "Netcode: Delay-based");
+            "Netcode: Delay-only");
     }
 
     if (m_frameDelayCombo != nullptr)
@@ -966,22 +1387,19 @@ void KailleraP2PDialog::applyGameLayerUI()
         m_frameDelayCombo->clear();
         if (rollback)
         {
-            // 0-frame delay is intentionally excluded until the host-side
-            // baseline-rollback crash is solved; start the list at 1.
-            for (int delay = 1; delay <= 9; delay++)
-            {
-                m_frameDelayCombo->addItem(delay == 1 ? "1 frame" : QString("%1 frames").arg(delay));
-            }
-            QSettings settings("RMG-K", "n02");
-            int rollbackDelay = settings.value("Rollback_FrameDelay", 2).toInt();
-            if (rollbackDelay < 1 || rollbackDelay > 9)
-            {
-                rollbackDelay = 2;
-            }
-            m_frameDelayCombo->setCurrentIndex(rollbackDelay - 1);
+            m_frameDelayCombo->setMinimumWidth(126);
+            m_frameDelayCombo->setMaximumWidth(150);
+            m_frameDelayCombo->addItem("Default", kRollbackDelayModeDefault);
+            m_frameDelayCombo->addItem("Lower delay", kRollbackDelayModeLower);
+            m_frameDelayCombo->addItem("Higher delay", kRollbackDelayModeHigher);
+            m_frameDelayCombo->addItem("Custom", kRollbackDelayModeCustom);
+            const int modeIndex = m_frameDelayCombo->findData(m_rollbackDelayMode);
+            m_frameDelayCombo->setCurrentIndex(modeIndex >= 0 ? modeIndex : 0);
         }
         else
         {
+            m_frameDelayCombo->setMinimumWidth(175);
+            m_frameDelayCombo->setMaximumWidth(16777215);
             m_frameDelayCombo->addItem("Auto");
             m_frameDelayCombo->addItem("1 frame (0-33ms)");
             m_frameDelayCombo->addItem("2 frames (34-67ms)");
@@ -999,7 +1417,11 @@ void KailleraP2PDialog::applyGameLayerUI()
 
     if (m_frameDelayLabel != nullptr)
     {
-        m_frameDelayLabel->setText(rollback ? "Local Input Delay:" : "Frame Delay:");
+        m_frameDelayLabel->setText(rollback ? "Input Delay:" : "Frame Delay:");
+    }
+    if (!rollback && m_delayLabel != nullptr)
+    {
+        m_delayLabel->setText("Delay: --");
     }
 
     // Frame delay is baked into the GekkoNet (or Kaillera) session at start —
@@ -1010,13 +1432,39 @@ void KailleraP2PDialog::applyGameLayerUI()
     if (m_frameDelayRow != nullptr)
     {
         m_frameDelayRow->setVisible(true);
-        m_frameDelayRow->setEnabled((m_isHost || rollback) && !inGame);
+        m_frameDelayRow->setEnabled(true);
     }
-    if (m_predictionWindowRow != nullptr)
+    if (!rollback && m_frameDelayCombo != nullptr)
     {
-        m_predictionWindowRow->setVisible(true);
-        m_predictionWindowRow->setEnabled(rollback && !inGame);
+        m_frameDelayCombo->setEnabled(m_isHost && !inGame);
     }
+    if (rollback)
+    {
+        updateRollbackDelayControls();
+    }
+    else if (m_frameDelaySpin != nullptr)
+    {
+        m_frameDelaySpin->setVisible(false);
+    }
+    if (m_advancedSettingsButton != nullptr)
+    {
+        m_advancedSettingsButton->setVisible(m_isHost || rollback);
+        m_advancedSettingsButton->setEnabled((m_isHost || rollback) && !inGame);
+    }
+    if (m_standardLayerButton != nullptr)
+    {
+        m_standardLayerButton->setEnabled(!inGame);
+    }
+    if (m_rollbackLayerButton != nullptr)
+    {
+        m_rollbackLayerButton->setEnabled(!inGame);
+    }
+    if (m_predictionWindowCombo != nullptr)
+    {
+        m_predictionWindowCombo->setEnabled(rollback && !inGame);
+    }
+    updateNetcodeModeStatus();
+    updatePeerConnectionUI();
 }
 
 // ---- NAT traversal helpers ----
@@ -1544,6 +1992,20 @@ void KailleraP2PDialog::onChatReceived(QString nick, QString message)
         return;
     }
 
+    int rollbackDelayMode = kRollbackDelayModeDefault;
+    int rollbackFrameDelay = kDefaultRollbackFrameDelay;
+    if (parseRollbackDelayMessage(message, rollbackDelayMode, rollbackFrameDelay))
+    {
+        if (!m_isHost)
+        {
+            m_rollbackDelayMode = rollbackDelayMode;
+            m_rollbackFrameDelay = rollbackFrameDelay;
+            m_hasRemoteRollbackDelaySettings = true;
+            updateRollbackDelayControls();
+        }
+        return;
+    }
+
     m_chat->append("<b>" + nick.toHtmlEscaped() + ":</b> " + message.toHtmlEscaped());
 }
 
@@ -1559,8 +2021,9 @@ void KailleraP2PDialog::onGameStarted(QString game, int player, int maxPlayers)
         char peerIp[128] = {};
         int peerP2PPort = 0;
         const int localP2PPort = p2p_core_get_port();
-        const int frameDelay = (m_frameDelayCombo != nullptr) ? m_frameDelayCombo->currentIndex() + 1 : 1;
-        const int predictionWindow = (m_predictionWindowCombo != nullptr) ? m_predictionWindowCombo->currentIndex() + 1 : 4;
+        const int frameDelay = effectiveRollbackFrameDelay();
+        const int predictionWindow = (m_predictionWindowCombo != nullptr) ?
+            m_predictionWindowCombo->currentIndex() + 1 : kDefaultRollbackPredictionWindow;
         if (!p2p_core_get_peer_endpoint(peerIp, sizeof(peerIp), &peerP2PPort))
         {
             m_chat->append("<span style='color:red;'>" + timestamp() + "Could not get rollback peer endpoint.</span>");
@@ -1619,7 +2082,7 @@ void KailleraP2PDialog::onGameEnded()
 void KailleraP2PDialog::onClientDropped(QString nick, int player)
 {
     (void)player;
-    if (m_pingLabel) m_pingLabel->setText("Ping: -- ms");
+    if (m_pingLabel) m_pingLabel->setText("Ping: --");
     m_chat->append("<span style='color:red;'>" + timestamp() + nick.toHtmlEscaped() + " dropped.</span>");
 }
 
@@ -1665,24 +2128,29 @@ void KailleraP2PDialog::onHostedGame(QString game)
 
 void KailleraP2PDialog::onPingUpdated(int ping)
 {
-    if (!m_pingLabel)
+    m_lastPing = ping;
+
+    if (m_pingLabel != nullptr && ping >= 0)
     {
-        return;
+        m_pingLabel->setText(QString("Ping: %1ms").arg(ping));
+    }
+    else if (m_pingLabel != nullptr)
+    {
+        m_pingLabel->setText("Ping: --");
     }
 
-    if (ping >= 0)
+    if (isRollbackMode())
     {
-        m_pingLabel->setText(QString("Ping: %1 ms").arg(ping));
-    }
-    else
-    {
-        m_pingLabel->setText("Ping: -- ms");
+        updateRollbackDelayControls();
+        sendRollbackDelaySettings(false);
     }
 }
 
 void KailleraP2PDialog::onPeerJoined()
 {
     if (m_pingLabel) m_pingLabel->setText("Ping: measuring...");
+    m_peerConnected = true;
+    updatePeerConnectionUI();
     m_chat->append("<span style='color:green;'>" + timestamp() + "Peer connected.</span>");
     if (m_isHost && CoreSettingsGetBoolValue(SettingsID::Kaillera_BeepOnJoin))
     {
@@ -1693,6 +2161,7 @@ void KailleraP2PDialog::onPeerJoined()
         QApplication::alert(this);
     }
     sendGameLayer();
+    sendRollbackDelaySettings(true);
     m_travHostPeerIp.clear();
     m_travHostPeerPort = 0;
     m_travHostPeerDeadlineMs = 0;
@@ -1718,8 +2187,24 @@ void KailleraP2PDialog::onPeerJoined()
 
 void KailleraP2PDialog::onPeerLeft()
 {
-    if (m_pingLabel) m_pingLabel->setText("Ping: -- ms");
-    m_chat->append("<span style='color:red;'>" + timestamp() + "Peer disconnected.</span>");
+    const bool kickedPeer = m_peerKickPending;
+    m_peerKickPending = false;
+    if (m_pingLabel) m_pingLabel->setText("Ping: --");
+    m_peerConnected = false;
+    m_lastPing = -1;
+    m_hasRemoteRollbackDelaySettings = false;
+    m_hasSentRollbackDelaySettings = false;
+    m_lastSentRollbackDelayMode = -1;
+    m_lastSentRollbackFrameDelay = -1;
+    if (isRollbackMode())
+    {
+        updateRollbackDelayControls();
+    }
+    updatePeerConnectionUI();
+    if (!kickedPeer)
+    {
+        m_chat->append("<span style='color:red;'>" + timestamp() + "Peer disconnected.</span>");
+    }
     m_ready = false;
     if (m_btnReady) m_btnReady->setChecked(false);
     if (!m_isHost && m_btnReady != nullptr)
@@ -1747,6 +2232,8 @@ void KailleraP2PDialog::onPeerLeft()
 
 void KailleraP2PDialog::onPeerInfo(QString name, QString app)
 {
+    m_peerName = name.trimmed();
+    updatePeerConnectionUI();
     emit peerNicknameResolved(name);
     m_chat->append("<span style='color:green;'>" + timestamp() + "Peer: " +
                    name.toHtmlEscaped() + " (" + app.toHtmlEscaped() + ")</span>");
@@ -1792,6 +2279,7 @@ void KailleraP2PDialog::onReady()
     if (m_isHost)
     {
         sendGameLayer();
+        sendRollbackDelaySettings(true);
     }
 
     m_ready = (m_btnReady != nullptr) ? m_btnReady->isChecked() : !m_ready;
@@ -1815,6 +2303,32 @@ void KailleraP2PDialog::onDrop()
     if (rollbackWasActive && m_rollbackGameActive)
     {
         onGameEnded();
+    }
+}
+
+void KailleraP2PDialog::onKickPeer()
+{
+    if (!m_isHost || !m_peerConnected || (isRollbackMode() && m_rollbackGameActive) || n02::isGameRunning())
+    {
+        updatePeerConnectionUI();
+        return;
+    }
+
+    const QString kickedName = m_peerName.trimmed().isEmpty() ? "opponent" : m_peerName.trimmed();
+    m_peerKickPending = true;
+    if (p2p_kick_peer())
+    {
+        m_peerConnected = false;
+        updatePeerConnectionUI();
+        m_chat->append("<span style='color:red;'>" + timestamp() +
+                       "Kicked " + kickedName.toHtmlEscaped() + " from the lobby.</span>");
+    }
+    else
+    {
+        m_peerKickPending = false;
+        updatePeerConnectionUI();
+        m_chat->append("<span style='color:red;'>" + timestamp() +
+                       "Could not kick " + kickedName.toHtmlEscaped() + ".</span>");
     }
 }
 
