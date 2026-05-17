@@ -23,6 +23,7 @@
 #include <QGroupBox>
 #include <QAction>
 #include <QSpinBox>
+#include <QFrame>
 
 class KailleraP2PDialog : public QDialog
 {
@@ -126,8 +127,13 @@ private:
 
     // Top
     QLabel* m_gameLabel = nullptr;
-    QLabel* m_peerStatusLabel = nullptr;
     QPushButton* m_btnKickPeer = nullptr;
+
+    // Players
+    QLabel* m_playersEmptyLabel = nullptr;
+    QFrame* m_playerCard = nullptr;
+    QLabel* m_playerNameLabel = nullptr;
+    QLabel* m_playerPingLabel = nullptr;
 
     // Chat area
     QTextBrowser* m_chat = nullptr;
@@ -147,7 +153,6 @@ private:
 
     // Host group
     QGroupBox* m_hostGroup = nullptr;
-    QLabel* m_gameLayerStatusLabel = nullptr;
     QLabel* m_frameDelayLabel = nullptr;
     QWidget* m_frameDelayRow = nullptr;
     QComboBox* m_frameDelayCombo = nullptr;
