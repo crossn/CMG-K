@@ -336,6 +336,12 @@ static l_Setting get_setting(SettingsID settingId)
     case SettingsID::Rollback_EnableLocalTesting:
         setting = {SETTING_SECTION_ROLLBACK, "EnableLocalTesting", true};
         break;
+    case SettingsID::Rollback_VerbosePifInputLogging:
+        setting = {SETTING_SECTION_ROLLBACK, "VerbosePifInputLogging", false};
+        break;
+    case SettingsID::Rollback_VerboseGlideInputLogging:
+        setting = {SETTING_SECTION_ROLLBACK, "VerboseGlideInputLogging", false};
+        break;
 
     case SettingsID::Core_GFX_Plugin:
         setting = {SETTING_SECTION_CORE, "GFX_Plugin", 

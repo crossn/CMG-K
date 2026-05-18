@@ -30,6 +30,7 @@
 #include "main/main.h"
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #define RDRAM_BCAST_ADDRESS_MASK UINT32_C(0x00080000)
@@ -41,8 +42,9 @@ static void rollback_log_rdram_write(const char* source, uint32_t address, uint3
 {
     FILE* file;
     uint32_t* cp0_regs;
+    const char* enabled = getenv("RMGK_VERBOSE_GLIDE_INPUT_LOGGING");
 
-    if (address + 3 < ROLLBACK_RDRAM_WATCH_BEGIN || address > ROLLBACK_RDRAM_WATCH_END) {
+    if (enabled == NULL || enabled[0] != '1' || address + 3 < ROLLBACK_RDRAM_WATCH_BEGIN || address > ROLLBACK_RDRAM_WATCH_END) {
         return;
     }
 

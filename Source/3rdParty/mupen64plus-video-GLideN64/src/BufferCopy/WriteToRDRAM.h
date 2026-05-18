@@ -3,6 +3,7 @@
 
 
 #include <stdio.h>
+#include <stdlib.h>
 
 #include "../Types.h"
 
@@ -15,8 +16,9 @@ template <typename TDst>
 static inline void rollbackLogWriteToRdram(const char* _source, u32 _address, TDst _oldValue, TDst _newValue)
 {
 	FILE* file;
+	const char* enabled = getenv("RMGK_VERBOSE_GLIDE_INPUT_LOGGING");
 
-	if (!rollbackWatchRdramAddress(_address, sizeof(TDst)))
+	if (enabled == nullptr || enabled[0] != '1' || !rollbackWatchRdramAddress(_address, sizeof(TDst)))
 		return;
 
 	file = fopen("rollback_rdram_watch.log", "a");
