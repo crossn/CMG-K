@@ -678,7 +678,12 @@ void KailleraP2PDialog::setupUI()
         }
         else
         {
-            KailleraUIBridge::instance().setSelectedDelay(index);
+            if (index < 0)
+            {
+                return;
+            }
+            m_standardFrameDelay = index;
+            KailleraUIBridge::instance().setSelectedDelay(m_standardFrameDelay);
         }
     });
     fdlyLayout->addWidget(m_frameDelayCombo);
@@ -992,7 +997,13 @@ void KailleraP2PDialog::applyGameLayerUI()
             m_frameDelayCombo->addItem("7 frames (200-233ms)");
             m_frameDelayCombo->addItem("8 frames (234-267ms)");
             m_frameDelayCombo->addItem("9 frames (268+ms)");
-            KailleraUIBridge::instance().setSelectedDelay(m_frameDelayCombo->currentIndex());
+
+            if (m_standardFrameDelay < 0 || m_standardFrameDelay > 9)
+            {
+                m_standardFrameDelay = 0;
+            }
+            m_frameDelayCombo->setCurrentIndex(m_standardFrameDelay);
+            KailleraUIBridge::instance().setSelectedDelay(m_standardFrameDelay);
         }
         m_frameDelayCombo->blockSignals(blocked);
     }
