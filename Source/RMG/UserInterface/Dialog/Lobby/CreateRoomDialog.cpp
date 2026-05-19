@@ -11,7 +11,6 @@
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QFormLayout>
-#include <QGroupBox>
 #include <QLineEdit>
 #include <QComboBox>
 #include <QSpinBox>
@@ -65,30 +64,10 @@ void CreateRoomDialog::buildUi(const QString& defaultUsername)
 
     root->addLayout(form);
 
-    auto* rollbackGrp = new QGroupBox("Rollback settings", this);
-    auto* rb = new QFormLayout(rollbackGrp);
-
-    m_delaySpin = new QSpinBox(this);
-    m_delaySpin->setRange(0, 9);
-    m_delaySpin->setValue(2);
-    m_delaySpin->setToolTip("Frames of input delay added before sending to peer.\n"
-                            "Higher delay = fewer rollbacks but more input latency.\n"
-                            "Recommended: 2 for ~80ms RTT, 3-4 for ~150ms RTT.\n"
-                            "\n"
-                            "Applies to all players in the room — host sets this once.");
-    rb->addRow("Frame delay:", m_delaySpin);
-
-    m_predictionSpin = new QSpinBox(this);
-    m_predictionSpin->setRange(0, 9);
-    m_predictionSpin->setValue(7);
-    m_predictionSpin->setToolTip("Maximum frames the rollback engine may predict ahead.\n"
-                                  "Higher prediction = more network tolerance.\n"
-                                  "Recommended: 7 (matches Slippi default).\n"
-                                  "\n"
-                                  "Applies to all players in the room.");
-    rb->addRow("Prediction window:", m_predictionSpin);
-
-    root->addWidget(rollbackGrp);
+    // Rollback settings (delay / prediction) are no longer surfaced here —
+    // the host configures them from the in-room view via the settings row.
+    // We still send sensible defaults to the server at creation time; the
+    // host can adjust before clicking Start Game.
 
     // Optional password (collapsed by default)
     auto* pwRow = new QHBoxLayout;
@@ -206,15 +185,14 @@ void CreateRoomDialog::validateInput()
 
 void CreateRoomDialog::onCreateClicked()
 {
-    // Capture form values.
+    // Capture form values. Delay/prediction stay at their loadDefaults()
+    // values (or the struct defaults 2/7) — host adjusts in-room.
     m_name = m_nameEdit->text().trimmed();
     const QVariantMap romData = m_romCombo->currentData().toMap();
     m_romName    = romData.value("name").toString();
     m_romMd5     = romData.value("md5").toString();
     m_romRegion  = ""; // baked into the ROM; resolved later via md5 lookup
     m_maxPlayers = m_maxPlayersSpin->value();
-    m_delay      = m_delaySpin->value();
-    m_prediction = m_predictionSpin->value();
     m_password   = m_passwordCheck->isChecked() ? m_passwordEdit->text() : QString();
 
     saveDefaults();
@@ -237,8 +215,6 @@ void CreateRoomDialog::setFormEnabled(bool enabled)
     m_nameEdit->setEnabled(enabled);
     m_romCombo->setEnabled(enabled);
     m_maxPlayersSpin->setEnabled(enabled);
-    m_delaySpin->setEnabled(enabled);
-    m_predictionSpin->setEnabled(enabled);
     m_passwordCheck->setEnabled(enabled);
     m_passwordEdit->setEnabled(enabled && m_passwordCheck->isChecked());
     m_createButton->setEnabled(enabled);
@@ -256,8 +232,10 @@ void CreateRoomDialog::loadDefaults()
             m_romCombo->setCurrentIndex(idx);
     }
     if (s.contains("MaxPlayers")) m_maxPlayersSpin->setValue(s.value("MaxPlayers").toInt());
-    if (s.contains("Delay"))      m_delaySpin->setValue(s.value("Delay").toInt());
-    if (s.contains("Prediction")) m_predictionSpin->setValue(s.value("Prediction").toInt());
+    // Seed the initial delay/prediction from the last in-room values the
+    // host configured. The in-room view writes to the same keys.
+    if (s.contains("Delay"))      m_delay = s.value("Delay").toInt();
+    if (s.contains("Prediction")) m_prediction = s.value("Prediction").toInt();
     s.endGroup();
 }
 
@@ -267,8 +245,8 @@ void CreateRoomDialog::saveDefaults()
     s.beginGroup("Lobby/CreateRoom");
     s.setValue("Rom",        m_romName);
     s.setValue("MaxPlayers", m_maxPlayers);
-    s.setValue("Delay",      m_delay);
-    s.setValue("Prediction", m_prediction);
+    // Delay/prediction persistence moves to the in-room view; CreateRoom
+    // only consumes those defaults, doesn't write them.
     s.endGroup();
 }
 

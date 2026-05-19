@@ -72,12 +72,10 @@ private:
     void setFormEnabled(bool enabled);
     static QString displayGameName(const QString& goodName, const QString& filePath);
 
-    // UI
+    // UI — delay/prediction spinners live in the in-room view now, not here.
     QLineEdit*   m_nameEdit       = nullptr;
     QComboBox*   m_romCombo       = nullptr;
     QSpinBox*    m_maxPlayersSpin = nullptr;
-    QSpinBox*    m_delaySpin      = nullptr;
-    QSpinBox*    m_predictionSpin = nullptr;
     QCheckBox*   m_passwordCheck  = nullptr;
     QLineEdit*   m_passwordEdit   = nullptr;
     QPushButton* m_createButton   = nullptr;

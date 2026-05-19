@@ -45,7 +45,8 @@
 #include <QPushButton>
 #include <QLabel>
 #include <QFrame>
-#include <QGroupBox>
+#include <QComboBox>
+#include <QSettings>
 #include <QMessageBox>
 #include <QInputDialog>
 #include <QDateTime>
@@ -69,14 +70,13 @@ namespace
     const char* const CHANNEL_ROOM  = "room";
 
     constexpr int MARGIN_OUTER       = 8;   // dialog/column outside padding
-    constexpr int MARGIN_GROUP       = 10;  // QGroupBox content inset
+    constexpr int MARGIN_GROUP       = 10;  // banner / accent-frame content inset
     constexpr int SPACING_DEFAULT    = 8;
     constexpr int SPACING_TIGHT      = 4;
 
     constexpr int MARQUEE_HEIGHT     = 44;
     constexpr int BUTTON_MIN_HEIGHT  = 28;
     constexpr int HERO_BUTTON_HEIGHT = 36;
-    constexpr int SEAT_TILE_HEIGHT   = 84;
     constexpr int STATUS_DOT_PX      = 10;
 
     // Theme-aware status indicator colors. Material 500 on dark backgrounds
@@ -340,9 +340,9 @@ QWidget* RollbackLobbyDialog::buildBrowseView()
     lay->addLayout(heroRow);
 
     // ── Active Rooms ──
-    auto* roomsBox = new QGroupBox("Active Rooms", this);
-    auto* roomsLay = new QVBoxLayout(roomsBox);
-    roomsLay->setContentsMargins(MARGIN_GROUP, MARGIN_GROUP, MARGIN_GROUP, MARGIN_GROUP);
+    auto* roomsHeader = new QLabel("ACTIVE ROOMS", this);
+    roomsHeader->setProperty("class", "SectionHeader");
+    lay->addWidget(roomsHeader);
 
     m_roomsTree = new QTreeWidget(this);
     m_roomsTree->setObjectName("RoomsTree");
@@ -360,13 +360,12 @@ QWidget* RollbackLobbyDialog::buildBrowseView()
     m_roomsTree->header()->setSectionResizeMode(4, QHeaderView::ResizeToContents);
     connect(m_roomsTree, &QTreeWidget::itemDoubleClicked,
             this, &RollbackLobbyDialog::onRoomDoubleClicked);
-    roomsLay->addWidget(m_roomsTree);
-    lay->addWidget(roomsBox, 1);
+    lay->addWidget(m_roomsTree, 1);
 
     // ── Ongoing Matches ──
-    auto* matchesBox = new QGroupBox("Ongoing Matches", this);
-    auto* matchesLay = new QVBoxLayout(matchesBox);
-    matchesLay->setContentsMargins(MARGIN_GROUP, MARGIN_GROUP, MARGIN_GROUP, MARGIN_GROUP);
+    auto* matchesHeader = new QLabel("ONGOING MATCHES", this);
+    matchesHeader->setProperty("class", "SectionHeader");
+    lay->addWidget(matchesHeader);
 
     m_matchesTree = new QTreeWidget(this);
     m_matchesTree->setObjectName("MatchesTree");
@@ -378,8 +377,7 @@ QWidget* RollbackLobbyDialog::buildBrowseView()
     m_matchesTree->header()->setSectionResizeMode(0, QHeaderView::Stretch);
     m_matchesTree->header()->setSectionResizeMode(1, QHeaderView::ResizeToContents);
     m_matchesTree->header()->setSectionResizeMode(2, QHeaderView::ResizeToContents);
-    matchesLay->addWidget(m_matchesTree);
-    lay->addWidget(matchesBox);
+    lay->addWidget(m_matchesTree);
 
     return page;
 }
@@ -393,11 +391,9 @@ QWidget* RollbackLobbyDialog::buildInRoomView()
     lay->setContentsMargins(MARGIN_OUTER, MARGIN_OUTER, MARGIN_OUTER, MARGIN_OUTER);
     lay->setSpacing(SPACING_DEFAULT);
 
-    // ── Header card (room info) ──
-    auto* headerBox = new QGroupBox("Room", this);
-    auto* headerLay = new QVBoxLayout(headerBox);
-    headerLay->setContentsMargins(MARGIN_GROUP, MARGIN_GROUP, MARGIN_GROUP, MARGIN_GROUP);
-    headerLay->setSpacing(SPACING_TIGHT);
+    // ── Header (room info) — no group-box wrapper; the hero title carries
+    //    its own visual weight, and the SEATS section header below provides
+    //    the only divider this column needs. ──
 
     // Top row: breadcrumb + state label
     auto* topRow = new QHBoxLayout;
@@ -414,36 +410,118 @@ QWidget* RollbackLobbyDialog::buildInRoomView()
     m_roomStateLabel = new QLabel("Waiting", this);
     bumpFont(m_roomStateLabel, 0, /*bold=*/true);
     topRow->addWidget(m_roomStateLabel);
-    headerLay->addLayout(topRow);
+    lay->addLayout(topRow);
 
     // ROM title (large)
     m_roomTitle = new QLabel("—", this);
     bumpFont(m_roomTitle, 4, /*bold=*/true);
-    headerLay->addWidget(m_roomTitle);
+    lay->addWidget(m_roomTitle);
 
-    // Subtitle (host / max players) — kept at default WindowText since this
-    // is important info, not a caption. The bold ROM title above gives the
-    // visual hierarchy without needing to dim this line.
+    // Subtitle (host / max players) — default WindowText since this is
+    // important info; the bold title above gives the hierarchy.
     m_roomSubtitle = new QLabel("—", this);
-    headerLay->addWidget(m_roomSubtitle);
+    lay->addWidget(m_roomSubtitle);
 
-    // Meta line (Delay / Prediction / Seats / Region) — plain text, single label
+    // Meta line (Seats / Region) — plain rich text. Delay and prediction
+    // live in the editable settings row below instead of read-only chips.
     m_roomMetaLabel = new QLabel("—", this);
     m_roomMetaLabel->setTextFormat(Qt::RichText);
     m_roomMetaLabel->setContentsMargins(0, SPACING_TIGHT, 0, 0);
-    headerLay->addWidget(m_roomMetaLabel);
+    lay->addWidget(m_roomMetaLabel);
 
-    lay->addWidget(headerBox);
+    // ── Rollback settings row (host-editable) ──
+    auto* settingsRow = new QHBoxLayout;
+    settingsRow->setContentsMargins(0, SPACING_TIGHT, 0, 0);
+    settingsRow->setSpacing(SPACING_DEFAULT);
 
-    // ── Seats ──
-    auto* seatsBox = new QGroupBox("Seats", this);
-    auto* seatsLay = new QHBoxLayout(seatsBox);
-    seatsLay->setContentsMargins(MARGIN_GROUP, MARGIN_GROUP, MARGIN_GROUP, MARGIN_GROUP);
-    seatsLay->setSpacing(SPACING_DEFAULT);
+    const QString delayTip = QStringLiteral(
+        "Frames of input delay added before sending to peer.\n"
+        "Higher delay = fewer rollbacks but more input latency.\n"
+        "Recommended: 2 for ~80ms RTT, 3-4 for ~150ms RTT.\n"
+        "\n"
+        "Host-only. All players will use the same value.");
+    const QString predictionTip = QStringLiteral(
+        "Maximum frames the rollback engine may predict ahead.\n"
+        "Higher prediction = more network tolerance.\n"
+        "Recommended: 7 (matches Slippi default).\n"
+        "\n"
+        "Host-only. All players will use the same value.");
+
+    // Frame values exposed in the dropdown. 0 is intentionally omitted —
+    // GekkoNet's zero-delay path still has open bugs (see project memory:
+    // 0-delay host crash with non-zero analog drift), so we hide it from
+    // users until that's resolved. Editing this list updates the UI; the
+    // server's clamp range governs what values it'll actually accept.
+    static const QList<int> FRAME_OPTIONS = { 1, 2, 3, 4, 5, 6, 7, 8, 9 };
+    auto fillFrameCombo = [](QComboBox* combo) {
+        for (int v : FRAME_OPTIONS)
+            combo->addItem(QString("%1 f").arg(v), v);
+    };
+    auto selectComboValue = [](QComboBox* combo, int value) {
+        const int idx = combo->findData(value);
+        if (idx >= 0) combo->setCurrentIndex(idx);
+        else          combo->setCurrentIndex(0); // value not in list — pick the floor
+    };
+
+    auto* delayLbl = new QLabel("Frame delay:", this);
+    m_delayCombo = new QComboBox(this);
+    fillFrameCombo(m_delayCombo);
+    selectComboValue(m_delayCombo, 2);
+    m_delayCombo->setToolTip(delayTip);
+    // Stash the explainer so onRoomStateChanged can restore it after a
+    // disabled stint (host became host again, or match ended).
+    m_delayCombo->setProperty("originalTip", delayTip);
+    settingsRow->addWidget(delayLbl);
+    settingsRow->addWidget(m_delayCombo);
+
+    settingsRow->addSpacing(SPACING_DEFAULT * 2);
+
+    auto* predLbl = new QLabel("Prediction:", this);
+    m_predictionCombo = new QComboBox(this);
+    fillFrameCombo(m_predictionCombo);
+    selectComboValue(m_predictionCombo, 7);
+    m_predictionCombo->setToolTip(predictionTip);
+    m_predictionCombo->setProperty("originalTip", predictionTip);
+    settingsRow->addWidget(predLbl);
+    settingsRow->addWidget(m_predictionCombo);
+
+    settingsRow->addStretch(1);
+    lay->addLayout(settingsRow);
+
+    // Both combos share the same change handler. Skip emits while we're
+    // applying values from a ROOM_STATE refresh — otherwise we'd ping-pong
+    // a settings update back to the server on every server-driven refresh.
+    auto pushSettings = [this]() {
+        if (m_suppressSettingsSignal) return;
+        if (m_currentRoomId == 0) return;
+        if (!m_client) return;
+        const int delayVal = m_delayCombo->currentData().toInt();
+        const int predVal  = m_predictionCombo->currentData().toInt();
+        m_client->updateRoomSettings(delayVal, predVal);
+        // Persist as the host's preferred defaults for the next room.
+        QSettings s;
+        s.beginGroup("Lobby/CreateRoom");
+        s.setValue("Delay",      delayVal);
+        s.setValue("Prediction", predVal);
+        s.endGroup();
+    };
+    connect(m_delayCombo,      QOverload<int>::of(&QComboBox::currentIndexChanged), this, pushSettings);
+    connect(m_predictionCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, pushSettings);
+
+    // ── Seats — bold section header + vertical player-list rows ──
+    auto* seatsHeader = new QLabel("SEATS", this);
+    seatsHeader->setProperty("class", "SectionHeader");
+    seatsHeader->setContentsMargins(0, SPACING_DEFAULT, 0, 0);
+    lay->addWidget(seatsHeader);
+
+    auto* seatsBox = new QWidget(this);
+    auto* seatsLay = new QVBoxLayout(seatsBox);
+    seatsLay->setContentsMargins(0, SPACING_TIGHT, 0, 0);
+    seatsLay->setSpacing(0);
     for (int i = 0; i < 4; ++i)
     {
-        buildSeatTile(m_seats[i], i + 1, seatsBox);
-        seatsLay->addWidget(m_seats[i].box, 1);
+        buildSeatRow(m_seats[i], i + 1, seatsBox);
+        seatsLay->addWidget(m_seats[i].row);
         renderSeatEmpty(m_seats[i]);
     }
     lay->addWidget(seatsBox);
@@ -491,68 +569,85 @@ QWidget* RollbackLobbyDialog::buildInRoomView()
     return page;
 }
 
-// ── Seat tile ────────────────────────────────────────────────────────
+// ── Seat row ─────────────────────────────────────────────────────────
 
-void RollbackLobbyDialog::buildSeatTile(SeatTile& t, int slotIdx, QWidget* parent)
+void RollbackLobbyDialog::buildSeatRow(SeatRow& s, int slotIdx, QWidget* parent)
 {
-    t.box = new QGroupBox(QString("P%1").arg(slotIdx), parent);
-    t.box->setMinimumHeight(SEAT_TILE_HEIGHT);
-    t.box->setAlignment(Qt::AlignHCenter);
+    s.row = new QWidget(parent);
+    auto* lay = new QHBoxLayout(s.row);
+    lay->setContentsMargins(SPACING_DEFAULT, SPACING_TIGHT, SPACING_DEFAULT, SPACING_TIGHT);
+    lay->setSpacing(SPACING_DEFAULT);
 
-    auto* lay = new QVBoxLayout(t.box);
-    lay->setContentsMargins(MARGIN_GROUP, MARGIN_GROUP, MARGIN_GROUP, MARGIN_GROUP);
-    lay->setSpacing(SPACING_TIGHT);
+    // Filled/empty dot — single glyph, color follows palette so it picks
+    // up the theme like everything else.
+    s.dotLabel = new QLabel(QStringLiteral("○"), s.row);
+    s.dotLabel->setFixedWidth(14);
+    lay->addWidget(s.dotLabel);
 
-    t.nameLabel = new QLabel("—", t.box);
-    t.nameLabel->setAlignment(Qt::AlignHCenter);
-    t.nameLabel->setTextFormat(Qt::RichText);
-    bumpFont(t.nameLabel, 1, /*bold=*/true);
-    lay->addWidget(t.nameLabel);
+    // Slot tag — bold, fixed width so names line up across rows.
+    s.slotLabel = new QLabel(QString("P%1").arg(slotIdx), s.row);
+    s.slotLabel->setFixedWidth(28);
+    {
+        QFont f = s.slotLabel->font();
+        f.setBold(true);
+        s.slotLabel->setFont(f);
+    }
+    lay->addWidget(s.slotLabel);
 
-    t.metaLabel = new QLabel(QString(), t.box);
-    t.metaLabel->setAlignment(Qt::AlignHCenter);
-    // PlaceholderText derives from text + reduced alpha — visible on every
-    // theme. Mid was rendering near-invisible on Fusion Dark.
-    t.metaLabel->setForegroundRole(QPalette::PlaceholderText);
-    lay->addWidget(t.metaLabel);
+    s.nameLabel = new QLabel(QStringLiteral("Waiting…"), s.row);
+    lay->addWidget(s.nameLabel);
 
     lay->addStretch(1);
+
+    // Right-aligned meta (host · ping). PlaceholderText is theme-aware
+    // muted body text — readable on Fusion Dark and not screaming on light.
+    s.metaLabel = new QLabel(QString(), s.row);
+    s.metaLabel->setForegroundRole(QPalette::PlaceholderText);
+    lay->addWidget(s.metaLabel);
 }
 
-void RollbackLobbyDialog::renderSeatEmpty(SeatTile& t)
+void RollbackLobbyDialog::renderSeatEmpty(SeatRow& s)
 {
-    t.isHost = false;
-    if (t.nameLabel)
+    s.isHost = false;
+    if (s.dotLabel)
     {
-        t.nameLabel->setText("<i>Open Seat</i>");
-        // PlaceholderText is a derived palette role that adapts to every
-        // theme — it's "muted body text" by design. Mid sat on the same
-        // tone as the QGroupBox border on Fusion Dark and disappeared.
-        t.nameLabel->setForegroundRole(QPalette::PlaceholderText);
+        s.dotLabel->setText(QStringLiteral("○"));
+        s.dotLabel->setForegroundRole(QPalette::PlaceholderText);
     }
-    if (t.metaLabel) t.metaLabel->setText(QString());
+    if (s.slotLabel)
+        s.slotLabel->setForegroundRole(QPalette::PlaceholderText);
+    if (s.nameLabel)
+    {
+        s.nameLabel->setText(QStringLiteral("Waiting…"));
+        s.nameLabel->setForegroundRole(QPalette::PlaceholderText);
+    }
+    if (s.metaLabel) s.metaLabel->setText(QString());
 }
 
-void RollbackLobbyDialog::renderSeatFilled(SeatTile& t, const QString& username, bool isHost,
-                                           bool isSelf, int pingMs)
+void RollbackLobbyDialog::renderSeatFilled(SeatRow& s, const QString& username, bool isHost,
+                                           bool isSelf, int /*pingMs*/)
 {
-    t.isHost = isHost;
-    if (t.nameLabel)
+    s.isHost = isHost;
+    if (s.dotLabel)
+    {
+        s.dotLabel->setText(QStringLiteral("●"));
+        s.dotLabel->setForegroundRole(QPalette::WindowText);
+    }
+    if (s.slotLabel)
+        s.slotLabel->setForegroundRole(QPalette::WindowText);
+    if (s.nameLabel)
     {
         QString name = username;
-        if (isSelf) name += " (you)";
-        t.nameLabel->setText(name);
-        // Reset to the default foreground so the previous "Open Seat" Mid
-        // colour doesn't carry over.
-        t.nameLabel->setForegroundRole(QPalette::WindowText);
+        if (isSelf) name += QStringLiteral("  (you)");
+        s.nameLabel->setText(name);
+        s.nameLabel->setForegroundRole(QPalette::WindowText);
     }
-    if (t.metaLabel)
+    if (s.metaLabel)
     {
-        QStringList parts;
-        if (isHost) parts << "host";
-        else        parts << "ready";
-        if (pingMs > 0) parts << QString("%1ms").arg(pingMs);
-        t.metaLabel->setText(parts.join(" · "));
+        // Ping is not yet available per-peer from the server; only render
+        // "host" when applicable, otherwise leave meta empty rather than
+        // adding noise.
+        s.metaLabel->setText(isHost ? QStringLiteral("host") : QString());
     }
 }
 
@@ -560,34 +655,34 @@ void RollbackLobbyDialog::renderSeatFilled(SeatTile& t, const QString& username,
 
 QWidget* RollbackLobbyDialog::buildChatColumn()
 {
+    // No "Chat" wrapper — the tab labels ("Lobby" / "Room") already convey
+    // the column's identity and the splitter handle separates it visually.
     auto* col = new QWidget(this);
     auto* lay = new QVBoxLayout(col);
-    lay->setContentsMargins(0, MARGIN_OUTER, 0, MARGIN_OUTER);
+    lay->setContentsMargins(MARGIN_OUTER, MARGIN_OUTER, MARGIN_OUTER, MARGIN_OUTER);
     lay->setSpacing(SPACING_DEFAULT);
 
-    auto* chatBox = new QGroupBox("Chat", this);
-    auto* chatLay = new QVBoxLayout(chatBox);
-    chatLay->setContentsMargins(MARGIN_GROUP, MARGIN_GROUP, MARGIN_GROUP, MARGIN_GROUP);
-    chatLay->setSpacing(SPACING_DEFAULT);
-
     m_chatTabs = new QTabWidget(this);
-    m_chatTabs->setDocumentMode(true);
+    // documentMode=true gives Chrome-style "floating" tabs that visually
+    // detach from the content below; documentMode=false (the default) lets
+    // the active tab sit flush in the pane border instead. Combine with
+    // QTextEdit::NoFrame inside so we don't double-border the chat area.
 
     m_chatViewLobby = new QTextEdit(this);
     m_chatViewLobby->setReadOnly(true);
     m_chatViewLobby->setLineWrapMode(QTextEdit::WidgetWidth);
+    m_chatViewLobby->setFrameShape(QFrame::NoFrame);
     m_chatTabs->addTab(m_chatViewLobby, "Lobby");
 
-    chatLay->addWidget(m_chatTabs, 1);
+    lay->addWidget(m_chatTabs, 1);
 
     m_chatInput = new QLineEdit(this);
     m_chatInput->setPlaceholderText("Type a message and press Enter…");
     m_chatInput->setEnabled(false);
     m_chatInput->setMinimumHeight(BUTTON_MIN_HEIGHT);
     connect(m_chatInput, &QLineEdit::returnPressed, this, &RollbackLobbyDialog::onChatSendClicked);
-    chatLay->addWidget(m_chatInput);
+    lay->addWidget(m_chatInput);
 
-    lay->addWidget(chatBox, 1);
     return col;
 }
 
@@ -595,14 +690,13 @@ QWidget* RollbackLobbyDialog::buildChatColumn()
 
 QWidget* RollbackLobbyDialog::buildPlayersColumn()
 {
+    // No "Players" wrapper — the tree's column header ("Player / State /
+    // Ping") already labels the content and the splitter handle isolates
+    // the column visually.
     auto* col = new QWidget(this);
     auto* lay = new QVBoxLayout(col);
-    lay->setContentsMargins(0, MARGIN_OUTER, MARGIN_OUTER, MARGIN_OUTER);
+    lay->setContentsMargins(MARGIN_OUTER, MARGIN_OUTER, MARGIN_OUTER, MARGIN_OUTER);
     lay->setSpacing(SPACING_DEFAULT);
-
-    auto* playersBox = new QGroupBox("Players", this);
-    auto* playersLay = new QVBoxLayout(playersBox);
-    playersLay->setContentsMargins(MARGIN_GROUP, MARGIN_GROUP, MARGIN_GROUP, MARGIN_GROUP);
 
     m_playersTree = new QTreeWidget(this);
     m_playersTree->setObjectName("PlayersTree");
@@ -616,9 +710,8 @@ QWidget* RollbackLobbyDialog::buildPlayersColumn()
     m_playersTree->header()->setSectionResizeMode(0, QHeaderView::Stretch);
     m_playersTree->header()->setSectionResizeMode(1, QHeaderView::ResizeToContents);
     m_playersTree->header()->setSectionResizeMode(2, QHeaderView::ResizeToContents);
-    playersLay->addWidget(m_playersTree);
+    lay->addWidget(m_playersTree);
 
-    lay->addWidget(playersBox, 1);
     return col;
 }
 
@@ -647,22 +740,19 @@ void RollbackLobbyDialog::applyStylesheet()
         "  border-bottom: 1px solid %1;"
         "}"
 
-        // QGroupBox sections — match Kaillera launcher pane look.
-        "QGroupBox {"
-        "  border: 1px solid %1;"
-        "  border-radius: 6px;"
-        "  margin-top: 10px;"
-        "  padding-top: 6px;"
-        "  font-weight: 600;"
-        "}"
-        "QGroupBox::title {"
-        "  subcontrol-origin: margin;"
-        "  left: 10px;"
-        "  padding: 0 6px;"
+        // Section headers — bold uppercase label with a hairline divider
+        // below. Replaces the QGroupBox wrappers we used to have around
+        // every region; reads as a flatter, list-style hierarchy.
+        "QLabel[class=\"SectionHeader\"] {"
+        "  font-weight: 700;"
         "  color: palette(text);"
+        "  padding-top: 6px;"
+        "  padding-bottom: 4px;"
+        "  border-bottom: 1px solid %1;"
         "}"
 
         // In-room banner — visible in browse view when the user is seated.
+        // Kept framed since it's a CTA accent, not a content region.
         "QFrame#InRoomBanner {"
         "  background-color: %2;"
         "  border: 1px solid %3;"
@@ -1056,6 +1146,7 @@ void RollbackLobbyDialog::enterRoom(quint64 roomId, const QString& greetingChatL
         m_chatViewRoom = new QTextEdit(this);
         m_chatViewRoom->setReadOnly(true);
         m_chatViewRoom->setLineWrapMode(QTextEdit::WidgetWidth);
+        m_chatViewRoom->setFrameShape(QFrame::NoFrame);
         m_chatTabs->addTab(m_chatViewRoom, "Room");
     }
     m_chatTabs->setCurrentWidget(m_chatViewRoom);
@@ -1181,12 +1272,47 @@ void RollbackLobbyDialog::onRoomStateChanged(const QJsonObject& roomState)
 
     const QJsonArray players = roomState.value("players").toArray();
     QStringList metaParts;
-    metaParts << QString("<b>Delay:</b> %1f").arg(delay);
-    metaParts << QString("<b>Prediction:</b> %1f").arg(prediction);
     metaParts << QString("<b>Seats:</b> %1/%2").arg(players.size()).arg(maxPlayers);
     if (!romRegion.isEmpty())
         metaParts << QString("<b>Region:</b> %1").arg(romRegion);
     m_roomMetaLabel->setText(metaParts.join("  ·  "));
+
+    // Sync the delay / prediction combos with the authoritative room state.
+    // Suppress the currentIndexChanged signal during the assignment so the
+    // combo doesn't immediately re-send an UPDATE for the same value we
+    // just received from the server.
+    if (m_delayCombo && m_predictionCombo)
+    {
+        static const QString tipDisabledNotHost = QStringLiteral(
+            "Only the host can change rollback settings.");
+        static const QString tipDisabledMidMatch = QStringLiteral(
+            "Can't change settings during a match.");
+
+        const bool editable = iAmHost && state == "waiting";
+        m_suppressSettingsSignal = true;
+        // Look up the index for the server-supplied value via findData
+        // since the combo's index no longer maps 1:1 to the value (0 is
+        // omitted from the dropdown). Falls back to the floor entry if
+        // the server somehow handed us a value we don't expose.
+        auto pickIndex = [](QComboBox* combo, int value) {
+            const int idx = combo->findData(value);
+            return idx >= 0 ? idx : 0;
+        };
+        m_delayCombo->setCurrentIndex(pickIndex(m_delayCombo, delay));
+        m_predictionCombo->setCurrentIndex(pickIndex(m_predictionCombo, prediction));
+        m_delayCombo->setEnabled(editable);
+        m_predictionCombo->setEnabled(editable);
+
+        const QString delayTip = editable
+            ? m_delayCombo->property("originalTip").toString()
+            : (iAmHost ? tipDisabledMidMatch : tipDisabledNotHost);
+        const QString predTip = editable
+            ? m_predictionCombo->property("originalTip").toString()
+            : (iAmHost ? tipDisabledMidMatch : tipDisabledNotHost);
+        m_delayCombo->setToolTip(delayTip);
+        m_predictionCombo->setToolTip(predTip);
+        m_suppressSettingsSignal = false;
+    }
 
     // ── Seats ──
     QVector<bool> filled(4, false);
@@ -1204,10 +1330,10 @@ void RollbackLobbyDialog::onRoomStateChanged(const QJsonObject& roomState)
     }
     for (int i = 0; i < 4; ++i)
     {
-        if (i >= maxPlayers) m_seats[i].box->setVisible(false);
+        if (i >= maxPlayers) m_seats[i].row->setVisible(false);
         else
         {
-            m_seats[i].box->setVisible(true);
+            m_seats[i].row->setVisible(true);
             if (!filled[i]) renderSeatEmpty(m_seats[i]);
         }
     }

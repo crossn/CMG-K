@@ -28,7 +28,7 @@ class QPushButton;
 class QSplitter;
 class QTabWidget;
 class QStackedWidget;
-class QGroupBox;
+class QComboBox;
 
 namespace UserInterface
 {
@@ -39,8 +39,9 @@ namespace Dialog
 // rooms / chat. Modeless — opened from the main window menu.
 //
 // Visual approach matches the Kaillera launcher: palette-based colors,
-// QGroupBox section dividers, native widget styling. Sizes standardized
-// across the dialog via SIZE_* constants in the .cpp.
+// bold section-header labels with hairline dividers (no bordered group
+// boxes), native widget styling. Sizes standardized across the dialog
+// via the constants block in the .cpp.
 class RollbackLobbyDialog : public QDialog
 {
     Q_OBJECT
@@ -130,17 +131,21 @@ private:
     void    updateServerMeta();
     void    updateInRoomBanner();   // refresh "you're in: X" banner in browse view
 
-    // Seat tile API — 4 fixed slots, populated by onRoomStateChanged.
-    struct SeatTile
+    // Seat row API — 4 fixed slots rendered as a vertical player list.
+    // Empty rows show a ○ dot + "Waiting…"; filled rows show ● + name + meta.
+    // Only rows 1..maxPlayers are visible (others hidden via setVisible).
+    struct SeatRow
     {
-        QGroupBox* box       = nullptr;
-        QLabel*    nameLabel = nullptr;   // username or "—"
-        QLabel*    metaLabel = nullptr;   // "host · 12ms" / "ready · 38ms"
-        bool       isHost    = false;
+        QWidget* row       = nullptr;
+        QLabel*  dotLabel  = nullptr;     // ● filled, ○ empty
+        QLabel*  slotLabel = nullptr;     // "P1"
+        QLabel*  nameLabel = nullptr;     // username or "Waiting…"
+        QLabel*  metaLabel = nullptr;     // "host · 12ms" — right-aligned
+        bool     isHost    = false;
     };
-    void buildSeatTile(SeatTile& tile, int slotIdx, QWidget* parent);
-    void renderSeatEmpty(SeatTile& tile);
-    void renderSeatFilled(SeatTile& tile, const QString& username, bool isHost,
+    void buildSeatRow(SeatRow& row, int slotIdx, QWidget* parent);
+    void renderSeatEmpty(SeatRow& row);
+    void renderSeatFilled(SeatRow& row, const QString& username, bool isHost,
                           bool isSelf, int pingMs);
 
     LobbyClient* m_client = nullptr;
@@ -176,10 +181,17 @@ private:
     QLabel*    m_roomTitle      = nullptr;   // ROM title (large)
     QLabel*    m_roomSubtitle   = nullptr;   // host · region · max
     QLabel*    m_roomStateLabel = nullptr;   // "Waiting" / "In Game"
-    QLabel*    m_roomMetaLabel  = nullptr;   // Delay 2f · Prediction 7f · Seats 2/4 · Region NTSC
+    QLabel*    m_roomMetaLabel  = nullptr;   // Seats 2/4 · Region NTSC
 
-    // Seat tiles (always 4 — empty placeholders for unused slots)
-    SeatTile   m_seats[4];
+    // Host-editable rollback settings (delay / prediction). Disabled for
+    // non-hosts and mid-match. Combo index maps 1:1 to the integer value
+    // (0..9), so currentIndex() is the wire value.
+    QComboBox* m_delayCombo      = nullptr;
+    QComboBox* m_predictionCombo = nullptr;
+    bool       m_suppressSettingsSignal = false;  // guard against ROOM_STATE → setCurrentIndex echo
+
+    // Seat rows (always 4 — slots beyond maxPlayers are hidden)
+    SeatRow    m_seats[4];
 
     // In-room action bar
     QPushButton* m_startBtn      = nullptr;

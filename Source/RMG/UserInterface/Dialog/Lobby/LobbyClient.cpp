@@ -558,6 +558,23 @@ void LobbyClient::startRoom()
     sendEnvelope("ROOM_START");
 }
 
+// Host-only: change the active room's rollback parameters. Server is
+// expected to validate (host, state == "waiting") and rebroadcast
+// ROOM_STATE with the new values so every seated client picks them up.
+//
+// TODO(server): the rmgk-lobby service needs a ROOM_UPDATE_SETTINGS
+// handler that applies these to the in-memory room record and emits
+// the follow-up ROOM_STATE. Until that lands, the client emits the
+// envelope but the change won't propagate to peers — match start will
+// still use whatever delay/prediction were set at room creation.
+void LobbyClient::updateRoomSettings(int delay, int prediction)
+{
+    QJsonObject d;
+    d["delay"]      = delay;
+    d["prediction"] = prediction;
+    sendEnvelope("ROOM_UPDATE_SETTINGS", d);
+}
+
 void LobbyClient::kickFromRoom(quint64 userId)
 {
     QJsonObject d;
