@@ -309,6 +309,13 @@ SettingsDialog::SettingsDialog(QWidget *parent, QString file) : QDialog(parent)
         this->exclusiveResolutionComboBox->setEnabled(checked);
         this->exclusiveRefreshRateComboBox->setEnabled(checked);
     });
+    connect(this->betaFullscreenBackendCheckBox, &QCheckBox::toggled, this, [this](bool checked)
+    {
+        if (checked)
+        {
+            this->automaticFullscreenCheckbox->setChecked(true);
+        }
+    });
     connect(this->exclusiveMonitorComboBox, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this](int)
     {
         this->populateExclusiveFullscreenModes();
@@ -850,6 +857,10 @@ void SettingsDialog::loadInterfaceEmulationSettings(void)
 #ifdef _WIN32
     this->exclusiveFullscreenCheckBox->setChecked(CoreSettingsGetBoolValue(SettingsID::GUI_ExclusiveFullscreen));
     this->betaFullscreenBackendCheckBox->setChecked(CoreSettingsGetBoolValue(SettingsID::GUI_BetaFullscreenBackend));
+    if (this->betaFullscreenBackendCheckBox->isChecked())
+    {
+        this->automaticFullscreenCheckbox->setChecked(true);
+    }
     {
         // set saved values into combobox data before populating so they get selected
         QString savedMonitor = QString::fromStdString(CoreSettingsGetStringValue(SettingsID::GUI_ExclusiveFullscreenMonitor));
@@ -1377,13 +1388,16 @@ void SettingsDialog::saveInterfaceEmulationSettings(void)
 {
     CoreSettingsSetValue(SettingsID::GUI_HideCursorInEmulation, this->hideCursorCheckBox->isChecked());
     CoreSettingsSetValue(SettingsID::GUI_HideCursorInFullscreenEmulation, this->hideCursorFullscreenCheckBox->isChecked());
-    CoreSettingsSetValue(SettingsID::GUI_AutomaticFullscreen, this->automaticFullscreenCheckbox->isChecked());
 #ifdef _WIN32
+    const bool useExperimentalFullscreen = this->betaFullscreenBackendCheckBox->isChecked();
+    CoreSettingsSetValue(SettingsID::GUI_AutomaticFullscreen, this->automaticFullscreenCheckbox->isChecked() || useExperimentalFullscreen);
     CoreSettingsSetValue(SettingsID::GUI_ExclusiveFullscreen, this->exclusiveFullscreenCheckBox->isChecked());
-    CoreSettingsSetValue(SettingsID::GUI_BetaFullscreenBackend, this->betaFullscreenBackendCheckBox->isChecked());
+    CoreSettingsSetValue(SettingsID::GUI_BetaFullscreenBackend, useExperimentalFullscreen);
     CoreSettingsSetValue(SettingsID::GUI_ExclusiveFullscreenMonitor, this->exclusiveMonitorComboBox->currentData().toString().toStdString());
     CoreSettingsSetValue(SettingsID::GUI_ExclusiveFullscreenResolution, this->exclusiveResolutionComboBox->currentData().toString().toStdString());
     CoreSettingsSetValue(SettingsID::GUI_ExclusiveFullscreenRefreshRate, this->exclusiveRefreshRateComboBox->currentData().toInt());
+#else
+    CoreSettingsSetValue(SettingsID::GUI_AutomaticFullscreen, this->automaticFullscreenCheckbox->isChecked());
 #endif
     CoreSettingsSetValue(SettingsID::GUI_ConfirmDragDrop, this->confirmDragDropCheckBox->isChecked());
     CoreSettingsSetValue(SettingsID::GUI_ConfirmExitWhileInGame, this->confirmExitWhileInGameCheckBox->isChecked());
