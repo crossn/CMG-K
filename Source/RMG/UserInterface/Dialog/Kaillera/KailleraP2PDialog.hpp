@@ -105,6 +105,7 @@ private:
     bool m_rollbackGameActive = false;
     bool m_closeCleanupDone = false;
     bool m_ready = false;
+    int m_standardFrameDelay = 0;
     QString m_gameName;
     QString m_username;
 
