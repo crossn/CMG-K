@@ -21,6 +21,7 @@ enum class SettingsID
     GUI_StatusbarMessageDuration,
     GUI_AutomaticFullscreen,
     GUI_ExclusiveFullscreen,
+    GUI_BetaFullscreenBackend,
     GUI_ExclusiveFullscreenMonitor,
     GUI_ExclusiveFullscreenResolution,
     GUI_ExclusiveFullscreenRefreshRate,

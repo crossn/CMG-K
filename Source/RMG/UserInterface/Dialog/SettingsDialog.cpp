@@ -304,6 +304,7 @@ SettingsDialog::SettingsDialog(QWidget *parent, QString file) : QDialog(parent)
 #ifdef _WIN32
     connect(this->exclusiveFullscreenCheckBox, &QCheckBox::toggled, this, [this](bool checked)
     {
+        this->betaFullscreenBackendCheckBox->setEnabled(checked);
         this->exclusiveMonitorComboBox->setEnabled(checked);
         this->exclusiveResolutionComboBox->setEnabled(checked);
         this->exclusiveRefreshRateComboBox->setEnabled(checked);
@@ -848,6 +849,7 @@ void SettingsDialog::loadInterfaceEmulationSettings(void)
     this->automaticFullscreenCheckbox->setChecked(CoreSettingsGetBoolValue(SettingsID::GUI_AutomaticFullscreen));
 #ifdef _WIN32
     this->exclusiveFullscreenCheckBox->setChecked(CoreSettingsGetBoolValue(SettingsID::GUI_ExclusiveFullscreen));
+    this->betaFullscreenBackendCheckBox->setChecked(CoreSettingsGetBoolValue(SettingsID::GUI_BetaFullscreenBackend));
     {
         // set saved values into combobox data before populating so they get selected
         QString savedMonitor = QString::fromStdString(CoreSettingsGetStringValue(SettingsID::GUI_ExclusiveFullscreenMonitor));
@@ -884,6 +886,7 @@ void SettingsDialog::loadInterfaceEmulationSettings(void)
         this->exclusiveRefreshRateComboBox->blockSignals(false);
         this->populateExclusiveFullscreenModes();
     }
+    this->betaFullscreenBackendCheckBox->setEnabled(this->exclusiveFullscreenCheckBox->isChecked());
     this->exclusiveMonitorComboBox->setEnabled(this->exclusiveFullscreenCheckBox->isChecked());
     this->exclusiveResolutionComboBox->setEnabled(this->exclusiveFullscreenCheckBox->isChecked());
     this->exclusiveRefreshRateComboBox->setEnabled(this->exclusiveFullscreenCheckBox->isChecked());
@@ -1100,6 +1103,8 @@ void SettingsDialog::loadDefaultInterfaceEmulationSettings(void)
     this->automaticFullscreenCheckbox->setChecked(CoreSettingsGetDefaultBoolValue(SettingsID::GUI_AutomaticFullscreen));
 #ifdef _WIN32
     this->exclusiveFullscreenCheckBox->setChecked(false);
+    this->betaFullscreenBackendCheckBox->setChecked(false);
+    this->betaFullscreenBackendCheckBox->setEnabled(false);
     this->exclusiveMonitorComboBox->setCurrentIndex(0);
     this->exclusiveResolutionComboBox->setCurrentIndex(0);
     this->exclusiveRefreshRateComboBox->setCurrentIndex(0);
@@ -1375,6 +1380,7 @@ void SettingsDialog::saveInterfaceEmulationSettings(void)
     CoreSettingsSetValue(SettingsID::GUI_AutomaticFullscreen, this->automaticFullscreenCheckbox->isChecked());
 #ifdef _WIN32
     CoreSettingsSetValue(SettingsID::GUI_ExclusiveFullscreen, this->exclusiveFullscreenCheckBox->isChecked());
+    CoreSettingsSetValue(SettingsID::GUI_BetaFullscreenBackend, this->betaFullscreenBackendCheckBox->isChecked());
     CoreSettingsSetValue(SettingsID::GUI_ExclusiveFullscreenMonitor, this->exclusiveMonitorComboBox->currentData().toString().toStdString());
     CoreSettingsSetValue(SettingsID::GUI_ExclusiveFullscreenResolution, this->exclusiveResolutionComboBox->currentData().toString().toStdString());
     CoreSettingsSetValue(SettingsID::GUI_ExclusiveFullscreenRefreshRate, this->exclusiveRefreshRateComboBox->currentData().toInt());

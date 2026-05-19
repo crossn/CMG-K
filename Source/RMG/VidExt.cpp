@@ -577,6 +577,7 @@ static bool VidExt_OglSetup(int screenMode)
 #ifdef _WIN32
     if (screenMode == M64VIDEO_FULLSCREEN &&
         CoreSettingsGetBoolValue(SettingsID::GUI_ExclusiveFullscreen) &&
+        CoreSettingsGetBoolValue(SettingsID::GUI_BetaFullscreenBackend) &&
         VidExt_NativeWglSetup())
     {
         l_OpenGLInitialized = true;

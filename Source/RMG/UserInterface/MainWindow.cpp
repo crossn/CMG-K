@@ -2527,7 +2527,9 @@ void MainWindow::launchEmulationThread(QString cartRom, QString diskRom, bool re
 
     const bool startInFullscreen = this->ui_LaunchInFullscreen || CoreSettingsGetBoolValue(SettingsID::GUI_AutomaticFullscreen);
 #ifdef _WIN32
-    const bool useNativeFullscreenStartup = startInFullscreen && CoreSettingsGetBoolValue(SettingsID::GUI_ExclusiveFullscreen);
+    const bool useNativeFullscreenStartup = startInFullscreen &&
+        CoreSettingsGetBoolValue(SettingsID::GUI_ExclusiveFullscreen) &&
+        CoreSettingsGetBoolValue(SettingsID::GUI_BetaFullscreenBackend);
     qputenv("RMG_GLIDEN64_START_FULLSCREEN", useNativeFullscreenStartup ? "1" : "0");
     if (useNativeFullscreenStartup)
     {
