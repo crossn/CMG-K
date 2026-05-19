@@ -311,7 +311,6 @@ void RollbackLobbyDialog::onClientStateChanged(LobbyClient::ConnectionState s)
         m_currentMatchId = 0;
         m_awaitingEmulationStart = false;
         m_emulationActive = false;
-        m_localReady = false;
         m_quickMatchActive = false;
         if (m_quickMatchBtn)
             m_quickMatchBtn->setText("Quick Match");
@@ -446,36 +445,37 @@ void RollbackLobbyDialog::buildInRoomView(QWidget* container)
     lay->addWidget(m_inRoomSettings);
 
     m_seatsTree = new QTreeWidget(this);
-    m_seatsTree->setHeaderLabels({ "Seat", "Player", "Status" });
+    m_seatsTree->setHeaderLabels({ "Seat", "Player" });
     m_seatsTree->setRootIsDecorated(false);
     m_seatsTree->setSelectionMode(QAbstractItemView::NoSelection);
     m_seatsTree->header()->setStretchLastSection(false);
     m_seatsTree->header()->setSectionResizeMode(0, QHeaderView::ResizeToContents);
     m_seatsTree->header()->setSectionResizeMode(1, QHeaderView::Stretch);
-    m_seatsTree->header()->setSectionResizeMode(2, QHeaderView::ResizeToContents);
     lay->addWidget(m_seatsTree, 1);
 
     auto* btnRow = new QHBoxLayout;
-    m_readyBtn = new QPushButton("Ready", this);
-    m_readyBtn->setCheckable(true);
-    m_readyBtn->setAutoDefault(false);
-    m_readyBtn->setDefault(false);
-    connect(m_readyBtn, &QPushButton::clicked, this, &RollbackLobbyDialog::onReadyClicked);
-
     m_startBtn = new QPushButton("Start Game", this);
     m_startBtn->setEnabled(false);
     m_startBtn->setAutoDefault(false);
     m_startBtn->setDefault(false);
     connect(m_startBtn, &QPushButton::clicked, this, &RollbackLobbyDialog::onStartGameClicked);
 
+    m_dropBtn = new QPushButton("Drop Game", this);
+    m_dropBtn->setEnabled(false);
+    m_dropBtn->setAutoDefault(false);
+    m_dropBtn->setDefault(false);
+    m_dropBtn->setToolTip("Stop playing the current match. If you're the host, the match ends for everyone.");
+    connect(m_dropBtn, &QPushButton::clicked, this, &RollbackLobbyDialog::onDropGameClicked);
+
     m_leaveBtn = new QPushButton("Leave Room", this);
     m_leaveBtn->setAutoDefault(false);
     m_leaveBtn->setDefault(false);
+    m_leaveBtn->setToolTip("Leave the room and return to the lobby.");
     connect(m_leaveBtn, &QPushButton::clicked, this, &RollbackLobbyDialog::onLeaveRoomClicked);
 
-    btnRow->addWidget(m_readyBtn);
     btnRow->addWidget(m_startBtn);
     btnRow->addStretch();
+    btnRow->addWidget(m_dropBtn);
     btnRow->addWidget(m_leaveBtn);
     lay->addLayout(btnRow);
 }
@@ -677,22 +677,36 @@ void RollbackLobbyDialog::onRoomStateChanged(const QJsonObject& roomState)
     m_currentRoomRegion     = romRegion;
     m_currentRoomDelay      = delay;
     m_currentRoomPrediction = prediction;
-    m_currentRoomState      = state;
 
-    // Leave button morphs into Close Game mid-match. Always enabled so the
-    // user can bail out at any time.
+    // If the room state just transitioned out of in_game while we still have
+    // a live local match, the host dropped it for everyone — tear down our
+    // own emulation. The dropper itself has m_emulationActive already false
+    // (closeMatchRequested ran on their own click), so this branch is a no-op
+    // for them and only fires on the surviving seats.
+    const QString prevState = m_currentRoomState;
+    m_currentRoomState = state;
+    if (prevState == "in_game" && state != "in_game" &&
+        (m_emulationActive || m_awaitingEmulationStart))
+    {
+        appendChatLine(CHANNEL_ROOM, "<i>Host ended the match — stopping game.</i>");
+        emit closeMatchRequested();
+    }
+
+    // Drop Game is only meaningful while we personally have a live match —
+    // not just whenever the room is in_game, since after our own drop the
+    // room may still be in_game for the others. Track that via the local
+    // emulation flags. Leave Room stays enabled throughout.
+    if (m_dropBtn)
+    {
+        m_dropBtn->setEnabled(state == "in_game" &&
+            (m_emulationActive || m_awaitingEmulationStart));
+        m_dropBtn->setToolTip(
+            iAmHost
+                ? "Stop the match for everyone in the room."
+                : "Drop out of the match. Other players keep playing.");
+    }
     if (m_leaveBtn)
     {
-        if (state == "in_game")
-        {
-            m_leaveBtn->setText("Close Game");
-            m_leaveBtn->setToolTip("End the current match for both players.");
-        }
-        else
-        {
-            m_leaveBtn->setText("Leave Room");
-            m_leaveBtn->setToolTip(QString());
-        }
         m_leaveBtn->setEnabled(true);
     }
 
@@ -708,8 +722,6 @@ void RollbackLobbyDialog::onRoomStateChanged(const QJsonObject& roomState)
     // Seats: render filled seats then empty placeholders up to maxPlayers.
     m_seatsTree->clear();
     const QJsonArray players = roomState.value("players").toArray();
-    bool myReady = false;
-    int allReadyCount = 0;
     for (const auto& v : players)
     {
         const auto p = v.toObject();
@@ -717,64 +729,57 @@ void RollbackLobbyDialog::onRoomStateChanged(const QJsonObject& roomState)
         const int slot = p.value("slot").toInt();
         const QString user = p.value("username").toString();
         const quint64 uid = static_cast<quint64>(p.value("userId").toDouble());
-        const bool ready = p.value("ready").toBool();
         row->setText(0, QString::number(slot));
         row->setText(1, uid == hostId ? QString("%1 (host)").arg(user) : user);
-        row->setText(2, ready ? "Ready" : "—");
-        if (uid == m_client->selfUserId())
-            myReady = ready;
-        if (ready)
-            allReadyCount++;
     }
     for (int slot = players.size(); slot < maxPlayers; ++slot)
     {
         auto* row = new QTreeWidgetItem(m_seatsTree);
         row->setText(0, QString::number(slot + 1));
         row->setText(1, "<empty>");
-        row->setText(2, "");
-        for (int col = 0; col < 3; ++col)
+        for (int col = 0; col < 2; ++col)
             row->setForeground(col, QBrush(Qt::gray));
     }
 
-    // Sync ready button to server-known state without re-emitting clicked.
-    if (m_readyBtn->isChecked() != myReady)
-    {
-        QSignalBlocker block(m_readyBtn);
-        m_readyBtn->setChecked(myReady);
-    }
-    m_readyBtn->setText(myReady ? "Unready" : "Ready");
-    m_localReady = myReady;
-
+    // Host can start whenever there are at least 2 seated players — no ready
+    // gate. Disabled mid-match (state != waiting) so the host can't start a
+    // second match on top of a live one.
     const int seated = players.size();
-    const bool everyoneReady = seated >= 2 && allReadyCount == seated;
-    m_startBtn->setEnabled(iAmHost && everyoneReady);
+    const bool canStart = (state == "waiting") && seated >= 2;
+    m_startBtn->setEnabled(iAmHost && canStart);
     m_startBtn->setToolTip(
         !iAmHost ? "Only the host can start the game."
-                 : (everyoneReady ? "" : "Waiting for all players to ready up..."));
+                 : (canStart ? "" : (seated < 2 ? "Need at least 2 players to start."
+                                                : "Already in a match.")));
 }
 
-void RollbackLobbyDialog::onReadyClicked()
+void RollbackLobbyDialog::onDropGameClicked()
 {
-    const bool wantReady = m_readyBtn->isChecked();
-    m_client->setReady(wantReady);
-    // UI will update on the ROOM_STATE echo from the server.
+    if (m_currentRoomState != "in_game")
+        return;
+
+    // Drop locally and notify the server. Host vs non-host outcome is decided
+    // server-side: host drop dissolves the room for everyone, non-host drop
+    // only removes this player. Either way our client gets a ROOM_LEFT back.
+    emit closeMatchRequested();
+    if (m_currentMatchId != 0)
+        m_client->reportMatchFinished(m_currentMatchId);
+    appendChatLine(CHANNEL_ROOM, "<i>You dropped from the game.</i>");
 }
 
 void RollbackLobbyDialog::onLeaveRoomClicked()
 {
-    if (m_currentRoomState == "in_game")
+    // Leave the room. If we have a live local match, drop it first so
+    // emulation tears down cleanly; then send ROOM_LEAVE — MATCH_FINISHED
+    // alone keeps us seated under the new semantics, so we must explicitly
+    // leave to actually exit the room.
+    if (m_emulationActive || m_awaitingEmulationStart)
     {
-        // Mid-match drop. Tear down emulation locally, then notify the
-        // server which dissolves the room and pushes ROOM_LEFT to everyone.
         emit closeMatchRequested();
         if (m_currentMatchId != 0)
             m_client->reportMatchFinished(m_currentMatchId);
-        appendChatLine(CHANNEL_ROOM, "<i>You closed the game.</i>");
     }
-    else
-    {
-        m_client->leaveRoom();
-    }
+    m_client->leaveRoom();
 }
 
 void RollbackLobbyDialog::notifyEmulationStarted()
@@ -814,19 +819,48 @@ void RollbackLobbyDialog::notifyEmulationFinished()
     }
     if (matchId != 0)
     {
+        // MATCH_FINISHED tells the server we dropped from the match. With the
+        // new "stay-in-room" semantics, the server clears our match link but
+        // we remain seated. Our local m_currentMatchId is cleared on the
+        // ROOM_STATE that follows (or via ROOM_LEFT if we then leave).
         m_client->reportMatchFinished(matchId);
     }
-    // Server will follow up with ROOM_LEFT; onRoomLeft cleans up UI.
+    m_currentMatchId = 0;
+    // We dropped from the match — disable the Drop button until a new match
+    // begins. The user can still click Leave Room to actually exit the room.
+    if (m_dropBtn) m_dropBtn->setEnabled(false);
+
+    // Re-open the UDP anchor so the next MATCH_BEGIN can hand us a fresh
+    // local port. Without this, localUdpPort() returns 0 (socket is aborted
+    // after onMatchBegin's releaseUdpAnchor), GekkoNet binds to a random
+    // kernel-picked port for match #2, and peers send to the stale port from
+    // match #1 — black screen on every match after the first.
+    if (m_client) m_client->reopenUdpAnchor();
 }
 
-void RollbackLobbyDialog::onMatchPeerLeft(quint64 matchId, quint64 userId, const QString& reason)
+void RollbackLobbyDialog::onMatchPeerLeft(quint64 matchId, quint64 userId, int slot, const QString& reason)
 {
     Q_UNUSED(matchId);
-    Q_UNUSED(userId);
-    appendChatLine(CHANNEL_ROOM,
-        QString("<i>Match ended (%1) — stopping game.</i>").arg(reason.isEmpty() ? "peer left" : reason));
-    emit closeMatchRequested();
-    // The server will follow up with ROOM_LEFT; onRoomLeft handles UI cleanup.
+    // MATCH_PEER_LEFT is informational only — the match keeps running for the
+    // remaining seats. Tear-down is signalled by ROOM_LEFT (which the server
+    // only sends to us when the room actually dissolves). GekkoNet will
+    // detect the dropped peer's UDP timeout and start feeding zeroed input
+    // for that actor automatically, so the abandoned slot just goes idle —
+    // no explicit "unplug controller" call needed.
+    QString who = QString::number(userId);
+    if (m_client)
+    {
+        const auto& users = m_client->users();
+        const auto it = users.find(userId);
+        if (it != users.end() && !it->username.isEmpty())
+            who = it->username;
+    }
+    const QString suffix = reason.isEmpty() ? QString("left") : reason;
+    const QString line = slot > 0
+        ? QString("<i>%1 (P%2) dropped (%3) — controller %2 will go idle.</i>")
+              .arg(who).arg(slot).arg(suffix)
+        : QString("<i>%1 dropped (%2).</i>").arg(who, suffix);
+    appendChatLine(CHANNEL_ROOM, line);
 }
 
 void RollbackLobbyDialog::onStartGameClicked()
@@ -838,6 +872,14 @@ void RollbackLobbyDialog::onStartGameClicked()
 
 void RollbackLobbyDialog::onRoomLeft()
 {
+    // If a match was still running at the moment the server dropped us from
+    // the room, that means the room dissolved out from under us (host drop,
+    // host disconnect, or down to <2 players). Tear down local emulation —
+    // MATCH_PEER_LEFT no longer does this, since it now fires for non-fatal
+    // peer drops too.
+    if (m_emulationActive || m_awaitingEmulationStart)
+        emit closeMatchRequested();
+
     m_currentRoomId = 0;
     m_currentRoomGame.clear();
     m_currentRoomRegion.clear();
@@ -847,7 +889,6 @@ void RollbackLobbyDialog::onRoomLeft()
     m_currentMatchId = 0;
     m_awaitingEmulationStart = false;
     m_emulationActive = false;
-    m_localReady = false;
 
     // Re-open the UDP anchor if we'd released it for a match.
     if (m_client) m_client->reopenUdpAnchor();
@@ -865,14 +906,8 @@ void RollbackLobbyDialog::onRoomLeft()
 
     // Swap the middle column back to the rooms list.
     switchToRoomsView();
-    if (m_readyBtn)
-    {
-        QSignalBlocker b(m_readyBtn);
-        m_readyBtn->setChecked(false);
-        m_readyBtn->setText("Ready");
-        m_readyBtn->setEnabled(true);
-    }
     if (m_startBtn)  m_startBtn->setEnabled(false);
+    if (m_dropBtn)   m_dropBtn->setEnabled(false);
     if (m_leaveBtn)  m_leaveBtn->setEnabled(true);
 
     // Back in the lobby — re-enable create/quick-match.
@@ -972,10 +1007,11 @@ void RollbackLobbyDialog::onMatchBegin(quint64 matchId, const QList<LobbyClient:
     m_currentMatchId = matchId;
     m_awaitingEmulationStart = true;
 
-    // Disable ready/start; Leave stays enabled and will morph to "Close Game"
-    // once ROOM_STATE flips to in_game.
-    if (m_readyBtn)  m_readyBtn->setEnabled(false);
+    // Disable start; enable Drop now — MATCH_BEGIN arrives *after* the
+    // ROOM_STATE that flipped us to in_game, so onRoomStateChanged ran before
+    // the awaiting flag was set and left Drop disabled. Set it directly here.
     if (m_startBtn)  m_startBtn->setEnabled(false);
+    if (m_dropBtn)   m_dropBtn->setEnabled(true);
     if (m_inRoomSettings)
         m_inRoomSettings->setText("Connecting to peers...");
 

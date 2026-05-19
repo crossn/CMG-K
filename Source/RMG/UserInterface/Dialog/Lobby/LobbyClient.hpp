@@ -115,7 +115,6 @@ public:
                     const QString& password = QString());
     void joinRoom(quint64 roomId, const QString& password = QString());
     void leaveRoom();
-    void setReady(bool ready);
     void startRoom();
     void kickFromRoom(quint64 userId);
 
@@ -162,7 +161,7 @@ signals:
     void pingProbeMeasured(quint64 targetUserId, int rttMs);
 
     void matchBegin(quint64 matchId, const QList<LobbyClient::LobbyMatchPeer>& peers);
-    void matchPeerLeft(quint64 matchId, quint64 userId, const QString& reason);
+    void matchPeerLeft(quint64 matchId, quint64 userId, int slot, const QString& reason);
 
     void quickMatchStatus(bool searching, int queueSize);
 

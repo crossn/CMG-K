@@ -395,7 +395,8 @@ void LobbyClient::handleMatchPeerLeft(const QJsonObject& data)
     const quint64 matchId = static_cast<quint64>(data.value("matchId").toDouble());
     const quint64 userId  = static_cast<quint64>(data.value("userId").toDouble());
     const QString reason  = data.value("reason").toString();
-    emit matchPeerLeft(matchId, userId, reason);
+    const int slot        = data.value("slot").toInt(0);
+    emit matchPeerLeft(matchId, userId, slot, reason);
 }
 
 void LobbyClient::handleQuickMatchStatus(const QJsonObject& data)
@@ -550,13 +551,6 @@ void LobbyClient::joinRoom(quint64 roomId, const QString& password)
 void LobbyClient::leaveRoom()
 {
     sendEnvelope("ROOM_LEAVE");
-}
-
-void LobbyClient::setReady(bool ready)
-{
-    QJsonObject d;
-    d["ready"] = ready;
-    sendEnvelope("ROOM_READY", d);
 }
 
 void LobbyClient::startRoom()

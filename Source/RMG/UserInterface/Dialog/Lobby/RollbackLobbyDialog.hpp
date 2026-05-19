@@ -102,12 +102,12 @@ private slots:
     void onQuickMatchStatusChanged(bool searching, int queueSize);
 
     // In-room actions
-    void onReadyClicked();
     void onLeaveRoomClicked();
+    void onDropGameClicked();
     void onStartGameClicked();
 
     // Match
-    void onMatchPeerLeft(quint64 matchId, quint64 userId, const QString& reason);
+    void onMatchPeerLeft(quint64 matchId, quint64 userId, int slot, const QString& reason);
 
     // Chat
     void onChatSendClicked();
@@ -150,10 +150,9 @@ private:
     QLabel*         m_inRoomName   = nullptr;
     QLabel*         m_inRoomRom    = nullptr;
     QLabel*         m_inRoomSettings = nullptr;
-    QPushButton*    m_readyBtn     = nullptr;
     QPushButton*    m_startBtn     = nullptr;
+    QPushButton*    m_dropBtn      = nullptr;
     QPushButton*    m_leaveBtn     = nullptr;
-    bool            m_localReady   = false; // last toggle state we sent
 
     // Bottom actions
     QPushButton* m_createRoomBtn  = nullptr;
