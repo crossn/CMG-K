@@ -56,12 +56,15 @@
 #include <QSettings>
 #include <QStatusBar>
 #include <QMenuBar>
+#include <QByteArray>
 #include <QString>
+#include <QStringList>
 #include <QTimer>
 #include <QShowEvent>
 #include <QDir>
 #include <QUrl>
 #include <QRegularExpression>
+#include <QScreen>
 
 #ifdef KCA_DRAG_DROP
 #include <KUrlMimeData>
@@ -75,6 +78,7 @@
 #include <QProxyStyle>
 
 #include <cstdlib>
+#include <string>
 
 #ifdef _WIN32
 class NoAccentProxyStyle final : public QProxyStyle
@@ -2522,9 +2526,54 @@ void MainWindow::launchEmulationThread(QString cartRom, QString diskRom, bool re
         return;
     }
 
-    if (this->ui_LaunchInFullscreen || CoreSettingsGetBoolValue(SettingsID::GUI_AutomaticFullscreen))
+    const bool startInFullscreen = this->ui_LaunchInFullscreen || CoreSettingsGetBoolValue(SettingsID::GUI_AutomaticFullscreen);
+#ifdef _WIN32
+    const bool useNativeFullscreenStartup = startInFullscreen &&
+        CoreSettingsGetBoolValue(SettingsID::GUI_ExclusiveFullscreen) &&
+        CoreSettingsGetBoolValue(SettingsID::GUI_BetaFullscreenBackend);
+    qputenv("RMG_GLIDEN64_START_FULLSCREEN", useNativeFullscreenStartup ? "1" : "0");
+    if (useNativeFullscreenStartup)
     {
-        this->ui_FullscreenTimerId = this->startTimer(100);
+        int nativeWidth = 0;
+        int nativeHeight = 0;
+        QString resolution = QString::fromStdString(CoreSettingsGetStringValue(SettingsID::GUI_ExclusiveFullscreenResolution));
+        QStringList resolutionParts = resolution.split('x');
+        if (resolutionParts.size() == 2)
+        {
+            bool widthOk = false;
+            bool heightOk = false;
+            nativeWidth = resolutionParts.at(0).toInt(&widthOk);
+            nativeHeight = resolutionParts.at(1).toInt(&heightOk);
+            if (!widthOk || !heightOk)
+            {
+                nativeWidth = 0;
+                nativeHeight = 0;
+            }
+        }
+        if ((nativeWidth <= 0 || nativeHeight <= 0) && this->screen() != nullptr)
+        {
+            QSize screenSize = this->screen()->geometry().size();
+            nativeWidth = screenSize.width();
+            nativeHeight = screenSize.height();
+        }
+        qputenv("RMG_GLIDEN64_START_FULLSCREEN_WIDTH", nativeWidth > 0 ? QByteArray::number(nativeWidth) : "");
+        qputenv("RMG_GLIDEN64_START_FULLSCREEN_HEIGHT", nativeHeight > 0 ? QByteArray::number(nativeHeight) : "");
+    }
+    else
+    {
+        qputenv("RMG_GLIDEN64_START_FULLSCREEN_WIDTH", "");
+        qputenv("RMG_GLIDEN64_START_FULLSCREEN_HEIGHT", "");
+    }
+#endif
+
+    if (startInFullscreen)
+    {
+#ifdef _WIN32
+        if (!useNativeFullscreenStartup)
+#endif
+        {
+            this->ui_FullscreenTimerId = this->startTimer(100);
+        }
         this->ui_LaunchInFullscreen = false;
     }
 
