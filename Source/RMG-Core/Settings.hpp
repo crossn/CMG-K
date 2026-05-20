@@ -19,6 +19,8 @@ enum class SettingsID
     GUI_HideCursorInEmulation = 0,
     GUI_HideCursorInFullscreenEmulation,
     GUI_StatusbarMessageDuration,
+    GUI_PauseEmulationOnFocusLoss,
+    GUI_ResumeEmulationOnFocus,
     GUI_AutomaticFullscreen,
     GUI_ExclusiveFullscreen,
     GUI_ExclusiveFullscreenMonitor,

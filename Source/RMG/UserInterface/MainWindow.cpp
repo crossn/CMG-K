@@ -1594,6 +1594,7 @@ bool MainWindow::Init(QApplication* app, bool showUI, bool launchROM)
     // connect signals early due to pending debug callbacks
     connect(coreCallBacks, &CoreCallbacks::OnCoreDebugCallback, this, &MainWindow::on_Core_DebugCallback);
     connect(coreCallBacks, &CoreCallbacks::OnCoreStateCallback, this, &MainWindow::on_Core_StateCallback);
+    connect(app, &QGuiApplication::applicationStateChanged, this, &MainWindow::on_QGuiApplication_applicationStateChanged);
 
     if (!this->coreCallBacks->Init())
     {
@@ -2569,7 +2570,8 @@ void MainWindow::updateActions(bool inEmulation, bool isPaused)
     this->menuRollback->menuAction()->setVisible(CoreSettingsGetBoolValue(SettingsID::Rollback_EnableLocalTesting));
 
     const bool synchronizedNetplayActive = CoreIsSynchronizedNetplayActive();
-    const bool netplaySessionActive = synchronizedNetplayActive || CoreHasInitKaillera();
+    const bool blockEmulationPauseForNetplay = this->shouldBlockEmulationPauseForNetplay();
+    const bool netplaySessionActive = blockEmulationPauseForNetplay || CoreHasInitKaillera();
 
     keyBinding = QString::fromStdString(CoreSettingsGetStringValue(SettingsID::KeyBinding_StartROM));
     this->action_System_StartRom->setShortcut(QKeySequence(keyBinding));
@@ -2601,7 +2603,7 @@ void MainWindow::updateActions(bool inEmulation, bool isPaused)
     this->action_System_HardReset->setShortcut(QKeySequence(keyBinding));
     keyBinding = QString::fromStdString(CoreSettingsGetStringValue(SettingsID::KeyBinding_Resume));
     this->action_System_Pause->setChecked(isPaused);
-    this->action_System_Pause->setEnabled(inEmulation && !synchronizedNetplayActive);
+    this->action_System_Pause->setEnabled(inEmulation && !blockEmulationPauseForNetplay);
     this->action_System_Pause->setShortcut(QKeySequence(keyBinding));
     keyBinding = QString::fromStdString(CoreSettingsGetStringValue(SettingsID::KeyBinding_Screenshot));
     this->action_System_Screenshot->setEnabled(inEmulation);
@@ -3425,6 +3427,69 @@ void MainWindow::on_EventFilter_FileDropped(QDropEvent *event)
     this->launchEmulationThread(file, "", refreshRomList, -1, false, true);
 }
 
+void MainWindow::on_QGuiApplication_applicationStateChanged(Qt::ApplicationState state)
+{
+    bool isRunning = CoreIsEmulationRunning();
+    bool isPaused = CoreIsEmulationPaused();
+
+    bool pauseOnFocusLoss = CoreSettingsGetBoolValue(SettingsID::GUI_PauseEmulationOnFocusLoss);
+    bool resumeOnFocus = CoreSettingsGetBoolValue(SettingsID::GUI_ResumeEmulationOnFocus);
+    bool blockEmulationPauseForNetplay = this->shouldBlockEmulationPauseForNetplay();
+
+    switch (state)
+    {
+        default:
+            break;
+
+        case Qt::ApplicationState::ApplicationInactive:
+        {
+            if (pauseOnFocusLoss && isRunning && !isPaused && !blockEmulationPauseForNetplay)
+            {
+                if (CorePauseEmulation())
+                {
+                    this->ui_FocusPausedEmulation = true;
+                    this->updateUI(true, true);
+                }
+            }
+        } break;
+
+        case Qt::ApplicationState::ApplicationActive:
+        {
+            if (resumeOnFocus && isPaused && this->ui_FocusPausedEmulation)
+            {
+                if (!blockEmulationPauseForNetplay && CoreResumeEmulation())
+                {
+                    this->ui_FocusPausedEmulation = false;
+                    this->updateUI(true, false);
+                }
+            }
+
+            if (!resumeOnFocus || !CoreIsEmulationPaused() || blockEmulationPauseForNetplay)
+            {
+                this->ui_FocusPausedEmulation = false;
+            }
+        } break;
+    }
+}
+
+bool MainWindow::shouldBlockEmulationPauseForNetplay(void) const
+{
+    if (CoreIsSynchronizedNetplayActive())
+    {
+        return true;
+    }
+
+#ifdef NETPLAY
+    if (this->kailleraSessionManager != nullptr || this->netplaySessionDialog != nullptr ||
+        this->ui_RollbackNetplayRoomActive || this->ui_RollbackNetplayLaunchActive)
+    {
+        return true;
+    }
+#endif // NETPLAY
+
+    return false;
+}
+
 #ifdef UPDATER
 
 namespace
@@ -3686,6 +3751,10 @@ void MainWindow::on_Action_System_Pause(void)
     }
 
     this->updateUI(true, (!isPaused && ret));
+    if (ret)
+    {
+        this->ui_FocusPausedEmulation = false;
+    }
 }
 
 void MainWindow::on_Action_System_Screenshot(void)
@@ -4741,6 +4810,8 @@ void MainWindow::on_Action_Audio_ToggleVolumeMute(void)
 
 void MainWindow::on_Emulation_Started(void)
 {
+    this->ui_FocusPausedEmulation = false;
+
     // only clear log dialog when we've gone over the limit
     if (this->logDialog.GetLineCount() >= 500000)
     {
@@ -4753,6 +4824,8 @@ void MainWindow::on_Emulation_Started(void)
 
 void MainWindow::on_Emulation_Finished(bool ret, QString error)
 {
+    this->ui_FocusPausedEmulation = false;
+
 #ifdef _WIN32
     this->restoreDisplayMode();
 #endif
