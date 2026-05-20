@@ -103,6 +103,8 @@ enum class SettingsID
     // Rollback Settings
     Rollback_VerboseStats,
     Rollback_EnableLocalTesting,
+    Rollback_VerbosePifInputLogging,
+    Rollback_VerboseGlideInputLogging,
 
     // Core Plugin Settings
     Core_GFX_Plugin,
