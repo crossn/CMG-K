@@ -21,7 +21,6 @@
 #include <QComboBox>
 #include <QTimer>
 #include <QGroupBox>
-#include <QAction>
 #include <QSpinBox>
 #include <QFrame>
 
@@ -118,9 +117,9 @@ private:
     bool m_rollbackGameActive = false;
     bool m_closeCleanupDone = false;
     bool m_ready = false;
+    bool m_peerReady = false;
     bool m_peerConnected = false;
     bool m_peerKickPending = false;
-    bool m_suppressAdvancedSettingsPopup = false;
     QString m_gameName;
     QString m_username;
     QString m_peerName;
@@ -130,10 +129,18 @@ private:
     QPushButton* m_btnKickPeer = nullptr;
 
     // Players
+    QFrame* m_hostPlayerCard = nullptr;
+    QLabel* m_hostPlayerNameLabel = nullptr;
+    QFrame* m_hostConnectCodeBadge = nullptr;
+    QLabel* m_hostConnectCodeLabel = nullptr;
+    QPushButton* m_btnCopyConnectCode = nullptr;
+    QLabel* m_hostPingLabel = nullptr;
+    QLabel* m_hostReadyLabel = nullptr;
     QLabel* m_playersEmptyLabel = nullptr;
     QFrame* m_playerCard = nullptr;
     QLabel* m_playerNameLabel = nullptr;
     QLabel* m_playerPingLabel = nullptr;
+    QLabel* m_playerReadyLabel = nullptr;
 
     // Chat area
     QTextBrowser* m_chat = nullptr;
@@ -158,10 +165,9 @@ private:
     QComboBox* m_frameDelayCombo = nullptr;
     QSpinBox* m_frameDelaySpin = nullptr;
     QLabel* m_frameDelayHelpLabel = nullptr;
-    QPushButton* m_advancedSettingsButton = nullptr;
+    QCheckBox* m_advancedSettingsCheck = nullptr;
+    QWidget* m_advancedSettingsPanel = nullptr;
     QComboBox* m_predictionWindowCombo = nullptr;
-    QLineEdit* m_connectCodeEdit = nullptr;
-    QAction* m_copyAction = nullptr;
 
     int m_lastPing = -1;
     int m_rollbackDelayMode = 0;

@@ -864,9 +864,6 @@ void p2p_step(){
 							P2PCORE.connection->send_instruction(&kx);
 							p2p_PING_TIME = p2p_GetTime();
 							P2PCORE.last_ping_sent_time = p2p_PING_TIME;
-							
-							p2p_send_chat("Using version: " P2P_VERSION " - Things may behave in an unexpected manner if different versions are used");
-							
 							if (P2PCORE.USERREADY) {
 								p2p_instruction kxx;
 								kxx.inst.type = PREADY;
@@ -912,9 +909,6 @@ void p2p_step(){
 									P2PCORE.connection->send_instruction(&kxx);
 									p2p_PING_TIME = p2p_GetTime();
 									P2PCORE.last_ping_sent_time = p2p_PING_TIME;
-									
-									p2p_send_chat("Using version: " P2P_VERSION);
-
 									p2p_peer_joined_callback();
 									
 								}
