@@ -21,6 +21,12 @@
 #endif
 #endif
 
+// Recording hooks live in n02. The rollback flow needs to append per-frame
+// synced inputs to the open .krec because it bypasses n02's normal frame loop.
+#ifdef RMGK_HAVE_P2P_TRANSPORT
+#include "n02_client.h"
+#endif
+
 #include <algorithm>
 #include <atomic>
 #include <chrono>
@@ -29,6 +35,7 @@
 #include <exception>
 #include <fstream>
 #include <iomanip>
+#include <map>
 #include <mutex>
 #include <sstream>
 #include <string>
@@ -45,6 +52,12 @@ constexpr double kGekkoTimesyncStrength = 0.002;
 constexpr double kGekkoTimesyncMinScale = 0.99;
 constexpr double kGekkoTimesyncMaxScale = 1.01;
 constexpr double kGekkoTimesyncLerp = 0.15;
+// Sample gekko_frames_ahead() this often when recomputing the target
+// emulation speed. Mirrors Slippi's SLIPPI_ONLINE_LOCKSTEP_INTERVAL (30
+// frames @ 60Hz = once per ~500ms) — single-frame jitter spikes no
+// longer kick the speed scale around; the lerp keeps speed_scale
+// converging toward the cached target on every frame in between.
+constexpr int kGekkoTimesyncIntervalFrames = 30;
 constexpr size_t kGekkoClientReplayFrames = 600;
 
 #ifdef RMGK_HAVE_GEKKONET
@@ -73,6 +86,13 @@ std::vector<int> g_GekkoPlayerHandles;
 std::vector<int> g_GekkoLocalHandles;
 std::vector<unsigned char> g_GekkoLatchedInput;
 bool g_GekkoHasLatchedInput = false;
+// Per-frame input buffer for rollback-aware krec recording. Buffered until
+// each frame ages past the rollback window so that rolling-back re-sims can
+// overwrite the initial speculative entry with the corrected input before
+// it gets committed to the .krec file.
+std::map<int, std::vector<unsigned char>> g_GekkoFrameInputBuffer;
+int g_GekkoMaxObservedFrame = -1;
+constexpr int kGekkoRecordingRollbackHorizon = 32;
 std::atomic_bool g_GekkoExecuting{false};
 std::atomic_bool g_GekkoStopRequested{false};
 std::vector<PendingGekkoSave> g_GekkoPendingSaves;
@@ -84,6 +104,11 @@ int g_GekkoWaitingLoops = 0;
 int g_GekkoLocalInputLogRepeats = 0;
 int g_GekkoPacingLogFrames = 0;
 double g_GekkoSpeedScale = 1.0;
+// Timesync sample state. Counter wraps every kGekkoTimesyncIntervalFrames
+// to trigger a fresh frames_ahead sample. TargetScale is what g_GekkoSpeedScale
+// lerps toward between samples.
+int g_GekkoTimesyncSampleCounter = 0;
+double g_GekkoTimesyncTargetScale = 1.0;
 bool g_GekkoLogEnabled = false;
 std::mutex g_GekkoClientReplayMutex;
 ClientInputReplayMode g_GekkoClientReplayMode = ClientInputReplayMode::Off;
@@ -131,6 +156,8 @@ void reset_gekko_log()
         g_GekkoLocalInputLogRepeats = 0;
         g_GekkoPacingLogFrames = 0;
         g_GekkoSpeedScale = 1.0;
+        g_GekkoTimesyncSampleCounter = 0;
+        g_GekkoTimesyncTargetScale = 1.0;
         g_GekkoLastLoadStateUs = 0;
         g_GekkoLastSaveStateUs = 0;
         g_GekkoLastRunFrameUs = 0;
@@ -149,6 +176,8 @@ void reset_gekko_log()
     g_GekkoLocalInputLogRepeats = 0;
     g_GekkoPacingLogFrames = 0;
     g_GekkoSpeedScale = 1.0;
+    g_GekkoTimesyncSampleCounter = 0;
+    g_GekkoTimesyncTargetScale = 1.0;
     g_GekkoLastLoadStateUs = 0;
     g_GekkoLastSaveStateUs = 0;
     g_GekkoLastRunFrameUs = 0;
@@ -566,6 +595,36 @@ bool latch_gekko_input(const GekkoGameEvent* event)
         }
     }
 
+    // Mirror the per-frame input record that modifyPlayValues normally writes
+    // for non-rollback Kaillera/P2P play. The initial speculative advance for
+    // frame K can carry predicted inputs that GekkoNet later corrects via a
+    // rolling-back re-sim of frame K. To keep the .krec deterministic, buffer
+    // by frame number (latest write wins) and commit only once the frame ages
+    // past the rollback window. Run-ahead advances are skipped — GekkoNet
+    // resets the sync frame after run-ahead, so those frames are advanced
+    // again later as settled or rolling-back.
+#ifdef RMGK_HAVE_P2P_TRANSPORT
+    if (!event->data.adv.running_ahead)
+    {
+        const int frame = event->data.adv.frame;
+        g_GekkoFrameInputBuffer[frame] = g_GekkoLatchedInput;
+        if (frame > g_GekkoMaxObservedFrame)
+        {
+            g_GekkoMaxObservedFrame = frame;
+        }
+        while (!g_GekkoFrameInputBuffer.empty())
+        {
+            auto it = g_GekkoFrameInputBuffer.begin();
+            if (g_GekkoMaxObservedFrame - it->first <= kGekkoRecordingRollbackHorizon)
+            {
+                break;
+            }
+            n02::recordingWriteInputs(it->second.data(), static_cast<int>(it->second.size()));
+            g_GekkoFrameInputBuffer.erase(it);
+        }
+    }
+#endif
+
     if (g_GekkoLogEnabled &&
         (g_GekkoLogFrames < kGekkoMaxLoggedFrames || g_GekkoLatchedInput != g_GekkoLastLatchedInput))
     {
@@ -616,24 +675,36 @@ bool process_pending_saves()
 
 void apply_gekko_frame_pacing()
 {
+    // Read frames_ahead every call (cheap, just a member access in
+    // GekkoSession) but only recompute the target scale once per
+    // sampling interval. The per-frame lerp below carries the speed scale
+    // toward the cached target between samples.
     const float framesAhead = gekko_frames_ahead(g_GekkoSession);
-    double targetScale = 1.0;
-    if (framesAhead >= kGekkoTimesyncDeadzone || framesAhead <= -kGekkoTimesyncDeadzone)
+    const bool isSampleFrame =
+        (g_GekkoTimesyncSampleCounter % kGekkoTimesyncIntervalFrames) == 0;
+    if (isSampleFrame)
     {
-        targetScale = 1.0 - (static_cast<double>(framesAhead) * kGekkoTimesyncStrength);
-        targetScale = std::clamp(targetScale, kGekkoTimesyncMinScale, kGekkoTimesyncMaxScale);
+        double newTarget = 1.0;
+        if (framesAhead >= kGekkoTimesyncDeadzone || framesAhead <= -kGekkoTimesyncDeadzone)
+        {
+            newTarget = 1.0 - (static_cast<double>(framesAhead) * kGekkoTimesyncStrength);
+            newTarget = std::clamp(newTarget, kGekkoTimesyncMinScale, kGekkoTimesyncMaxScale);
+        }
+        g_GekkoTimesyncTargetScale = newTarget;
     }
+    g_GekkoTimesyncSampleCounter++;
 
-    g_GekkoSpeedScale += (targetScale - g_GekkoSpeedScale) * kGekkoTimesyncLerp;
+    g_GekkoSpeedScale += (g_GekkoTimesyncTargetScale - g_GekkoSpeedScale) * kGekkoTimesyncLerp;
     CoreRollbackSetTimesyncScale(g_GekkoSpeedScale);
 
     g_GekkoPacingLogFrames++;
     if (g_GekkoLogEnabled &&
-        (targetScale != 1.0 || g_GekkoPacingLogFrames <= 10 || (g_GekkoPacingLogFrames % 60) == 0))
+        (g_GekkoTimesyncTargetScale != 1.0 || g_GekkoPacingLogFrames <= 10 || (g_GekkoPacingLogFrames % 60) == 0))
     {
         std::ostringstream stream;
         stream << "pacing frames_ahead=" << std::fixed << std::setprecision(2) << framesAhead
-               << " target_scale=" << std::setprecision(4) << targetScale
+               << " sample=" << (isSampleFrame ? 1 : 0)
+               << " target_scale=" << std::setprecision(4) << g_GekkoTimesyncTargetScale
                << " speed_scale=" << g_GekkoSpeedScale;
 
         if (g_GekkoRemoteHandle >= 0)
@@ -1154,6 +1225,8 @@ CORE_EXPORT bool rmgk_gekko::start_p2p_session(const char* gameName, int players
     g_GekkoLocalHandles.assign(static_cast<size_t>(players), -1);
     g_GekkoLatchedInput.assign(static_cast<size_t>(players * inputSize), 0);
     g_GekkoHasLatchedInput = false;
+    g_GekkoFrameInputBuffer.clear();
+    g_GekkoMaxObservedFrame = -1;
     g_GekkoPendingSaves.clear();
 
     if (g_GekkoLogEnabled)
@@ -1497,6 +1570,8 @@ CORE_EXPORT bool rmgk_gekko::start_local_session(const char* gameName, int playe
     g_GekkoLocalHandles.assign(static_cast<size_t>(players), -1);
     g_GekkoLatchedInput.assign(static_cast<size_t>(players * inputSize), 0);
     g_GekkoHasLatchedInput = false;
+    g_GekkoFrameInputBuffer.clear();
+    g_GekkoMaxObservedFrame = -1;
     g_GekkoPendingSaves.clear();
 
     for (int player = 1; player <= players; player++)
@@ -1561,6 +1636,15 @@ CORE_EXPORT void rmgk_gekko::close_session()
     g_GekkoLocalHandles.clear();
     g_GekkoLatchedInput.clear();
     g_GekkoHasLatchedInput = false;
+#ifdef RMGK_HAVE_P2P_TRANSPORT
+    // Flush any remaining frames still inside the rollback window at teardown.
+    for (auto& entry : g_GekkoFrameInputBuffer)
+    {
+        n02::recordingWriteInputs(entry.second.data(), static_cast<int>(entry.second.size()));
+    }
+#endif
+    g_GekkoFrameInputBuffer.clear();
+    g_GekkoMaxObservedFrame = -1;
     g_GekkoExecuting.store(false, std::memory_order_relaxed);
     g_GekkoPendingSaves.clear();
     g_GekkoDebugInputProvider = nullptr;
@@ -1575,6 +1659,8 @@ CORE_EXPORT void rmgk_gekko::close_session()
         g_GekkoClientReplayIndex = 0;
     }
     g_GekkoSpeedScale = 1.0;
+    g_GekkoTimesyncSampleCounter = 0;
+    g_GekkoTimesyncTargetScale = 1.0;
     CoreRollbackSetTimesyncScale(1.0);
 #ifdef RMGK_HAVE_P2P_TRANSPORT
     g_GekkoP2PRemoteAddress.clear();

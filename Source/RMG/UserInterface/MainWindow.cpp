@@ -58,12 +58,15 @@
 #include <QSettings>
 #include <QStatusBar>
 #include <QMenuBar>
+#include <QByteArray>
 #include <QString>
+#include <QStringList>
 #include <QTimer>
 #include <QShowEvent>
 #include <QDir>
 #include <QUrl>
 #include <QRegularExpression>
+#include <QScreen>
 
 #ifdef KCA_DRAG_DROP
 #include <KUrlMimeData>
@@ -77,6 +80,7 @@
 #include <QProxyStyle>
 
 #include <cstdlib>
+#include <string>
 
 #ifdef _WIN32
 class NoAccentProxyStyle final : public QProxyStyle
@@ -1603,7 +1607,6 @@ bool MainWindow::Init(QApplication* app, bool showUI, bool launchROM)
     // connect signals early due to pending debug callbacks
     connect(coreCallBacks, &CoreCallbacks::OnCoreDebugCallback, this, &MainWindow::on_Core_DebugCallback);
     connect(coreCallBacks, &CoreCallbacks::OnCoreStateCallback, this, &MainWindow::on_Core_StateCallback);
-    connect(app, &QGuiApplication::applicationStateChanged, this, &MainWindow::on_QGuiApplication_applicationStateChanged);
 
     if (!this->coreCallBacks->Init())
     {
@@ -2531,9 +2534,54 @@ void MainWindow::launchEmulationThread(QString cartRom, QString diskRom, bool re
         return;
     }
 
-    if (this->ui_LaunchInFullscreen || CoreSettingsGetBoolValue(SettingsID::GUI_AutomaticFullscreen))
+    const bool startInFullscreen = this->ui_LaunchInFullscreen || CoreSettingsGetBoolValue(SettingsID::GUI_AutomaticFullscreen);
+#ifdef _WIN32
+    const bool useNativeFullscreenStartup = startInFullscreen &&
+        CoreSettingsGetBoolValue(SettingsID::GUI_ExclusiveFullscreen) &&
+        CoreSettingsGetBoolValue(SettingsID::GUI_BetaFullscreenBackend);
+    qputenv("RMG_GLIDEN64_START_FULLSCREEN", useNativeFullscreenStartup ? "1" : "0");
+    if (useNativeFullscreenStartup)
     {
-        this->ui_FullscreenTimerId = this->startTimer(100);
+        int nativeWidth = 0;
+        int nativeHeight = 0;
+        QString resolution = QString::fromStdString(CoreSettingsGetStringValue(SettingsID::GUI_ExclusiveFullscreenResolution));
+        QStringList resolutionParts = resolution.split('x');
+        if (resolutionParts.size() == 2)
+        {
+            bool widthOk = false;
+            bool heightOk = false;
+            nativeWidth = resolutionParts.at(0).toInt(&widthOk);
+            nativeHeight = resolutionParts.at(1).toInt(&heightOk);
+            if (!widthOk || !heightOk)
+            {
+                nativeWidth = 0;
+                nativeHeight = 0;
+            }
+        }
+        if ((nativeWidth <= 0 || nativeHeight <= 0) && this->screen() != nullptr)
+        {
+            QSize screenSize = this->screen()->geometry().size();
+            nativeWidth = screenSize.width();
+            nativeHeight = screenSize.height();
+        }
+        qputenv("RMG_GLIDEN64_START_FULLSCREEN_WIDTH", nativeWidth > 0 ? QByteArray::number(nativeWidth) : "");
+        qputenv("RMG_GLIDEN64_START_FULLSCREEN_HEIGHT", nativeHeight > 0 ? QByteArray::number(nativeHeight) : "");
+    }
+    else
+    {
+        qputenv("RMG_GLIDEN64_START_FULLSCREEN_WIDTH", "");
+        qputenv("RMG_GLIDEN64_START_FULLSCREEN_HEIGHT", "");
+    }
+#endif
+
+    if (startInFullscreen)
+    {
+#ifdef _WIN32
+        if (!useNativeFullscreenStartup)
+#endif
+        {
+            this->ui_FullscreenTimerId = this->startTimer(100);
+        }
         this->ui_LaunchInFullscreen = false;
     }
 
@@ -3438,40 +3486,54 @@ void MainWindow::on_EventFilter_FileDropped(QDropEvent *event)
     this->launchEmulationThread(file, "", refreshRomList, -1, false, true);
 }
 
-void MainWindow::on_QGuiApplication_applicationStateChanged(Qt::ApplicationState state)
+#ifdef UPDATER
+
+namespace
 {
-    bool isRunning = CoreIsEmulationRunning();
-    bool isPaused = CoreIsEmulationPaused();
-
-    bool pauseOnFocusLoss = CoreSettingsGetBoolValue(SettingsID::GUI_PauseEmulationOnFocusLoss);
-    bool resumeOnFocus = CoreSettingsGetBoolValue(SettingsID::GUI_ResumeEmulationOnFocus);
-
-    switch (state)
+    // Parse a semver-ish version tag ("0.9.3", "v0.9.3") into numeric
+    // parts. Returns an empty vector for inputs that aren't pure
+    // dot-separated integers (e.g. "vdev-100", "0.9.3-rc1"); callers
+    // treat empty as "newer than any released version" so dev builds
+    // never get prompted to downgrade.
+    QVector<int> parseSemverParts(const QString& in)
     {
-        default:
-            break;
+        QString s = in.trimmed();
+        if (s.startsWith('v') || s.startsWith('V')) s.remove(0, 1);
+        if (s.isEmpty()) return {};
 
-        case Qt::ApplicationState::ApplicationInactive:
+        const QStringList parts = s.split('.');
+        QVector<int> out;
+        out.reserve(parts.size());
+        for (const QString& p : parts)
         {
-            // Don't pause during synchronized netplay.
-            if (pauseOnFocusLoss && isRunning && !isPaused && !CoreIsSynchronizedNetplayActive())
-            {
-                this->on_Action_System_Pause();
-                this->ui_ManuallyPaused = false;
-            }
-        } break;
+            bool ok = false;
+            const int v = p.toInt(&ok);
+            if (!ok) return {};
+            out.append(v);
+        }
+        return out;
+    }
 
-        case Qt::ApplicationState::ApplicationActive:
+    // Returns -1 if a < b, 0 if a == b, +1 if a > b. Treat an empty
+    // parts vector as "+inf" so unparseable dev builds compare as
+    // newer than anything tagged.
+    int compareSemver(const QVector<int>& a, const QVector<int>& b)
+    {
+        if (a.isEmpty() && b.isEmpty()) return 0;
+        if (a.isEmpty()) return 1;
+        if (b.isEmpty()) return -1;
+        const int n = std::max(a.size(), b.size());
+        for (int i = 0; i < n; ++i)
         {
-            if (resumeOnFocus && isPaused && !this->ui_ManuallyPaused)
-            {
-                this->on_Action_System_Pause();
-            }
-        } break;
+            const int av = (i < a.size()) ? a[i] : 0;
+            const int bv = (i < b.size()) ? b[i] : 0;
+            if (av < bv) return -1;
+            if (av > bv) return 1;
+        }
+        return 0;
     }
 }
 
-#ifdef UPDATER
 void MainWindow::on_networkAccessManager_Finished(QNetworkReply* reply)
 {
     if (reply->error())
@@ -3492,8 +3554,15 @@ void MainWindow::on_networkAccessManager_Finished(QNetworkReply* reply)
 
     reply->deleteLater();
 
-    // do nothing when versions match
-    if (currentVersion == latestVersion)
+    // GitHub's /releases/latest endpoint only returns the latest
+    // *non-prerelease*. If we're running a pre-release tag (e.g. 0.9.3
+    // marked prerelease on GitHub), the API hands back the previous
+    // stable (0.9.2). A naive string compare then prompts the user to
+    // "update" to an older version. Compare semantically and only
+    // prompt when latest is genuinely newer.
+    const QVector<int> currentParts = parseSemverParts(currentVersion);
+    const QVector<int> latestParts  = parseSemverParts(latestVersion);
+    if (compareSemver(currentParts, latestParts) >= 0)
     {
         if (!this->ui_SilentUpdateCheck)
         {
@@ -3678,7 +3747,6 @@ void MainWindow::on_Action_System_Pause(void)
     }
 
     this->updateUI(true, (!isPaused && ret));
-    this->ui_ManuallyPaused = true;
 }
 
 void MainWindow::on_Action_System_Screenshot(void)

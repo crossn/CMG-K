@@ -82,6 +82,11 @@ static constexpr int kMaxP2PRecentEntries = 12;
 
 namespace {
 
+bool containsForbiddenNetplayListCharacter(const QString& text)
+{
+    return text.contains('{') || text.contains('}') || text.contains('|');
+}
+
 static constexpr int kMaxTraversalDigits = 3;
 static constexpr int kConnectPollIntervalMs = 1;
 static constexpr int kP2PWaitingGamesRefreshMs = 8000;
@@ -4086,6 +4091,8 @@ void KailleraNetplayDialog::onConnectServer()
     // Get username
     QByteArray usernameBytes = m_usernameEdit->text().toUtf8();
     if (usernameBytes.isEmpty()) usernameBytes = "Player";
+    CoreSettingsSetValue(SettingsID::Kaillera_Username,
+                         QString::fromUtf8(usernameBytes).toStdString());
 
     // Initialize kaillera core for server mode
     if (kaillera_core_initialize(0, APP, usernameBytes.data(), 1))
@@ -4225,6 +4232,27 @@ void KailleraNetplayDialog::onServerDoubleClicked(int row, int column)
 
 void KailleraNetplayDialog::onP2PHost()
 {
+    // Use selected game from the host picker
+    QString gameName = (m_p2pGameCombo != nullptr) ? m_p2pGameCombo->currentText().trimmed() : QString();
+    if (gameName.isEmpty())
+    {
+        QMessageBox::warning(this, "P2P Host", "No game selected. Choose a ROM to host.");
+        return;
+    }
+    if (containsForbiddenNetplayListCharacter(gameName))
+    {
+        QMessageBox::warning(this, "P2P Host", "Game names containing {, }, or | are not permitted.");
+        return;
+    }
+
+    QString username = (m_usernameEdit != nullptr) ? m_usernameEdit->text() : QString();
+    if (username.isEmpty()) username = "Player";
+    if (containsForbiddenNetplayListCharacter(username))
+    {
+        QMessageBox::warning(this, "P2P Host", "Usernames containing {, }, or | are not permitted.");
+        return;
+    }
+
     if (m_p2pAutoClaimSocket != nullptr &&
         currentP2PStaticCode().isEmpty() &&
         currentP2PStaticCodeOwnerToken().isEmpty())
@@ -4237,16 +4265,10 @@ void KailleraNetplayDialog::onP2PHost()
         return;
     }
 
-    QByteArray usernameBytes = m_usernameEdit->text().toUtf8();
-    if (usernameBytes.isEmpty()) usernameBytes = "Player";
+    QByteArray usernameBytes = username.toUtf8();
+    CoreSettingsSetValue(SettingsID::Kaillera_Username,
+                         username.toStdString());
 
-    // Use selected game from the host picker
-    QString gameName = (m_p2pGameCombo != nullptr) ? m_p2pGameCombo->currentText().trimmed() : QString();
-    if (gameName.isEmpty())
-    {
-        QMessageBox::warning(this, "P2P Host", "No game selected. Choose a ROM to host.");
-        return;
-    }
     QByteArray gameBytes = gameName.toUtf8();
 
     int port = CoreSettingsGetIntValue(SettingsID::Kaillera_Port);
@@ -4409,6 +4431,8 @@ void KailleraNetplayDialog::onP2PJoin()
 
     QByteArray usernameBytes = m_usernameEdit->text().toUtf8();
     if (usernameBytes.isEmpty()) usernameBytes = "Player";
+    CoreSettingsSetValue(SettingsID::Kaillera_Username,
+                         QString::fromUtf8(usernameBytes).toStdString());
 
     bool isCode = looksLikeTraversalCode(addrText);
     const QString normalizedCode = isCode ? normalizeTraversalCode(addrText) : QString();
@@ -4990,72 +5014,76 @@ void KailleraNetplayDialog::populateP2PWaitingGames(const QByteArray& data)
             continue;
         }
 
+        // plist.txt may return either newline-separated rows or one flat pipe stream.
         const QList<QByteArray> fields = line.split('|');
         if (fields.size() < 4)
         {
             continue;
         }
 
-        const QString gameName = QString::fromUtf8(fields[0].trimmed());
-        QString emulator = QString::fromUtf8(fields[1].trimmed());
-        const QString userName = QString::fromUtf8(fields[2].trimmed());
-        const QString hostPort = QString::fromUtf8(fields[3].trimmed());
+        for (qsizetype fieldIndex = 0; fieldIndex + 3 < fields.size(); fieldIndex += 4)
+        {
+            const QString gameName = QString::fromUtf8(fields[fieldIndex].trimmed());
+            QString emulator = QString::fromUtf8(fields[fieldIndex + 1].trimmed());
+            const QString userName = QString::fromUtf8(fields[fieldIndex + 2].trimmed());
+            const QString hostPort = QString::fromUtf8(fields[fieldIndex + 3].trimmed());
 
-        QString code;
-        extractP2PAppCode(emulator, code);
-        if (code.isEmpty())
-        {
-            continue;
-        }
+            QString code;
+            extractP2PAppCode(emulator, code);
+            if (code.isEmpty())
+            {
+                continue;
+            }
 
-        const bool gameAvailable = localKailleraGameListContains(gameName);
-        const QString localEmulator = QString::fromUtf8(APP).trimmed();
-        const bool emulatorMismatch = emulator.trimmed() != localEmulator;
+            const bool gameAvailable = localKailleraGameListContains(gameName);
+            const QString localEmulator = QString::fromUtf8(APP).trimmed();
+            const bool emulatorMismatch = emulator.trimmed() != localEmulator;
 
-        const QString normalizedCode = normalizeTraversalCode(code);
-        int storedIndex = normalizedCode.isEmpty() ? -1 : p2pStoredIndexByHost(normalizedCode);
-        if (storedIndex < 0)
-        {
-            storedIndex = p2pStoredIndexByHost(code);
-        }
-        if (storedIndex < 0)
-        {
-            storedIndex = p2pStoredIndexByHost(hostPort);
-        }
+            const QString normalizedCode = normalizeTraversalCode(code);
+            int storedIndex = normalizedCode.isEmpty() ? -1 : p2pStoredIndexByHost(normalizedCode);
+            if (storedIndex < 0)
+            {
+                storedIndex = p2pStoredIndexByHost(code);
+            }
+            if (storedIndex < 0)
+            {
+                storedIndex = p2pStoredIndexByHost(hostPort);
+            }
 
-        P2PWaitingStatus status = P2PWaitingStatus::Available;
-        QStringList tooltipLines;
-        tooltipLines << gameName << emulator << code;
-        if (!gameAvailable)
-        {
-            tooltipLines << "Warning: this ROM is not in your local list.";
-        }
-        if (emulatorMismatch)
-        {
-            tooltipLines << QString("Warning: emulator/version differs. Host: %1. You: %2.")
-                .arg(emulator, localEmulator);
-        }
+            P2PWaitingStatus status = P2PWaitingStatus::Available;
+            QStringList tooltipLines;
+            tooltipLines << gameName << emulator << code;
+            if (!gameAvailable)
+            {
+                tooltipLines << "Warning: this ROM is not in your local list.";
+            }
+            if (emulatorMismatch)
+            {
+                tooltipLines << QString("Warning: emulator/version differs. Host: %1. You: %2.")
+                    .arg(emulator, localEmulator);
+            }
 
-        if (!gameAvailable || emulatorMismatch)
-        {
-            status = P2PWaitingStatus::Warning;
-        }
-        else if (storedIndex >= 0 && m_p2pStoredUsers[storedIndex].favorite)
-        {
-            status = P2PWaitingStatus::Favorite;
-            tooltipLines << "Favorite saved opponent.";
-        }
-        else if (storedIndex >= 0)
-        {
-            status = P2PWaitingStatus::Saved;
-            tooltipLines << "Saved opponent.";
-        }
-        else
-        {
-            tooltipLines << "Ready to connect.";
-        }
+            if (!gameAvailable || emulatorMismatch)
+            {
+                status = P2PWaitingStatus::Warning;
+            }
+            else if (storedIndex >= 0 && m_p2pStoredUsers[storedIndex].favorite)
+            {
+                status = P2PWaitingStatus::Favorite;
+                tooltipLines << "Favorite saved opponent.";
+            }
+            else if (storedIndex >= 0)
+            {
+                status = P2PWaitingStatus::Saved;
+                tooltipLines << "Saved opponent.";
+            }
+            else
+            {
+                tooltipLines << "Ready to connect.";
+            }
 
-        entries.append({gameName, emulator, userName, hostPort, code, tooltipLines.join('\n'), status});
+            entries.append({gameName, emulator, userName, hostPort, code, tooltipLines.join('\n'), status});
+        }
     }
 
     std::stable_sort(entries.begin(), entries.end(), [](const WaitingGameEntry& a, const WaitingGameEntry& b) {
