@@ -13,7 +13,6 @@
 #include <QFormLayout>
 #include <QLabel>
 #include <QLineEdit>
-#include <QComboBox>
 #include <QPushButton>
 #include <QRegularExpression>
 #include <QRegularExpressionValidator>
@@ -21,6 +20,14 @@
 #include <QDialogButtonBox>
 
 using namespace UserInterface::Dialog;
+
+namespace
+{
+    // Production lobby server hosted on Vultr Chicago. Update here when DNS
+    // is set up (e.g. ws://lobby.rmgk.net:8080/ws). The dialog no longer
+    // exposes server choice — every client connects here.
+    constexpr const char* kDefaultLobbyUrl = "ws://216.128.157.98:8080/ws";
+} // namespace
 
 LobbyConnectDialog::LobbyConnectDialog(QWidget* parent)
     : QDialog(parent)
@@ -37,12 +44,6 @@ void LobbyConnectDialog::buildUi()
     auto* root = new QVBoxLayout(this);
 
     auto* form = new QFormLayout;
-
-    m_serverCombo = new QComboBox(this);
-    m_serverCombo->setEditable(true);
-    m_serverCombo->addItem("ws://localhost:8080/ws");
-    m_serverCombo->addItem("ws://lobby.rmgk.net:8080/ws"); // placeholder default prod URL
-    form->addRow("Server:", m_serverCombo);
 
     m_usernameEdit = new QLineEdit(this);
     m_usernameEdit->setMaxLength(16);
@@ -66,20 +67,14 @@ void LobbyConnectDialog::buildUi()
     root->addWidget(btnBox);
 
     connect(m_usernameEdit, &QLineEdit::textChanged, this, &LobbyConnectDialog::validateInput);
-    connect(m_serverCombo,  &QComboBox::editTextChanged, this, &LobbyConnectDialog::validateInput);
 }
 
 void LobbyConnectDialog::validateInput()
 {
     const QString user = m_usernameEdit->text().trimmed();
-    const QString srv  = m_serverCombo->currentText().trimmed();
 
     QString reason;
-    if (srv.isEmpty())
-        reason = "Server URL required.";
-    else if (!srv.startsWith("ws://") && !srv.startsWith("wss://"))
-        reason = "Server URL must start with ws:// or wss://";
-    else if (user.length() < 3)
+    if (user.length() < 3)
         reason = "Username must be at least 3 characters.";
 
     m_validationLbl->setText(reason);
@@ -88,7 +83,7 @@ void LobbyConnectDialog::validateInput()
 
 void LobbyConnectDialog::onConnect()
 {
-    m_serverUrl = m_serverCombo->currentText().trimmed();
+    m_serverUrl = kDefaultLobbyUrl;
     m_username  = m_usernameEdit->text().trimmed();
     saveSettings();
     accept();
@@ -97,23 +92,13 @@ void LobbyConnectDialog::onConnect()
 void LobbyConnectDialog::loadSettings()
 {
     QSettings s;
-    const QString lastSrv  = s.value("Lobby/ServerUrl", "ws://localhost:8080/ws").toString();
-    const QString lastUser = s.value("Lobby/Username").toString();
-
-    const int idx = m_serverCombo->findText(lastSrv);
-    if (idx >= 0)
-        m_serverCombo->setCurrentIndex(idx);
-    else
-        m_serverCombo->setEditText(lastSrv);
-
-    m_usernameEdit->setText(lastUser);
+    m_usernameEdit->setText(s.value("Lobby/Username").toString());
 }
 
 void LobbyConnectDialog::saveSettings()
 {
     QSettings s;
-    s.setValue("Lobby/ServerUrl", m_serverUrl);
-    s.setValue("Lobby/Username",  m_username);
+    s.setValue("Lobby/Username", m_username);
 }
 
 #endif // NETPLAY

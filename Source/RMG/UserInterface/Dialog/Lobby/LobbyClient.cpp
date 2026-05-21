@@ -29,6 +29,12 @@ namespace
     constexpr char ANCHOR_MAGIC[4] = { 'R', 'M', 'G', 'K' };
     constexpr quint8 ANCHOR_OP_REGISTER  = 0x01;
     constexpr quint8 ANCHOR_OP_KEEPALIVE = 0x02;
+    constexpr quint8 ANCHOR_OP_PUNCH     = 0x03;
+
+    // Burst size for NAT punch-through. Defends against single-packet loss
+    // and brief mapping-creation latency on consumer routers — NOT against
+    // simultaneity failures (those need retries, which we don't do here yet).
+    constexpr int ANCHOR_PUNCH_BURST = 10;
 } // namespace
 
 LobbyClient::LobbyClient(QObject* parent)
@@ -457,6 +463,34 @@ void LobbyClient::sendUdpKeepalive()
 void LobbyClient::onUdpKeepaliveTimer()
 {
     sendUdpKeepalive();
+}
+
+void LobbyClient::punchPeerEndpoints(const QList<LobbyMatchPeer>& peers)
+{
+    if (!m_udp || m_udp->state() == QAbstractSocket::UnconnectedState)
+        return;
+    if (m_selfUserId == 0)
+        return;
+
+    QByteArray pkt;
+    pkt.reserve(13);
+    pkt.append(ANCHOR_MAGIC, 4);
+    pkt.append(static_cast<char>(ANCHOR_OP_PUNCH));
+    quint64 idBE = qToBigEndian(m_selfUserId);
+    pkt.append(reinterpret_cast<const char*>(&idBE), sizeof(idBE));
+
+    for (const auto& p : peers)
+    {
+        if (p.userId == m_selfUserId)
+            continue;
+        if (p.publicIp.isEmpty() || p.publicPort == 0)
+            continue;
+        QHostAddress addr(p.publicIp);
+        if (addr.isNull())
+            continue;
+        for (int i = 0; i < ANCHOR_PUNCH_BURST; ++i)
+            m_udp->writeDatagram(pkt, addr, p.publicPort);
+    }
 }
 
 quint16 LobbyClient::localUdpPort() const

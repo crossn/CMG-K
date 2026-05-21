@@ -1604,6 +1604,13 @@ void RollbackLobbyDialog::onMatchBegin(quint64 matchId, const QList<LobbyClient:
     }
 
     const quint16 localPort = m_client->localUdpPort();
+
+    // Punch peer NATs from the anchor socket before handing the port to
+    // GekkoNet. Both peers receive MATCH_BEGIN within ~RTT of each other, so
+    // both fire while the other's anchor is still open — opens the NAT
+    // mapping so GekkoNet's first frame doesn't have to eat the handshake.
+    m_client->punchPeerEndpoints(peers);
+
     m_client->releaseUdpAnchor();
 
     {

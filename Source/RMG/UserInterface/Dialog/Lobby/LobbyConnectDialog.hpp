@@ -13,7 +13,6 @@
 #include <QString>
 
 class QLineEdit;
-class QComboBox;
 class QPushButton;
 class QLabel;
 
@@ -22,8 +21,8 @@ namespace UserInterface
 namespace Dialog
 {
 
-// Small modal asking for server URL + username before opening the main lobby.
-// Persists last-used values via QSettings (key "Lobby/*").
+// Small modal asking for a username before opening the main lobby. Server URL
+// is hardcoded to the production endpoint; persists username via QSettings.
 class LobbyConnectDialog : public QDialog
 {
     Q_OBJECT
@@ -44,7 +43,6 @@ private:
     void loadSettings();
     void saveSettings();
 
-    QComboBox*   m_serverCombo   = nullptr;
     QLineEdit*   m_usernameEdit  = nullptr;
     QPushButton* m_connectButton = nullptr;
     QLabel*      m_validationLbl = nullptr;

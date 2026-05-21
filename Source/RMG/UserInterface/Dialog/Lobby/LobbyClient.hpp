@@ -93,7 +93,7 @@ public:
     explicit LobbyClient(QObject* parent = nullptr);
     ~LobbyClient() override;
 
-    // Connect to a server. wsUrl is like "ws://lobby.rmgk.net:8080/ws".
+    // Connect to a server. wsUrl is like "ws://216.128.157.98:8080/ws".
     // udpAddr is the server's UDP anchor host:port (often the same hostname
     // as wsUrl, port 6364). If empty, derived from wsUrl host + default 6364.
     void connectToServer(const QString& wsUrl, const QString& username,
@@ -139,6 +139,12 @@ public:
     quint16 localUdpPort() const;
     void releaseUdpAnchor();
     void reopenUdpAnchor();
+
+    // Fire a burst of UDP punch packets from the anchor socket to each peer's
+    // public endpoint. Call this *before* releaseUdpAnchor() so the punch goes
+    // out from the same NAT mapping GekkoNet will inherit when it re-binds.
+    // Peers silently drop these on their still-open anchor socket.
+    void punchPeerEndpoints(const QList<LobbyMatchPeer>& peers);
 
 signals:
     void stateChanged(LobbyClient::ConnectionState newState);
