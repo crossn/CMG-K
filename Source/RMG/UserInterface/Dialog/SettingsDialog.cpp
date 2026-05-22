@@ -18,6 +18,7 @@
 #include <QRegularExpression>
 #include <QVBoxLayout>
 #include <QHBoxLayout>
+#include <QGroupBox>
 #include <QFileDialog>
 #include <QColorDialog>
 #include <QDirIterator>
@@ -229,14 +230,17 @@ SettingsDialog::SettingsDialog(QWidget *parent, QString file) : QDialog(parent)
 
     QWidget* rollbackTab = new QWidget(this->tabWidget);
     QVBoxLayout* rollbackLayout = new QVBoxLayout(rollbackTab);
-    this->rollbackVerboseStatsCheckBox = new QCheckBox("Enable verbose rollback stats messaging", rollbackTab);
+    QGroupBox* rollbackLoggingGroupBox = new QGroupBox("Logging", rollbackTab);
+    QVBoxLayout* rollbackLoggingLayout = new QVBoxLayout(rollbackLoggingGroupBox);
     this->rollbackEnableLocalTestingCheckBox = new QCheckBox("Use rollback engine for local play", rollbackTab);
-    this->rollbackVerbosePifInputLoggingCheckBox = new QCheckBox("Enable verbose PIF input logging", rollbackTab);
-    this->rollbackVerboseGlideInputLoggingCheckBox = new QCheckBox("Enable verbose Glide input logging", rollbackTab);
-    rollbackLayout->addWidget(this->rollbackVerboseStatsCheckBox);
+    this->rollbackVerboseStatsCheckBox = new QCheckBox("Enable verbose rollback stats logging", rollbackLoggingGroupBox);
+    this->rollbackVerbosePifInputLoggingCheckBox = new QCheckBox("Enable verbose PIF input logging", rollbackLoggingGroupBox);
+    this->rollbackVerboseGlideInputLoggingCheckBox = new QCheckBox("Enable verbose Glide input logging", rollbackLoggingGroupBox);
     rollbackLayout->addWidget(this->rollbackEnableLocalTestingCheckBox);
-    rollbackLayout->addWidget(this->rollbackVerbosePifInputLoggingCheckBox);
-    rollbackLayout->addWidget(this->rollbackVerboseGlideInputLoggingCheckBox);
+    rollbackLoggingLayout->addWidget(this->rollbackVerboseStatsCheckBox);
+    rollbackLoggingLayout->addWidget(this->rollbackVerbosePifInputLoggingCheckBox);
+    rollbackLoggingLayout->addWidget(this->rollbackVerboseGlideInputLoggingCheckBox);
+    rollbackLayout->addWidget(rollbackLoggingGroupBox);
     rollbackLayout->addStretch();
     this->tabWidget->addTab(rollbackTab, "Rollback");
 

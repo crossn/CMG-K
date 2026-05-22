@@ -150,6 +150,7 @@ public:
 #include <algorithm>
 #include <cstdint>
 #include <cstring>
+#include <filesystem>
 #include <fstream>
 #include <iomanip>
 #include <mutex>
@@ -194,7 +195,7 @@ constexpr int kRollbackDebugReplayPlayers = 4;
 constexpr int kRollbackDebugStressInterval = 5;
 constexpr int kRollbackDebugStressRollbackFrames = 2;
 constexpr const char* kRollbackDebugReplayFilePath = "rollback_sanity_test.replay";
-constexpr const char* kRollbackDebugReplayLogPath = "rollback_sanity_test.log";
+constexpr const char* kRollbackDebugReplayLogFileName = "rollback_sanity_test.log";
 constexpr uint32_t kRollbackDebugReplayMagic = 0x52534452;
 constexpr uint32_t kRollbackDebugReplayVersion = 9;
 
@@ -585,6 +586,44 @@ bool SaveRollbackDebugReplayFile(std::string& error, const CoreRollbackState& fi
     }
 
     return true;
+}
+
+std::filesystem::path GetRollbackDebugLogDirectory()
+{
+    std::error_code errorCode;
+    std::filesystem::path directory = CoreGetLibraryDirectory() / "Logs";
+
+    if (std::filesystem::is_directory(directory, errorCode) ||
+        std::filesystem::create_directories(directory, errorCode))
+    {
+        return directory.make_preferred();
+    }
+
+    errorCode.clear();
+    directory = "Logs";
+    if (std::filesystem::is_directory(directory, errorCode) ||
+        std::filesystem::create_directories(directory, errorCode))
+    {
+        return directory.make_preferred();
+    }
+
+    return std::filesystem::path();
+}
+
+std::filesystem::path GetRollbackDebugReplayLogPath()
+{
+    const std::filesystem::path directory = GetRollbackDebugLogDirectory();
+    if (!directory.empty())
+    {
+        return directory / kRollbackDebugReplayLogFileName;
+    }
+
+    return std::filesystem::path(kRollbackDebugReplayLogFileName);
+}
+
+std::string GetRollbackDebugReplayLogPathString()
+{
+    return GetRollbackDebugReplayLogPath().string();
 }
 
 std::string GetRollbackDebugReplayPayloadRegion(int payloadOffset)
@@ -1401,7 +1440,7 @@ void WriteRollbackDebugReplayLog(const std::string& phase,
     GetRollbackStatePayload(expectedState, expectedPayload, expectedPayloadLen);
     GetRollbackStatePayload(actualState, actualPayload, actualPayloadLen);
 
-    std::ofstream log(kRollbackDebugReplayLogPath, std::ios::app);
+    std::ofstream log(GetRollbackDebugReplayLogPath(), std::ios::app);
     if (!log.is_open())
     {
         return;
@@ -1470,7 +1509,7 @@ void WriteRollbackDebugReplayLog(const std::string& phase,
 
 void WriteRollbackDebugReplayEventLog(const std::string& phase, const std::string& message)
 {
-    std::ofstream log(kRollbackDebugReplayLogPath, std::ios::app);
+    std::ofstream log(GetRollbackDebugReplayLogPath(), std::ios::app);
     if (!log.is_open())
     {
         return;
@@ -5773,12 +5812,12 @@ void MainWindow::on_Action_Rollback_StartDebugReplay(void)
         {
             this->setDebugReplayStatusMessage("Recorded debug replay: " + std::to_string(recordedInputFrames) +
                 " input frames, payload hash " + std::to_string(finalHash) + ", wrote " + kRollbackDebugReplayFilePath +
-                " and " + kRollbackDebugReplayLogPath);
+                " and " + GetRollbackDebugReplayLogPathString());
         }
         else
         {
             this->setDebugReplayStatusMessage("Debug replay recording stopped before a replay was written; wrote " +
-                std::string(kRollbackDebugReplayLogPath));
+                GetRollbackDebugReplayLogPathString());
         }
     });
     progressTimer->start();
@@ -5924,7 +5963,7 @@ void MainWindow::startVerifyDebugReplay(bool withGraphics, bool stress)
         if (!completed)
         {
             this->setDebugReplayStatusMessage("Debug replay verify stopped before completion; wrote " +
-                std::string(kRollbackDebugReplayLogPath));
+                GetRollbackDebugReplayLogPathString());
             return;
         }
 
@@ -5932,13 +5971,13 @@ void MainWindow::startVerifyDebugReplay(bool withGraphics, bool stress)
         {
             this->setDebugReplayStatusMessage("Debug replay matched: " + std::to_string(replayedInputFrames) +
                 "/" + std::to_string(recordedInputFrames) + " input frames, payload hash " +
-                std::to_string(actualHash) + ", wrote " + kRollbackDebugReplayLogPath);
+                std::to_string(actualHash) + ", wrote " + GetRollbackDebugReplayLogPathString());
         }
         else
         {
             this->setDebugReplayStatusMessage("Debug replay mismatch: expected " + std::to_string(expectedHash) +
                 ", got " + std::to_string(actualHash) + ", replayed " + std::to_string(replayedInputFrames) +
-                "/" + std::to_string(recordedInputFrames) + " input frames, wrote " + kRollbackDebugReplayLogPath);
+                "/" + std::to_string(recordedInputFrames) + " input frames, wrote " + GetRollbackDebugReplayLogPathString());
         }
     });
     progressTimer->start();
