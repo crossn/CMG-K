@@ -109,6 +109,12 @@ private slots:
     void onChatMessageReceived(const LobbyClient::ChatMessage& msg);
     void onMatchBegin(quint64 matchId, const QList<LobbyClient::LobbyMatchPeer>& peers);
 
+    // Periodic probe driver: while in a room, requests a fresh ping
+    // measurement from each seated peer (skipping self). Cadence is set
+    // by m_pingProbeTimer's interval.
+    void onPingProbeTick();
+    void onPingMeasured(quint64 userId, int rttMs);
+
 private:
     void buildUi();
     QWidget* buildMarquee();
@@ -142,6 +148,7 @@ private:
         QLabel*  nameLabel = nullptr;     // username or "Waiting…"
         QLabel*  metaLabel = nullptr;     // "host · 12ms" — right-aligned
         bool     isHost    = false;
+        quint64  userId    = 0;           // seated user, 0 when empty
     };
     void buildSeatRow(SeatRow& row, int slotIdx, QWidget* parent);
     void renderSeatEmpty(SeatRow& row);
@@ -192,6 +199,11 @@ private:
 
     // Seat rows (always 4 — slots beyond maxPlayers are hidden)
     SeatRow    m_seats[4];
+
+    // Drives PING_PROBE_REQUEST → UDP PROBE → PROBE_REPLY refresh cycle for
+    // each peer seated in the current room. Started when a room is entered,
+    // stopped when it's left. Inactive (and unused) outside rooms.
+    QTimer*    m_pingProbeTimer = nullptr;
 
     // In-room action bar
     QPushButton* m_startBtn      = nullptr;

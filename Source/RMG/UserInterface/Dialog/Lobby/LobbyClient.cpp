@@ -17,7 +17,9 @@
 #include <QHostInfo>
 #include <QDateTime>
 #include <QtEndian>
+#include <QRandomGenerator>
 #include <QDebug>
+#include <cstring>
 
 using namespace UserInterface::Dialog;
 
@@ -27,14 +29,19 @@ namespace
     constexpr int UDP_KEEPALIVE_INTERVAL = 20'000;
 
     constexpr char ANCHOR_MAGIC[4] = { 'R', 'M', 'G', 'K' };
-    constexpr quint8 ANCHOR_OP_REGISTER  = 0x01;
-    constexpr quint8 ANCHOR_OP_KEEPALIVE = 0x02;
-    constexpr quint8 ANCHOR_OP_PUNCH     = 0x03;
+    constexpr quint8 ANCHOR_OP_REGISTER    = 0x01;
+    constexpr quint8 ANCHOR_OP_KEEPALIVE   = 0x02;
+    constexpr quint8 ANCHOR_OP_PUNCH       = 0x03;
+    constexpr quint8 ANCHOR_OP_PROBE       = 0x04; // client → peer: ping request
+    constexpr quint8 ANCHOR_OP_PROBE_REPLY = 0x05; // peer → client: ping echo
 
     // Burst size for NAT punch-through. Defends against single-packet loss
     // and brief mapping-creation latency on consumer routers — NOT against
     // simultaneity failures (those need retries, which we don't do here yet).
     constexpr int ANCHOR_PUNCH_BURST = 10;
+
+    // PROBE/PROBE_REPLY packet: [magic(4) | op(1) | senderUserId(8) | nonce(8)]
+    constexpr int PROBE_PACKET_SIZE = 4 + 1 + 8 + 8;
 } // namespace
 
 LobbyClient::LobbyClient(QObject* parent)
@@ -373,8 +380,38 @@ void LobbyClient::handlePingProbeReply(const QJsonObject& data)
     const QString endpoint = data.value("targetEndpoint").toString();
     emit pingProbeReply(uid, endpoint);
 
-    // TODO: send 3 UDP probes to endpoint, measure RTT, emit pingProbeMeasured
-    m_pingProbeStartMs.insert(uid, QDateTime::currentMSecsSinceEpoch());
+    if (endpoint.isEmpty() || !m_udp ||
+        m_udp->state() == QAbstractSocket::UnconnectedState ||
+        m_selfUserId == 0)
+        return;
+
+    const int colon = endpoint.lastIndexOf(':');
+    if (colon <= 0)
+        return;
+    const QHostAddress addr(endpoint.left(colon));
+    const quint16 port = static_cast<quint16>(endpoint.mid(colon + 1).toUInt());
+    if (addr.isNull() || port == 0)
+        return;
+
+    // Fire a UDP PROBE at the peer's anchor socket. The peer recognises the
+    // opcode and echoes back a PROBE_REPLY; we match by nonce to compute RTT.
+    const quint64 nonce = QRandomGenerator::global()->generate64();
+
+    QByteArray pkt;
+    pkt.reserve(PROBE_PACKET_SIZE);
+    pkt.append(ANCHOR_MAGIC, 4);
+    pkt.append(static_cast<char>(ANCHOR_OP_PROBE));
+    const quint64 selfIdBE = qToBigEndian(m_selfUserId);
+    pkt.append(reinterpret_cast<const char*>(&selfIdBE), sizeof(selfIdBE));
+    const quint64 nonceBE = qToBigEndian(nonce);
+    pkt.append(reinterpret_cast<const char*>(&nonceBE), sizeof(nonceBE));
+
+    ProbeInFlight in;
+    in.targetUserId = uid;
+    in.sendMs       = QDateTime::currentMSecsSinceEpoch();
+    m_pendingProbes.insert(nonce, in);
+
+    m_udp->writeDatagram(pkt, addr, port);
 }
 
 void LobbyClient::handleMatchBegin(const QJsonObject& data)
@@ -522,15 +559,79 @@ void LobbyClient::reopenUdpAnchor()
 
 void LobbyClient::onUdpReadyRead()
 {
-    QByteArray datagram;
-    QHostAddress sender;
-    quint16 senderPort = 0;
     while (m_udp->hasPendingDatagrams())
     {
+        QByteArray datagram;
+        QHostAddress sender;
+        quint16 senderPort = 0;
         datagram.resize(int(m_udp->pendingDatagramSize()));
         m_udp->readDatagram(datagram.data(), datagram.size(), &sender, &senderPort);
-        // TODO: parse register reply (echoed observed endpoint) and ping probe responses
+
+        if (datagram.size() < 5 || std::memcmp(datagram.constData(), ANCHOR_MAGIC, 4) != 0)
+            continue;
+
+        const quint8 op = static_cast<quint8>(datagram.at(4));
+        switch (op)
+        {
+        case ANCHOR_OP_PROBE:
+        {
+            if (datagram.size() != PROBE_PACKET_SIZE)
+                break;
+            // Echo as PROBE_REPLY with our userId in the sender slot; nonce
+            // bytes (offset 13..21) carry through unchanged so the originator
+            // can match on its end.
+            QByteArray reply(datagram);
+            reply[4] = static_cast<char>(ANCHOR_OP_PROBE_REPLY);
+            const quint64 selfIdBE = qToBigEndian(m_selfUserId);
+            std::memcpy(reply.data() + 5, &selfIdBE, sizeof(selfIdBE));
+            m_udp->writeDatagram(reply, sender, senderPort);
+            break;
+        }
+        case ANCHOR_OP_PROBE_REPLY:
+        {
+            if (datagram.size() != PROBE_PACKET_SIZE)
+                break;
+            quint64 nonceBE = 0;
+            std::memcpy(&nonceBE, datagram.constData() + 13, sizeof(nonceBE));
+            const quint64 nonce = qFromBigEndian(nonceBE);
+
+            const auto it = m_pendingProbes.find(nonce);
+            if (it == m_pendingProbes.end())
+                break;
+            const qint64 nowMs  = QDateTime::currentMSecsSinceEpoch();
+            const int    rttMs  = static_cast<int>(nowMs - it->sendMs);
+            const quint64 uid   = it->targetUserId;
+            m_pendingProbes.erase(it);
+            m_measuredPing[uid] = rttMs;
+            emit pingProbeMeasured(uid, rttMs);
+            break;
+        }
+        case ANCHOR_OP_REGISTER:
+        case ANCHOR_OP_KEEPALIVE:
+        case ANCHOR_OP_PUNCH:
+        default:
+            // Server acks for register/keepalive aren't actionable yet, and
+            // PUNCH packets from peers are intentional no-ops — drop silently.
+            break;
+        }
     }
+
+    // Cheap stale-probe cleanup: anything older than 5 seconds is never
+    // coming back, so don't let the map grow unbounded.
+    const qint64 cutoff = QDateTime::currentMSecsSinceEpoch() - 5'000;
+    for (auto it = m_pendingProbes.begin(); it != m_pendingProbes.end(); )
+    {
+        if (it->sendMs < cutoff)
+            it = m_pendingProbes.erase(it);
+        else
+            ++it;
+    }
+}
+
+int LobbyClient::measuredPingMs(quint64 userId) const
+{
+    const auto it = m_measuredPing.constFind(userId);
+    return it == m_measuredPing.constEnd() ? -1 : it.value();
 }
 
 // -------- Chat API --------

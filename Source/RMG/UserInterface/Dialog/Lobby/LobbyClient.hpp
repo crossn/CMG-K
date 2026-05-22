@@ -126,6 +126,11 @@ public:
     // Ping probe — server replies with target's UDP endpoint; client probes directly.
     void requestPingProbe(quint64 targetUserId);
 
+    // Most recent measured round-trip to this peer in milliseconds, or -1 if
+    // no PROBE_REPLY has been received from them. Updated whenever a probe
+    // we sent comes back.
+    int measuredPingMs(quint64 userId) const;
+
     // Quick match queue
     void quickMatchJoin();
     void quickMatchCancel();
@@ -240,8 +245,20 @@ private:
     QHash<quint64, LobbyUser> m_users;
     QHash<quint64, LobbyRoomSummary> m_rooms;
 
-    // Track outstanding ping probes for tooltip refresh.
-    QHash<quint64, qint64> m_pingProbeStartMs;
+    // In-flight UDP PROBE state, keyed by per-request nonce. Each entry maps
+    // a sent probe back to the target user and the wall-clock send time so
+    // we can compute RTT when PROBE_REPLY comes back.
+    struct ProbeInFlight
+    {
+        quint64 targetUserId = 0;
+        qint64  sendMs       = 0;
+    };
+    QHash<quint64, ProbeInFlight> m_pendingProbes;
+
+    // Last measured round-trip per peer (userId → ms). Survives between
+    // measurements so the UI has a value to render even when the next probe
+    // is still in flight.
+    QHash<quint64, int> m_measuredPing;
 };
 
 } // namespace Dialog

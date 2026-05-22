@@ -181,6 +181,14 @@ RollbackLobbyDialog::RollbackLobbyDialog(QWidget* parent)
     connect(m_client, &LobbyClient::chatMessageReceived,  this, &RollbackLobbyDialog::onChatMessageReceived);
     connect(m_client, &LobbyClient::matchBegin,           this, &RollbackLobbyDialog::onMatchBegin);
     connect(m_client, &LobbyClient::matchPeerLeft,        this, &RollbackLobbyDialog::onMatchPeerLeft);
+    connect(m_client, &LobbyClient::pingProbeMeasured,    this, &RollbackLobbyDialog::onPingMeasured);
+
+    // 5 s cadence is a balance: fast enough that the displayed ping tracks
+    // real conditions, slow enough that we're not flooding peers' anchor
+    // sockets. Stays stopped until a room is entered.
+    m_pingProbeTimer = new QTimer(this);
+    m_pingProbeTimer->setInterval(5'000);
+    connect(m_pingProbeTimer, &QTimer::timeout, this, &RollbackLobbyDialog::onPingProbeTick);
 }
 
 RollbackLobbyDialog::~RollbackLobbyDialog()
@@ -610,6 +618,7 @@ void RollbackLobbyDialog::buildSeatRow(SeatRow& s, int slotIdx, QWidget* parent)
 void RollbackLobbyDialog::renderSeatEmpty(SeatRow& s)
 {
     s.isHost = false;
+    s.userId = 0;
     if (s.dotLabel)
     {
         s.dotLabel->setText(QStringLiteral("○"));
@@ -626,7 +635,7 @@ void RollbackLobbyDialog::renderSeatEmpty(SeatRow& s)
 }
 
 void RollbackLobbyDialog::renderSeatFilled(SeatRow& s, const QString& username, bool isHost,
-                                           bool isSelf, int /*pingMs*/)
+                                           bool isSelf, int pingMs)
 {
     s.isHost = isHost;
     if (s.dotLabel)
@@ -645,10 +654,13 @@ void RollbackLobbyDialog::renderSeatFilled(SeatRow& s, const QString& username, 
     }
     if (s.metaLabel)
     {
-        // Ping is not yet available per-peer from the server; only render
-        // "host" when applicable, otherwise leave meta empty rather than
-        // adding noise.
-        s.metaLabel->setText(isHost ? QStringLiteral("host") : QString());
+        // Compose host + ping. Self never shows a ping (pingMs == -1 also
+        // means "no measurement yet" for peers we haven't probed). Ping shows
+        // up after the first PROBE_REPLY arrives, refreshes on each tick.
+        QStringList parts;
+        if (isHost)              parts << QStringLiteral("host");
+        if (!isSelf && pingMs >= 0) parts << QStringLiteral("%1 ms").arg(pingMs);
+        s.metaLabel->setText(parts.join(QStringLiteral(" · ")));
     }
 }
 
@@ -1179,6 +1191,12 @@ void RollbackLobbyDialog::enterRoom(quint64 roomId, const QString& greetingChatL
 
     if (!greetingChatLine.isEmpty())
         appendChatLine(CHANNEL_LOBBY, greetingChatLine);
+
+    // Start measuring actual round-trip to seated peers. Seat assignments
+    // populate via the follow-up ROOM_STATE message; the first tick fires
+    // 5 s after entry which gives that state plenty of time to arrive.
+    if (m_pingProbeTimer && !m_pingProbeTimer->isActive())
+        m_pingProbeTimer->start();
 }
 
 void RollbackLobbyDialog::onRoomDoubleClicked(QTreeWidgetItem* item, int /*column*/)
@@ -1345,7 +1363,9 @@ void RollbackLobbyDialog::onRoomStateChanged(const QJsonObject& roomState)
         const quint64 uid = static_cast<quint64>(p.value("userId").toDouble());
         const bool slotIsHost = (uid == hostId);
         const bool slotIsSelf = (uid == m_client->selfUserId());
-        renderSeatFilled(m_seats[slot - 1], user, slotIsHost, slotIsSelf, 0);
+        const int pingMs = slotIsSelf ? -1 : m_client->measuredPingMs(uid);
+        m_seats[slot - 1].userId = uid;
+        renderSeatFilled(m_seats[slot - 1], user, slotIsHost, slotIsSelf, pingMs);
         filled[slot - 1] = true;
     }
     for (int i = 0; i < 4; ++i)
@@ -1354,7 +1374,11 @@ void RollbackLobbyDialog::onRoomStateChanged(const QJsonObject& roomState)
         else
         {
             m_seats[i].row->setVisible(true);
-            if (!filled[i]) renderSeatEmpty(m_seats[i]);
+            if (!filled[i])
+            {
+                m_seats[i].userId = 0;
+                renderSeatEmpty(m_seats[i]);
+            }
         }
     }
 
@@ -1461,10 +1485,44 @@ void RollbackLobbyDialog::onStartGameClicked()
     m_client->startRoom();
 }
 
+void RollbackLobbyDialog::onPingProbeTick()
+{
+    if (!m_client || m_currentRoomId == 0)
+        return;
+
+    const quint64 selfId = m_client->selfUserId();
+    for (const auto& s : m_seats)
+    {
+        if (s.userId == 0 || s.userId == selfId)
+            continue;
+        m_client->requestPingProbe(s.userId);
+    }
+}
+
+void RollbackLobbyDialog::onPingMeasured(quint64 userId, int rttMs)
+{
+    // Only redraw the seat that just got a measurement — avoids churning the
+    // whole room view on every probe response.
+    for (auto& s : m_seats)
+    {
+        if (s.userId != userId || !s.metaLabel)
+            continue;
+        QStringList parts;
+        if (s.isHost) parts << QStringLiteral("host");
+        parts << QStringLiteral("%1 ms").arg(rttMs);
+        s.metaLabel->setText(parts.join(QStringLiteral(" · ")));
+        break;
+    }
+}
+
 void RollbackLobbyDialog::onRoomLeft()
 {
     if (m_emulationActive || m_awaitingEmulationStart)
         emit closeMatchRequested();
+
+    if (m_pingProbeTimer) m_pingProbeTimer->stop();
+    for (auto& s : m_seats)
+        s.userId = 0;
 
     m_currentRoomId = 0;
     m_currentRoomGame.clear();
