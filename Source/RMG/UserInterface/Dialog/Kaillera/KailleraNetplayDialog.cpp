@@ -1980,6 +1980,11 @@ QWidget* KailleraNetplayDialog::createP2PTab()
     configureLauncherButtonMetrics(m_btnP2PHost);
     configureLauncherAccentPalette(m_btnP2PHost);
     connect(m_btnP2PHost, &QPushButton::clicked, this, &KailleraNetplayDialog::onP2PHost);
+    m_btnP2PHostPrivate = new QPushButton("Host (private)", hostBody);
+    m_btnP2PHostPrivate->setObjectName("KailleraSecondaryButton");
+    configureLauncherButtonMetrics(m_btnP2PHostPrivate);
+    connect(m_btnP2PHostPrivate, &QPushButton::clicked, this, &KailleraNetplayDialog::onP2PHostPrivate);
+    hostBtnLayout->addWidget(m_btnP2PHostPrivate);
     hostBtnLayout->addWidget(m_btnP2PHost);
     hostBodyLayout->addLayout(hostBtnLayout);
     hostLayout->addWidget(hostBody);
@@ -3025,13 +3030,19 @@ QString KailleraNetplayDialog::currentP2PStaticCodeOwnerToken() const
         CoreSettingsGetStringValue(SettingsID::Kaillera_P2PStaticCodeOwnerToken)).trimmed();
 }
 
-void KailleraNetplayDialog::connectRollbackSessionLaunch(KailleraP2PDialog& p2pDialog, bool& rollbackLaunched)
+void KailleraNetplayDialog::connectRollbackSessionLaunch(KailleraP2PDialog& p2pDialog, bool& rollbackSessionActive)
 {
+    // Track whether rollback is active at dialog close, not whether it was ever launched.
     connect(&p2pDialog, &KailleraP2PDialog::rollbackSessionReady, this,
-        [this, &rollbackLaunched](QString game, QString remoteAddress, int localPort, int remotePort, int localPlayer, int frameDelay, int predictionWindow) {
-            rollbackLaunched = true;
+        [this, &rollbackSessionActive](QString game, QString remoteAddress, int localPort, int remotePort, int localPlayer, int frameDelay, int predictionWindow) {
+            rollbackSessionActive = true;
             emit rollbackSessionPreparing();
             emit rollbackSessionRequested(game, remoteAddress, localPort, remotePort, localPlayer, frameDelay, predictionWindow);
+        },
+        Qt::DirectConnection);
+    connect(&p2pDialog, &KailleraP2PDialog::rollbackSessionEnded, this,
+        [&rollbackSessionActive]() {
+            rollbackSessionActive = false;
         },
         Qt::DirectConnection);
 }
@@ -3157,12 +3168,19 @@ void KailleraNetplayDialog::cancelPendingP2PAutoClaim()
 
     if (m_p2pHostLaunchQueued)
     {
+        const bool queuedPublicHost = m_p2pHostLaunchQueuedPublic;
         m_p2pHostLaunchQueued = false;
         if (m_btnP2PHost != nullptr)
         {
             m_btnP2PHost->setEnabled(true);
         }
-        QTimer::singleShot(0, this, &KailleraNetplayDialog::onP2PHost);
+        if (m_btnP2PHostPrivate != nullptr)
+        {
+            m_btnP2PHostPrivate->setEnabled(true);
+        }
+        QTimer::singleShot(0, this, [this, queuedPublicHost]() {
+            hostP2P(queuedPublicHost);
+        });
     }
 }
 
@@ -4232,6 +4250,16 @@ void KailleraNetplayDialog::onServerDoubleClicked(int row, int column)
 
 void KailleraNetplayDialog::onP2PHost()
 {
+    hostP2P(true);
+}
+
+void KailleraNetplayDialog::onP2PHostPrivate()
+{
+    hostP2P(false);
+}
+
+void KailleraNetplayDialog::hostP2P(bool showOnPublicList)
+{
     // Use selected game from the host picker
     QString gameName = (m_p2pGameCombo != nullptr) ? m_p2pGameCombo->currentText().trimmed() : QString();
     if (gameName.isEmpty())
@@ -4258,9 +4286,14 @@ void KailleraNetplayDialog::onP2PHost()
         currentP2PStaticCodeOwnerToken().isEmpty())
     {
         m_p2pHostLaunchQueued = true;
+        m_p2pHostLaunchQueuedPublic = showOnPublicList;
         if (m_btnP2PHost != nullptr)
         {
             m_btnP2PHost->setEnabled(false);
+        }
+        if (m_btnP2PHostPrivate != nullptr)
+        {
+            m_btnP2PHostPrivate->setEnabled(false);
         }
         return;
     }
@@ -4285,10 +4318,10 @@ void KailleraNetplayDialog::onP2PHost()
 
         hide();
 
-        bool rollbackLaunched = false;
+        bool rollbackSessionActive = false;
         QString username = QString::fromUtf8(usernameBytes);
-        KailleraP2PDialog p2pDialog(true, gameName, username, QString(), nullptr);
-        connectRollbackSessionLaunch(p2pDialog, rollbackLaunched);
+        KailleraP2PDialog p2pDialog(true, gameName, username, QString(), nullptr, showOnPublicList);
+        connectRollbackSessionLaunch(p2pDialog, rollbackSessionActive);
         p2pDialog.show();
 
         QEventLoop loop;
@@ -4300,7 +4333,7 @@ void KailleraNetplayDialog::onP2PHost()
             m_stateMachineTimer->start(1);
         }
 
-        if (rollbackLaunched)
+        if (rollbackSessionActive)
         {
             accept();
             return;
@@ -4458,8 +4491,8 @@ void KailleraNetplayDialog::onP2PJoin()
                         updateP2PStoredNickname(normalizedCode, nickname);
                     },
                     Qt::QueuedConnection);
-            bool rollbackLaunched = false;
-            connectRollbackSessionLaunch(p2pDialog, rollbackLaunched);
+            bool rollbackSessionActive = false;
+            connectRollbackSessionLaunch(p2pDialog, rollbackSessionActive);
             p2pDialog.show();
 
             QEventLoop loop;
@@ -4471,7 +4504,7 @@ void KailleraNetplayDialog::onP2PJoin()
                 m_stateMachineTimer->start(1);
             }
 
-            if (rollbackLaunched)
+            if (rollbackSessionActive)
             {
                 accept();
                 return;
@@ -4507,8 +4540,8 @@ void KailleraNetplayDialog::onP2PJoin()
                             updateP2PStoredNickname(addrText, nickname);
                         },
                         Qt::QueuedConnection);
-                bool rollbackLaunched = false;
-                connectRollbackSessionLaunch(p2pDialog, rollbackLaunched);
+                bool rollbackSessionActive = false;
+                connectRollbackSessionLaunch(p2pDialog, rollbackSessionActive);
                 p2pDialog.show();
 
                 QEventLoop loop;
@@ -4520,7 +4553,7 @@ void KailleraNetplayDialog::onP2PJoin()
                     m_stateMachineTimer->start(1);
                 }
 
-                if (rollbackLaunched)
+                if (rollbackSessionActive)
                 {
                     accept();
                     return;

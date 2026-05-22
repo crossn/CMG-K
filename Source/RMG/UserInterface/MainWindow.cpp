@@ -4483,6 +4483,9 @@ void MainWindow::on_Rollback_SessionRequested(QString gameName, QString remoteAd
         this->ui_CheckVideoSizeTimerId = 0;
     }
 
+#ifdef _WIN32
+    OnScreenDisplaySetKailleraPortLabels(2, GetLiveKailleraPortLabelNames());
+#endif
     this->emulationThread->SetGekkoNetplay(remoteAddress, localPort, remotePort, localPlayer, frameDelay, predictionWindow);
     this->launchEmulationThread(romFile, "", false, -1, true);
 }
@@ -4889,6 +4892,7 @@ void MainWindow::on_Emulation_Finished(bool ret, QString error)
     this->ui_RollbackLivePumpActive = false;
     this->ui_RollbackNetplayRoomActive = false;
     this->ui_RollbackNetplayLaunchActive = false;
+    OnScreenDisplayClearKailleraPortLabels();
 #endif // NETPLAY
 
     if (!ret)

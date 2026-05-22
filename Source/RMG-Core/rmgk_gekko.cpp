@@ -1350,7 +1350,7 @@ CORE_EXPORT bool rmgk_gekko::start_local_session(const char* gameName, int playe
     }
 
     const int clampedLocalDelay = std::clamp(localDelay, 0, 10);
-    const int predictionWindow = 4;
+    const int predictionWindow = 7;
 
     GekkoConfig config = {};
     config.num_players = static_cast<unsigned char>(players);
