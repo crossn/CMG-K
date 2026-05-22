@@ -446,6 +446,9 @@ void p2p_set_ready(bool bx){
 
 void p2p_ping(){
 	std::lock_guard<std::recursive_mutex> lock(p2p_transport_mutex);
+	if (!p2p_core_initialized || P2PCORE.connection == 0 || !P2PCORE.CONNECTED)
+		return;
+
 	p2p_instruction kx;
 	kx.inst.type = PING;
 	kx.inst.flags = PING_PING;
