@@ -10,6 +10,7 @@
 #define CORE_INTERNAL
 #include "rmgk_gekko.hpp"
 
+#include "Directories.hpp"
 #include "Error.hpp"
 #include "Library.hpp"
 #include "Settings.hpp"
@@ -30,9 +31,11 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <ctime>
 #include <cstdlib>
 #include <cstring>
 #include <exception>
+#include <filesystem>
 #include <fstream>
 #include <iomanip>
 #include <map>
@@ -97,6 +100,8 @@ std::atomic_bool g_GekkoExecuting{false};
 std::atomic_bool g_GekkoStopRequested{false};
 std::vector<PendingGekkoSave> g_GekkoPendingSaves;
 std::mutex g_GekkoLogMutex;
+std::filesystem::path g_GekkoLogDirectory;
+std::string g_GekkoLogPrefix;
 int g_GekkoLogFrames = 0;
 uint32_t g_GekkoLastSubmittedInput = 0xffffffffu;
 std::vector<unsigned char> g_GekkoLastLatchedInput;
@@ -142,8 +147,94 @@ std::string hex_input(uint32_t value)
     return stream.str();
 }
 
+void set_environment_value(const char* name, const std::string& value)
+{
+#ifdef _WIN32
+    _putenv_s(name, value.c_str());
+#else
+    setenv(name, value.c_str(), 1);
+#endif
+}
+
+std::string make_rollback_log_prefix()
+{
+    static unsigned int sessionCounter = 0;
+
+    const auto now = std::chrono::system_clock::now();
+    const std::time_t nowTime = std::chrono::system_clock::to_time_t(now);
+    const auto nowMs = std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()) %
+        std::chrono::seconds(1);
+    std::tm localTime = {};
+
+#ifdef _WIN32
+    localtime_s(&localTime, &nowTime);
+#else
+    localtime_r(&nowTime, &localTime);
+#endif
+
+    std::ostringstream stream;
+    stream << "rollback_"
+           << std::put_time(&localTime, "%Y%m%d_%H%M%S")
+           << "_"
+           << std::setw(3) << std::setfill('0') << nowMs.count()
+           << "_"
+           << ++sessionCounter;
+    return stream.str();
+}
+
+std::filesystem::path create_rollback_log_directory()
+{
+    std::error_code errorCode;
+    std::filesystem::path directory = CoreGetLibraryDirectory() / "Logs";
+
+    if (std::filesystem::is_directory(directory, errorCode) ||
+        std::filesystem::create_directories(directory, errorCode))
+    {
+        return directory.make_preferred();
+    }
+
+    errorCode.clear();
+    directory = "Logs";
+    if (std::filesystem::is_directory(directory, errorCode) ||
+        std::filesystem::create_directories(directory, errorCode))
+    {
+        return directory.make_preferred();
+    }
+
+    return std::filesystem::path();
+}
+
+void reset_rollback_log_session()
+{
+    g_GekkoLogDirectory = create_rollback_log_directory();
+    g_GekkoLogPrefix = make_rollback_log_prefix();
+
+    set_environment_value("RMGK_ROLLBACK_LOG_DIR", g_GekkoLogDirectory.string());
+    set_environment_value("RMGK_ROLLBACK_LOG_PREFIX", g_GekkoLogPrefix);
+}
+
+std::filesystem::path get_gekko_log_path()
+{
+    if (g_GekkoLogPrefix.empty())
+    {
+        reset_rollback_log_session();
+    }
+
+    std::string filename = g_GekkoLogPrefix;
+    filename += g_GekkoLocalPlayer == 2 ? "_gekko_client.log" : "_gekko_host.log";
+
+    if (!g_GekkoLogDirectory.empty())
+    {
+        return g_GekkoLogDirectory / filename;
+    }
+
+    return std::filesystem::path(filename);
+}
+
 void reset_gekko_log()
 {
+    reset_rollback_log_session();
+
     const char* logEnv = std::getenv("RMGK_GEKKO_LOG");
     g_GekkoLogEnabled = CoreSettingsGetBoolValue(SettingsID::Rollback_VerboseStats) ||
         (logEnv != nullptr && std::strcmp(logEnv, "0") != 0);
@@ -166,7 +257,7 @@ void reset_gekko_log()
     }
 
     std::lock_guard<std::mutex> lock(g_GekkoLogMutex);
-    const char* path = g_GekkoLocalPlayer == 2 ? "rollback_gekko_client.log" : "rollback_gekko_host.log";
+    const std::filesystem::path path = get_gekko_log_path();
     std::ofstream file(path, std::ios::out | std::ios::trunc);
     file << "RMG-K GekkoNet input log\n";
     g_GekkoLogFrames = 0;
@@ -192,7 +283,7 @@ void write_gekko_log(const std::string& message)
     }
 
     std::lock_guard<std::mutex> lock(g_GekkoLogMutex);
-    const char* path = g_GekkoLocalPlayer == 2 ? "rollback_gekko_client.log" : "rollback_gekko_host.log";
+    const std::filesystem::path path = get_gekko_log_path();
     std::ofstream file(path, std::ios::out | std::ios::app);
     file << "core_frame=" << CoreGetCurrentFrameCount() << " " << message << "\n";
 }
