@@ -82,6 +82,11 @@ static constexpr int kMaxP2PRecentEntries = 12;
 
 namespace {
 
+bool containsForbiddenNetplayListCharacter(const QString& text)
+{
+    return text.contains('{') || text.contains('}') || text.contains('|');
+}
+
 static constexpr int kMaxTraversalDigits = 3;
 static constexpr int kConnectPollIntervalMs = 1;
 static constexpr int kP2PWaitingGamesRefreshMs = 8000;
@@ -4104,6 +4109,8 @@ void KailleraNetplayDialog::onConnectServer()
     // Get username
     QByteArray usernameBytes = m_usernameEdit->text().toUtf8();
     if (usernameBytes.isEmpty()) usernameBytes = "Player";
+    CoreSettingsSetValue(SettingsID::Kaillera_Username,
+                         QString::fromUtf8(usernameBytes).toStdString());
 
     // Initialize kaillera core for server mode
     if (kaillera_core_initialize(0, APP, usernameBytes.data(), 1))
@@ -4253,6 +4260,27 @@ void KailleraNetplayDialog::onP2PHostPrivate()
 
 void KailleraNetplayDialog::hostP2P(bool showOnPublicList)
 {
+    // Use selected game from the host picker
+    QString gameName = (m_p2pGameCombo != nullptr) ? m_p2pGameCombo->currentText().trimmed() : QString();
+    if (gameName.isEmpty())
+    {
+        QMessageBox::warning(this, "P2P Host", "No game selected. Choose a ROM to host.");
+        return;
+    }
+    if (containsForbiddenNetplayListCharacter(gameName))
+    {
+        QMessageBox::warning(this, "P2P Host", "Game names containing {, }, or | are not permitted.");
+        return;
+    }
+
+    QString username = (m_usernameEdit != nullptr) ? m_usernameEdit->text() : QString();
+    if (username.isEmpty()) username = "Player";
+    if (containsForbiddenNetplayListCharacter(username))
+    {
+        QMessageBox::warning(this, "P2P Host", "Usernames containing {, }, or | are not permitted.");
+        return;
+    }
+
     if (m_p2pAutoClaimSocket != nullptr &&
         currentP2PStaticCode().isEmpty() &&
         currentP2PStaticCodeOwnerToken().isEmpty())
@@ -4270,16 +4298,10 @@ void KailleraNetplayDialog::hostP2P(bool showOnPublicList)
         return;
     }
 
-    QByteArray usernameBytes = m_usernameEdit->text().toUtf8();
-    if (usernameBytes.isEmpty()) usernameBytes = "Player";
+    QByteArray usernameBytes = username.toUtf8();
+    CoreSettingsSetValue(SettingsID::Kaillera_Username,
+                         username.toStdString());
 
-    // Use selected game from the host picker
-    QString gameName = (m_p2pGameCombo != nullptr) ? m_p2pGameCombo->currentText().trimmed() : QString();
-    if (gameName.isEmpty())
-    {
-        QMessageBox::warning(this, "P2P Host", "No game selected. Choose a ROM to host.");
-        return;
-    }
     QByteArray gameBytes = gameName.toUtf8();
 
     int port = CoreSettingsGetIntValue(SettingsID::Kaillera_Port);
@@ -4442,6 +4464,8 @@ void KailleraNetplayDialog::onP2PJoin()
 
     QByteArray usernameBytes = m_usernameEdit->text().toUtf8();
     if (usernameBytes.isEmpty()) usernameBytes = "Player";
+    CoreSettingsSetValue(SettingsID::Kaillera_Username,
+                         QString::fromUtf8(usernameBytes).toStdString());
 
     bool isCode = looksLikeTraversalCode(addrText);
     const QString normalizedCode = isCode ? normalizeTraversalCode(addrText) : QString();

@@ -162,6 +162,7 @@ private:
     bool m_initialShowOnPublicList = true;
     bool m_lobbyOpening = false;
     bool m_gameActive = false;
+    int m_standardFrameDelay = 0;
     QString m_gameName;
     QString m_username;
     QString m_peerName;

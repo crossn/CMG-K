@@ -20,6 +20,7 @@
 #include "m64p/api/m64p_types.h"
 
 #include <algorithm>
+#include <cctype>
 #include <sstream>
 #include <variant>
 
@@ -101,6 +102,9 @@ static l_Setting get_setting(SettingsID settingId)
         break;
     case SettingsID::GUI_ExclusiveFullscreen:
         setting = {SETTING_SECTION_GUI, "ExclusiveFullscreen", false};
+        break;
+    case SettingsID::GUI_BetaFullscreenBackend:
+        setting = {SETTING_SECTION_GUI, "BetaFullscreenBackend", false};
         break;
     case SettingsID::GUI_ExclusiveFullscreenMonitor:
         setting = {SETTING_SECTION_GUI, "ExclusiveFullscreenMonitor", std::string("")};
@@ -246,7 +250,7 @@ static l_Setting get_setting(SettingsID settingId)
         setting = {SETTING_SECTION_KAILLERA, "MaxPing", 999};
         break;
     case SettingsID::Kaillera_FlashOnJoin:
-        setting = {SETTING_SECTION_KAILLERA, "FlashOnJoin", false};
+        setting = {SETTING_SECTION_KAILLERA, "FlashOnJoin", true};
         break;
     case SettingsID::Kaillera_BeepOnJoin:
         setting = {SETTING_SECTION_KAILLERA, "BeepOnJoin", true};
@@ -334,7 +338,13 @@ static l_Setting get_setting(SettingsID settingId)
         setting = {SETTING_SECTION_ROLLBACK, "VerboseStats", false};
         break;
     case SettingsID::Rollback_EnableLocalTesting:
-        setting = {SETTING_SECTION_ROLLBACK, "EnableLocalTesting", true};
+        setting = {SETTING_SECTION_ROLLBACK, "EnableLocalTesting", false};
+        break;
+    case SettingsID::Rollback_VerbosePifInputLogging:
+        setting = {SETTING_SECTION_ROLLBACK, "VerbosePifInputLogging", false};
+        break;
+    case SettingsID::Rollback_VerboseGlideInputLogging:
+        setting = {SETTING_SECTION_ROLLBACK, "VerboseGlideInputLogging", false};
         break;
 
     case SettingsID::Core_GFX_Plugin:
@@ -1907,6 +1917,81 @@ static bool string_to_string_list(const std::string& string, std::vector<std::st
     return true;
 }
 
+static bool parse_version_component(const std::string& version, size_t& position, int& value)
+{
+    if (position >= version.size() ||
+        !std::isdigit(static_cast<unsigned char>(version[position])))
+    {
+        return false;
+    }
+
+    value = 0;
+    while (position < version.size() &&
+        std::isdigit(static_cast<unsigned char>(version[position])))
+    {
+        value = (value * 10) + (version[position] - '0');
+        position++;
+    }
+
+    return true;
+}
+
+static bool parse_settings_version(const std::string& version, int& major, int& minor, int& patch)
+{
+    size_t position = 0;
+    if (position < version.size() && (version[position] == 'v' || version[position] == 'V'))
+    {
+        position++;
+    }
+    if (position < version.size() && version[position] == '.')
+    {
+        position++;
+    }
+
+    if (!parse_version_component(version, position, major))
+    {
+        return false;
+    }
+    if (position >= version.size() || version[position] != '.')
+    {
+        return false;
+    }
+    position++;
+
+    if (!parse_version_component(version, position, minor))
+    {
+        return false;
+    }
+    if (position >= version.size() || version[position] != '.')
+    {
+        return false;
+    }
+    position++;
+
+    return parse_version_component(version, position, patch);
+}
+
+static bool settings_version_at_or_before(const std::string& version, int major, int minor, int patch)
+{
+    int parsedMajor = 0;
+    int parsedMinor = 0;
+    int parsedPatch = 0;
+    if (!parse_settings_version(version, parsedMajor, parsedMinor, parsedPatch))
+    {
+        return false;
+    }
+
+    if (parsedMajor != major)
+    {
+        return parsedMajor < major;
+    }
+    if (parsedMinor != minor)
+    {
+        return parsedMinor < minor;
+    }
+    return parsedPatch <= patch;
+}
+
 //
 // Exported Functions
 //
@@ -1935,9 +2020,11 @@ CORE_EXPORT bool CoreSettingsSave(void)
 CORE_EXPORT bool CoreSettingsUpgrade(void)
 {
     std::string settingsVersion;
+    std::string settingsVersionRaw;
     std::string settingsString;
 
-    settingsVersion = CoreSettingsGetStringValue(SettingsID::GUI_Version);
+    settingsVersionRaw = CoreSettingsGetStringValue(SettingsID::GUI_Version);
+    settingsVersion = settingsVersionRaw;
     if (settingsVersion.size() > 6)
     { // strip git prefix
         settingsVersion = settingsVersion.substr(0, 6);
@@ -2005,6 +2092,18 @@ CORE_EXPORT bool CoreSettingsUpgrade(void)
         {
             CoreSettingsSetValue(SettingsID::Netplay_ServerJsonUrl, std::string(""));
         }
+    }
+
+    if (settingsVersion.empty() || settings_version_at_or_before(settingsVersionRaw, 0, 9, 5))
+    {
+        settingsString = CoreSettingsGetStringValue(SettingsID::GUI_Theme);
+        if (settingsString == "Native")
+        {
+            CoreSettingsSetValue(SettingsID::GUI_Theme, std::string("Modern"));
+        }
+
+        CoreSettingsSetValue(SettingsID::Rollback_EnableLocalTesting, false);
+        CoreSettingsSetValue(SettingsID::Kaillera_FlashOnJoin, true);
     }
 
     // save core version
