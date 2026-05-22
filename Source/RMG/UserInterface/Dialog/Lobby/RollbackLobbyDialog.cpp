@@ -27,6 +27,7 @@
 #include "RollbackLobbyDialog.hpp"
 #include "LobbyConnectDialog.hpp"
 #include "CreateRoomDialog.hpp"
+#include "LobbyRegions.hpp"
 
 #include <RMG-Core/Callback.hpp>
 
@@ -700,7 +701,7 @@ QWidget* RollbackLobbyDialog::buildPlayersColumn()
 
     m_playersTree = new QTreeWidget(this);
     m_playersTree->setObjectName("PlayersTree");
-    m_playersTree->setHeaderLabels({ "Player", "State", "Ping" });
+    m_playersTree->setHeaderLabels({ "Player", "State", "Est. Ping" });
     m_playersTree->setRootIsDecorated(false);
     m_playersTree->setSortingEnabled(true);
     m_playersTree->setAlternatingRowColors(true);
@@ -1000,8 +1001,27 @@ void RollbackLobbyDialog::refreshPlayerRow(QTreeWidgetItem* item, const LobbyCli
         item->setFont(0, f);
     }
     item->setText(1, stateGlyph(u.state));
-    item->setText(2, u.pingToServer > 0 ? QString("%1 ms").arg(u.pingToServer) : "—");
-    item->setToolTip(0, QString("Region: %1\nServer ping: %2 ms").arg(u.region).arg(u.pingToServer));
+
+    // Ping column shows an estimated round-trip between *this* client and the
+    // peer, based on region buckets the server assigned via IP geolocation.
+    // It's intentionally rough — same-region pairs read ~30 ms, transatlantic
+    // ~90, transpacific ~200. Self-row always shows "—".
+    // U+2014 EM DASH — using QChar avoids any file-encoding ambiguity in
+    // the literal.
+    const QString dash = QString(QChar(0x2014));
+    if (u.id == m_client->selfUserId())
+    {
+        item->setText(2, dash);
+    }
+    else
+    {
+        const int rtt = UserInterface::Dialog::LobbyRegions::estimatedRttMs(
+            m_client->selfRegion(), u.region);
+        item->setText(2, rtt > 0 ? QString("~%1 ms").arg(rtt) : dash);
+    }
+
+    const QString regionLabel = UserInterface::Dialog::LobbyRegions::labelFor(u.region);
+    item->setToolTip(0, QString("Region: %1").arg(regionLabel.isEmpty() ? "unknown" : regionLabel));
     item->setData(0, Qt::UserRole, QVariant::fromValue(u.id));
 }
 

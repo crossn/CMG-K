@@ -102,6 +102,7 @@ public:
 
     ConnectionState state() const { return m_state; }
     quint64 selfUserId() const { return m_selfUserId; }
+    QString selfRegion() const { return m_region; }
     const QHash<quint64, LobbyUser>& users() const { return m_users; }
     const QHash<quint64, LobbyRoomSummary>& rooms() const { return m_rooms; }
 
