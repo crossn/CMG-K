@@ -379,7 +379,7 @@ static QString buildP2PStyleSheet(const QString& theme)
         "  font-weight: 700;"
         "}"
         "QLabel#KailleraP2PCodeText {"
-        "  color: #00aebd;"
+        "  color: #0096d3;"
         "  font-size: 22px;"
         "  font-weight: 800;"
         "}"
