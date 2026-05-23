@@ -65,9 +65,10 @@ static constexpr int kRollbackMinFrameDelay = 1;
 static constexpr int kRollbackMaxFrameDelay = 9;
 static constexpr int kDefaultRollbackFrameDelay = 2;
 static constexpr int kDefaultRollbackPredictionWindow = 7;
-static constexpr int kRollbackDelayInitialSampleCount = 3;
+static constexpr int kRollbackDelayInitialSampleCount = 5;
 static constexpr unsigned long kRollbackDelayInitialUpdateMs = 5000;
-static constexpr unsigned long kRollbackDelayUpdateIntervalMs = 8000;
+static constexpr unsigned long kRollbackDelayUpdateIntervalMs = 10000;
+static constexpr unsigned long kRollbackDelaySampleWindowMs = 20000;
 static constexpr int kP2PNormalFontPointDelta = 2;
 static constexpr int kP2PPlayerKickButtonSize = 20;
 static const char* kRollbackDelayHelpText =
@@ -194,11 +195,11 @@ static int automaticRollbackFrameDelayForPing(int ping)
     {
         return 1;
     }
-    if (ping <= 90)
+    if (ping <= 100)
     {
         return 2;
     }
-    if (ping <= 132)
+    if (ping <= 140)
     {
         return 3;
     }
@@ -1641,22 +1642,36 @@ void KailleraP2PDialog::recordRollbackDelayPingSample(int ping)
         return;
     }
 
-    if (m_rollbackDelayPingSamples.isEmpty())
+    const unsigned long now = monotonicTickCount();
+    m_rollbackDelayPingSamples.append({now, ping});
+    while (!m_rollbackDelayPingSamples.isEmpty() &&
+           now - m_rollbackDelayPingSamples.first().timestampMs > kRollbackDelaySampleWindowMs)
     {
-        m_rollbackDelayFirstSampleMs = monotonicTickCount();
+        m_rollbackDelayPingSamples.removeFirst();
     }
 
-    m_rollbackDelayPingSamples.append(ping);
+    m_rollbackDelayFirstSampleMs = m_rollbackDelayPingSamples.isEmpty()
+        ? 0
+        : m_rollbackDelayPingSamples.first().timestampMs;
 }
 
 bool KailleraP2PDialog::maybeUpdateAutomaticRollbackDelay(bool force)
 {
+    const unsigned long now = monotonicTickCount();
+    while (!m_rollbackDelayPingSamples.isEmpty() &&
+           now - m_rollbackDelayPingSamples.first().timestampMs > kRollbackDelaySampleWindowMs)
+    {
+        m_rollbackDelayPingSamples.removeFirst();
+    }
+    m_rollbackDelayFirstSampleMs = m_rollbackDelayPingSamples.isEmpty()
+        ? 0
+        : m_rollbackDelayPingSamples.first().timestampMs;
+
     if (m_rollbackDelayPingSamples.isEmpty())
     {
         return false;
     }
 
-    const unsigned long now = monotonicTickCount();
     if (!force)
     {
         if (m_rollbackDelayLastUpdateMs == 0)
@@ -1679,14 +1694,17 @@ bool KailleraP2PDialog::maybeUpdateAutomaticRollbackDelay(bool force)
 
     // Use a high-but-not-max sample so brief ping spikes do not immediately
     // push everyone into a higher input delay bucket.
-    QVector<int> samples = m_rollbackDelayPingSamples;
+    QVector<int> samples;
+    samples.reserve(m_rollbackDelayPingSamples.size());
+    for (const RollbackDelayPingSample& sample : m_rollbackDelayPingSamples)
+    {
+        samples.append(sample.ping);
+    }
     std::sort(samples.begin(), samples.end());
     const int sampleIndex = (samples.size() - 1) * 3 / 4;
     const int estimatedPing = samples.at(sampleIndex);
     const int previousDelay = m_autoRollbackFrameDelay;
     m_autoRollbackFrameDelay = automaticRollbackFrameDelayForPing(estimatedPing);
-    m_rollbackDelayPingSamples.clear();
-    m_rollbackDelayFirstSampleMs = 0;
     m_rollbackDelayLastUpdateMs = now;
 
     return previousDelay != m_autoRollbackFrameDelay;
