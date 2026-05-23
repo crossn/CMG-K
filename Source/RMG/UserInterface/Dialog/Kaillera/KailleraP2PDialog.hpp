@@ -21,7 +21,6 @@
 #include <QComboBox>
 #include <QTimer>
 #include <QGroupBox>
-#include <QSpinBox>
 #include <QFrame>
 #include <QString>
 #include <QVector>
@@ -212,7 +211,7 @@ private:
     QLabel* m_frameDelayLabel = nullptr;
     QWidget* m_frameDelayRow = nullptr;
     QComboBox* m_frameDelayCombo = nullptr;
-    QSpinBox* m_frameDelaySpin = nullptr;
+    QComboBox* m_customFrameDelayCombo = nullptr;
     QLabel* m_frameDelayHelpLabel = nullptr;
     QComboBox* m_predictionWindowCombo = nullptr;
 
@@ -222,7 +221,12 @@ private:
     int m_rollbackFrameDelay = 2;
     int m_autoRollbackFrameDelay = 2;
     int m_rollbackPredictionWindow = 0;
-    QVector<int> m_rollbackDelayPingSamples;
+    struct RollbackDelayPingSample
+    {
+        unsigned long timestampMs = 0;
+        int ping = -1;
+    };
+    QVector<RollbackDelayPingSample> m_rollbackDelayPingSamples;
     unsigned long m_rollbackDelayFirstSampleMs = 0;
     unsigned long m_rollbackDelayLastUpdateMs = 0;
     bool m_hasRemoteRollbackDelaySettings = false;

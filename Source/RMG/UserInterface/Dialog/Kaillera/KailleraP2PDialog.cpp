@@ -39,7 +39,6 @@
 #include <QResizeEvent>
 #include <QSettings>
 #include <QSizePolicy>
-#include <QAbstractSpinBox>
 #include <QWidgetAction>
 
 #include <algorithm>
@@ -66,9 +65,10 @@ static constexpr int kRollbackMinFrameDelay = 1;
 static constexpr int kRollbackMaxFrameDelay = 9;
 static constexpr int kDefaultRollbackFrameDelay = 2;
 static constexpr int kDefaultRollbackPredictionWindow = 7;
-static constexpr int kRollbackDelayInitialSampleCount = 3;
+static constexpr int kRollbackDelayInitialSampleCount = 5;
 static constexpr unsigned long kRollbackDelayInitialUpdateMs = 5000;
-static constexpr unsigned long kRollbackDelayUpdateIntervalMs = 8000;
+static constexpr unsigned long kRollbackDelayUpdateIntervalMs = 10000;
+static constexpr unsigned long kRollbackDelaySampleWindowMs = 20000;
 static constexpr int kP2PNormalFontPointDelta = 2;
 static constexpr int kP2PPlayerKickButtonSize = 20;
 static const char* kRollbackDelayHelpText =
@@ -195,11 +195,11 @@ static int automaticRollbackFrameDelayForPing(int ping)
     {
         return 1;
     }
-    if (ping <= 90)
+    if (ping <= 100)
     {
         return 2;
     }
-    if (ping <= 132)
+    if (ping <= 140)
     {
         return 3;
     }
@@ -333,6 +333,9 @@ static QString buildP2PStyleSheet(const QString& theme)
     const QString comboArrowIcon = QString(":/icons/%1/svg/arrow-down-s-line.svg")
         .arg(darkTheme ? "white" : "black");
     const QString footerStatusColor = darkTheme ? "#b8c0cc" : "#555f6a";
+    const QString mutedTextColor = darkTheme ? "#c8ced6" : "#6a737d";
+    const QString hostCodeColor = darkTheme ? "#4ab7ed" : "#0096d3";
+    const QString controlBorderColor = darkTheme ? "#697380" : "#b8bec6";
 
     return QString(
         "QDialog#KailleraP2PDialog {"
@@ -374,12 +377,12 @@ static QString buildP2PStyleSheet(const QString& theme)
         "  background-color: transparent;"
         "}"
         "QLabel#KailleraP2PCodeTitle {"
-        "  color: palette(mid);"
+        "  color: %4;"
         "  font-size: 10px;"
         "  font-weight: 700;"
         "}"
         "QLabel#KailleraP2PCodeText {"
-        "  color: #0096d3;"
+        "  color: %5;"
         "  font-size: 22px;"
         "  font-weight: 800;"
         "}"
@@ -407,7 +410,7 @@ static QString buildP2PStyleSheet(const QString& theme)
         "  font-weight: 600;"
         "}"
         "QLabel#KailleraP2PHelpText {"
-        "  color: palette(mid);"
+        "  color: %4;"
         "  font-size: 11px;"
         "  padding: 0 2px;"
         "}"
@@ -422,7 +425,7 @@ static QString buildP2PStyleSheet(const QString& theme)
         "  padding: 6px;"
         "}"
         "QLineEdit#KailleraP2PInput {"
-        "  border: 1px solid palette(mid);"
+        "  border: 1px solid %6;"
         "  border-radius: 7px;"
         "  background-color: palette(base);"
         "  padding: 5px 8px;"
@@ -432,7 +435,7 @@ static QString buildP2PStyleSheet(const QString& theme)
         "  border-color: palette(highlight);"
         "}"
         "QComboBox#KailleraP2PCombo {"
-        "  border: 1px solid palette(mid);"
+        "  border: 1px solid %6;"
         "  border-radius: 7px;"
         "  background-color: palette(base);"
         "  padding: 4px 8px;"
@@ -446,7 +449,7 @@ static QString buildP2PStyleSheet(const QString& theme)
         "  subcontrol-position: top right;"
         "  width: 24px;"
         "  border: none;"
-        "  border-left: 1px solid palette(mid);"
+        "  border-left: 1px solid %6;"
         "  border-top-right-radius: 7px;"
         "  border-bottom-right-radius: 7px;"
         "  background-color: transparent;"
@@ -458,7 +461,7 @@ static QString buildP2PStyleSheet(const QString& theme)
         "  height: 12px;"
         "}"
         "QComboBox#KailleraP2PCombo QAbstractItemView {"
-        "  border: 1px solid palette(mid);"
+        "  border: 1px solid %6;"
         "  background-color: palette(base);"
         "  selection-background-color: palette(highlight);"
         "  selection-color: palette(highlighted-text);"
@@ -470,16 +473,6 @@ static QString buildP2PStyleSheet(const QString& theme)
         "  padding: 0px 8px;"
         "  min-height: 18px;"
         "  margin: 0px;"
-        "}"
-        "QSpinBox#KailleraP2PSpin {"
-        "  border: 1px solid palette(mid);"
-        "  border-radius: 7px;"
-        "  background-color: palette(base);"
-        "  padding: 4px 8px;"
-        "  min-height: 24px;"
-        "}"
-        "QSpinBox#KailleraP2PSpin:focus {"
-        "  border-color: palette(highlight);"
         "}"
         "QGroupBox#KailleraP2PGroup {"
         "  border: 1px solid palette(mid);"
@@ -495,7 +488,7 @@ static QString buildP2PStyleSheet(const QString& theme)
         "  font-weight: 600;"
         "}"
         "QWidget#KailleraChatComposer {"
-        "  border: 1px solid palette(mid);"
+        "  border: 1px solid %6;"
         "  border-radius: 7px;"
         "  background-color: palette(base);"
         "}"
@@ -650,7 +643,12 @@ static QString buildP2PStyleSheet(const QString& theme)
         "  image: none;"
         "  width: 0px;"
         "}"
-    ).arg(comboArrowIcon).arg(kP2PPlayerKickButtonSize).arg(footerStatusColor);
+    ).arg(comboArrowIcon)
+        .arg(kP2PPlayerKickButtonSize)
+        .arg(footerStatusColor)
+        .arg(mutedTextColor)
+        .arg(hostCodeColor)
+        .arg(controlBorderColor);
 }
 
 static void configureP2PComboPopup(QComboBox* combo, const QString& theme)
@@ -1213,23 +1211,26 @@ void KailleraP2PDialog::setupUI()
     });
     fdlyLayout->addWidget(m_frameDelayCombo);
 
-    m_frameDelaySpin = new QSpinBox(m_frameDelayRow);
-    m_frameDelaySpin->setObjectName("KailleraP2PSpin");
-    m_frameDelaySpin->setRange(kRollbackMinFrameDelay, kRollbackMaxFrameDelay);
-    m_frameDelaySpin->setKeyboardTracking(false);
-    m_frameDelaySpin->setButtonSymbols(QAbstractSpinBox::NoButtons);
-    m_frameDelaySpin->setAlignment(Qt::AlignCenter);
-    m_frameDelaySpin->setSuffix("f");
-    m_frameDelaySpin->setMinimumWidth(48);
-    m_frameDelaySpin->setMaximumWidth(54);
-    m_frameDelaySpin->setValue(m_customRollbackFrameDelay);
-    connect(m_frameDelaySpin, QOverload<int>::of(&QSpinBox::valueChanged), this, [this](int value) {
-        if (isRollbackMode() && canEditRollbackDelaySettings() && m_rollbackDelayMode == kRollbackDelayModeCustom)
+    m_customFrameDelayCombo = new QComboBox(m_frameDelayRow);
+    m_customFrameDelayCombo->setObjectName("KailleraP2PCombo");
+    m_customFrameDelayCombo->setMinimumWidth(66);
+    m_customFrameDelayCombo->setMaximumWidth(72);
+    m_customFrameDelayCombo->setSizeAdjustPolicy(QComboBox::AdjustToContentsOnFirstShow);
+    configureP2PComboPopup(m_customFrameDelayCombo, theme);
+    for (int frames = kRollbackMinFrameDelay; frames <= kRollbackMaxFrameDelay; frames++)
+    {
+        m_customFrameDelayCombo->addItem(QString("%1f").arg(frames), frames);
+    }
+    const int customDelayIndex = m_customFrameDelayCombo->findData(m_customRollbackFrameDelay);
+    m_customFrameDelayCombo->setCurrentIndex(customDelayIndex >= 0 ? customDelayIndex : 0);
+    connect(m_customFrameDelayCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this](int index) {
+        if (isRollbackMode() && canEditRollbackDelaySettings() &&
+            m_rollbackDelayMode == kRollbackDelayModeCustom && index >= 0)
         {
-            setRollbackCustomFrameDelay(value, m_isHost, true);
+            setRollbackCustomFrameDelay(m_customFrameDelayCombo->itemData(index).toInt(), m_isHost, true);
         }
     });
-    fdlyLayout->addWidget(m_frameDelaySpin);
+    fdlyLayout->addWidget(m_customFrameDelayCombo);
     fdlyLayout->addStretch();
     hostLayout->addWidget(m_frameDelayRow);
 
@@ -1319,7 +1320,7 @@ void KailleraP2PDialog::setupUI()
         fdlyLayout->spacing() +
         m_frameDelayCombo->minimumWidth() +
         fdlyLayout->spacing() +
-        m_frameDelaySpin->minimumWidth() +
+        m_customFrameDelayCombo->minimumWidth() +
         hostMargins.right();
     m_hostGroup->setMinimumWidth(hostMinWidth);
     rightLayout->addWidget(m_hostGroup, 0);
@@ -1641,22 +1642,36 @@ void KailleraP2PDialog::recordRollbackDelayPingSample(int ping)
         return;
     }
 
-    if (m_rollbackDelayPingSamples.isEmpty())
+    const unsigned long now = monotonicTickCount();
+    m_rollbackDelayPingSamples.append({now, ping});
+    while (!m_rollbackDelayPingSamples.isEmpty() &&
+           now - m_rollbackDelayPingSamples.first().timestampMs > kRollbackDelaySampleWindowMs)
     {
-        m_rollbackDelayFirstSampleMs = monotonicTickCount();
+        m_rollbackDelayPingSamples.removeFirst();
     }
 
-    m_rollbackDelayPingSamples.append(ping);
+    m_rollbackDelayFirstSampleMs = m_rollbackDelayPingSamples.isEmpty()
+        ? 0
+        : m_rollbackDelayPingSamples.first().timestampMs;
 }
 
 bool KailleraP2PDialog::maybeUpdateAutomaticRollbackDelay(bool force)
 {
+    const unsigned long now = monotonicTickCount();
+    while (!m_rollbackDelayPingSamples.isEmpty() &&
+           now - m_rollbackDelayPingSamples.first().timestampMs > kRollbackDelaySampleWindowMs)
+    {
+        m_rollbackDelayPingSamples.removeFirst();
+    }
+    m_rollbackDelayFirstSampleMs = m_rollbackDelayPingSamples.isEmpty()
+        ? 0
+        : m_rollbackDelayPingSamples.first().timestampMs;
+
     if (m_rollbackDelayPingSamples.isEmpty())
     {
         return false;
     }
 
-    const unsigned long now = monotonicTickCount();
     if (!force)
     {
         if (m_rollbackDelayLastUpdateMs == 0)
@@ -1679,14 +1694,17 @@ bool KailleraP2PDialog::maybeUpdateAutomaticRollbackDelay(bool force)
 
     // Use a high-but-not-max sample so brief ping spikes do not immediately
     // push everyone into a higher input delay bucket.
-    QVector<int> samples = m_rollbackDelayPingSamples;
+    QVector<int> samples;
+    samples.reserve(m_rollbackDelayPingSamples.size());
+    for (const RollbackDelayPingSample& sample : m_rollbackDelayPingSamples)
+    {
+        samples.append(sample.ping);
+    }
     std::sort(samples.begin(), samples.end());
     const int sampleIndex = (samples.size() - 1) * 3 / 4;
     const int estimatedPing = samples.at(sampleIndex);
     const int previousDelay = m_autoRollbackFrameDelay;
     m_autoRollbackFrameDelay = automaticRollbackFrameDelayForPing(estimatedPing);
-    m_rollbackDelayPingSamples.clear();
-    m_rollbackDelayFirstSampleMs = 0;
     m_rollbackDelayLastUpdateMs = now;
 
     return previousDelay != m_autoRollbackFrameDelay;
@@ -1937,13 +1955,17 @@ void KailleraP2PDialog::updateRollbackDelayControls()
         m_frameDelayCombo->blockSignals(blocked);
     }
 
-    if (m_frameDelaySpin != nullptr)
+    if (m_customFrameDelayCombo != nullptr)
     {
-        const bool blocked = m_frameDelaySpin->blockSignals(true);
-        m_frameDelaySpin->setValue(delay);
-        m_frameDelaySpin->setVisible(m_rollbackDelayMode == kRollbackDelayModeCustom);
-        m_frameDelaySpin->setEnabled(editableDelayInput && !inGame);
-        m_frameDelaySpin->blockSignals(blocked);
+        const bool blocked = m_customFrameDelayCombo->blockSignals(true);
+        const int index = m_customFrameDelayCombo->findData(delay);
+        if (index >= 0)
+        {
+            m_customFrameDelayCombo->setCurrentIndex(index);
+        }
+        m_customFrameDelayCombo->setVisible(m_rollbackDelayMode == kRollbackDelayModeCustom);
+        m_customFrameDelayCombo->setEnabled(editableDelayInput && !inGame);
+        m_customFrameDelayCombo->blockSignals(blocked);
     }
 
     if (m_frameDelayHelpLabel != nullptr)
@@ -2266,9 +2288,9 @@ void KailleraP2PDialog::applyGameLayerUI()
     {
         updateRollbackDelayControls();
     }
-    else if (m_frameDelaySpin != nullptr)
+    else if (m_customFrameDelayCombo != nullptr)
     {
-        m_frameDelaySpin->setVisible(false);
+        m_customFrameDelayCombo->setVisible(false);
     }
     if (m_netcodeSettingsButton != nullptr)
     {
