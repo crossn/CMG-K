@@ -21,7 +21,6 @@
 #include <QComboBox>
 #include <QTimer>
 #include <QGroupBox>
-#include <QSpinBox>
 #include <QFrame>
 #include <QString>
 #include <QVector>
@@ -212,7 +211,7 @@ private:
     QLabel* m_frameDelayLabel = nullptr;
     QWidget* m_frameDelayRow = nullptr;
     QComboBox* m_frameDelayCombo = nullptr;
-    QSpinBox* m_frameDelaySpin = nullptr;
+    QComboBox* m_customFrameDelayCombo = nullptr;
     QLabel* m_frameDelayHelpLabel = nullptr;
     QComboBox* m_predictionWindowCombo = nullptr;
 
