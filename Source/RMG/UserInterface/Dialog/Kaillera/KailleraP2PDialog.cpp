@@ -266,6 +266,21 @@ static void increaseP2PNormalFontSizes(QWidget* root, int pointDelta)
     }
 }
 
+static void disableDefaultButtonBehavior(QWidget* root)
+{
+    if (root == nullptr)
+    {
+        return;
+    }
+
+    const QList<QPushButton*> buttons = root->findChildren<QPushButton*>();
+    for (QPushButton* button : buttons)
+    {
+        button->setAutoDefault(false);
+        button->setDefault(false);
+    }
+}
+
 static void updateReadyBadge(QLabel* badge, bool ready)
 {
     if (badge == nullptr)
@@ -1015,8 +1030,6 @@ void KailleraP2PDialog::setupUI()
     m_btnChat->setText("");
     m_btnChat->setIcon(themedP2PIcon("play-line"));
     m_btnChat->setIconSize(QSize(24, 24));
-    m_btnChat->setAutoDefault(false);
-    m_btnChat->setDefault(false);
 
     chatComposerLayout->addWidget(m_chatInput);
     chatComposerLayout->addWidget(m_btnChat, 0, Qt::AlignVCenter);
@@ -1346,6 +1359,7 @@ void KailleraP2PDialog::setupUI()
     mainLayout->addLayout(statusLayout);
 
     increaseP2PNormalFontSizes(this, kP2PNormalFontPointDelta);
+    disableDefaultButtonBehavior(this);
 
     applyGameLayerUI();
     updatePeerConnectionUI();
@@ -3303,7 +3317,7 @@ void KailleraP2PDialog::onCopyConnectCode()
 
     if (m_btnCopyConnectCode != nullptr)
     {
-        m_btnCopyConnectCode->setIcon(themedP2PIcon("copy-check-line"));
+        m_btnCopyConnectCode->setIcon(themedP2PIcon("check-line"));
         m_btnCopyConnectCode->setToolTip("Copied");
     }
 
