@@ -1464,6 +1464,14 @@ CORE_EXPORT bool rmgk_gekko::start_lobby_session(const char* gameName, int playe
             g_GekkoPlayerHandles[static_cast<size_t>(player - 1)] = handle;
             g_GekkoLocalHandles[static_cast<size_t>(player - 1)] = handle;
             gekko_set_local_delay(g_GekkoSession, handle, static_cast<unsigned char>(clampedLocalDelay));
+            if (g_GekkoLogEnabled)
+            {
+                std::ostringstream stream;
+                stream << "gekko_add_actor result=ok player=" << player
+                       << " type=local handle=" << handle
+                       << " local_delay=" << clampedLocalDelay;
+                write_gekko_log(stream.str());
+            }
         }
         else
         {
@@ -1499,6 +1507,14 @@ CORE_EXPORT bool rmgk_gekko::start_lobby_session(const char* gameName, int playe
                 g_GekkoRemoteHandle = handle;
             }
             g_GekkoPlayerHandles[static_cast<size_t>(player - 1)] = handle;
+            if (g_GekkoLogEnabled)
+            {
+                std::ostringstream stream;
+                stream << "gekko_add_actor result=ok player=" << player
+                       << " type=remote handle=" << handle
+                       << " remote=" << addrString;
+                write_gekko_log(stream.str());
+            }
         }
     }
 
