@@ -31,6 +31,7 @@
 #include <QIcon>
 #include <QFrame>
 #include <QFont>
+#include <QList>
 #include <QListView>
 #include <QMessageBox>
 #include <QMenu>
@@ -69,10 +70,105 @@ static constexpr int kRollbackDelayInitialSampleCount = 5;
 static constexpr unsigned long kRollbackDelayInitialUpdateMs = 5000;
 static constexpr unsigned long kRollbackDelayUpdateIntervalMs = 10000;
 static constexpr unsigned long kRollbackDelaySampleWindowMs = 20000;
+static constexpr qint64 kDirectJoinTimeoutMs = 7000;
 static constexpr int kP2PNormalFontPointDelta = 2;
 static constexpr int kP2PPlayerKickButtonSize = 20;
 static const char* kRollbackDelayHelpText =
     "Lower input delay reduces latency but <b>can increase rollbacks.</b> Higher input delay can reduce rollbacks.";
+
+static QString hostCodeErrorPrefix(const QString& hostCode)
+{
+    const QString code = hostCode.trimmed();
+    return code.isEmpty() ? QStringLiteral("Host code") : QStringLiteral("Host code ") + code;
+}
+
+static QString friendlyNatTraversalErrorMessage(const QString& reason, const QString& hostCode = QString())
+{
+    if (reason == QStringLiteral("UNKNOWNCODE"))
+    {
+        return hostCodeErrorPrefix(hostCode) + QStringLiteral(" was not found.");
+    }
+    if (reason == QStringLiteral("OFFLINE"))
+    {
+        return hostCodeErrorPrefix(hostCode) + QStringLiteral(" exists, but is not currently hosting.");
+    }
+    if (reason == QStringLiteral("BUSY"))
+    {
+        return QStringLiteral("That lobby already has someone connecting. Please wait and try again.");
+    }
+    if (reason == QStringLiteral("RATELIMIT"))
+    {
+        return QStringLiteral("Too many requests were sent to the NAT server. Wait a moment and try again.");
+    }
+    if (reason == QStringLiteral("NOAUTH"))
+    {
+        return QStringLiteral("Your saved host code is no longer valid. Getting a new one.");
+    }
+    if (reason == QStringLiteral("NOSESSION"))
+    {
+        return QStringLiteral("Your host session expired. Reopening the lobby.");
+    }
+    if (reason == QStringLiteral("CLAIMFULL"))
+    {
+        return QStringLiteral("No host codes are available for that name. Try a different one.");
+    }
+    if (reason == QStringLiteral("FULL"))
+    {
+        return QStringLiteral("The NAT server is full. Try again later or use direct IP.");
+    }
+    if (reason == QStringLiteral("BADREQ"))
+    {
+        return QStringLiteral("The NAT server did not understand the request. Try again or update RMG-K.");
+    }
+    return QStringLiteral("The NAT server returned an unexpected error. Try again or update RMG-K.");
+}
+
+static int sockaddrPortFromBytes(const QByteArray& saddr)
+{
+    if (saddr.size() < static_cast<int>(sizeof(sockaddr_in)))
+    {
+        return 0;
+    }
+
+    sockaddr_in addr;
+    memcpy(&addr, saddr.constData(), sizeof(addr));
+    return ntohs(addr.sin_port);
+}
+
+static QString portDebugText(int port)
+{
+    return port > 0 ? QString::number(port) : QStringLiteral("--");
+}
+
+static QString traversalPacketSummary(const QByteArray& msg)
+{
+    const QList<QByteArray> parts = msg.split('|');
+    if (parts.size() < 2)
+    {
+        return QStringLiteral("unknown packet");
+    }
+
+    const QString type = QString::fromUtf8(parts[1]);
+    if (type == QStringLiteral("CLAIM") && parts.size() >= 3)
+    {
+        return QStringLiteral("CLAIM ") + QString::fromUtf8(parts[2]);
+    }
+    if (type == QStringLiteral("JOIN") && parts.size() >= 3)
+    {
+        return QStringLiteral("JOIN code ") + QString::fromUtf8(parts[2]);
+    }
+    return type;
+}
+
+static QString traversalServerSendDebugText(const QByteArray& msg)
+{
+    const QList<QByteArray> parts = msg.split('|');
+    if (parts.size() >= 3 && parts[1] == "JOIN")
+    {
+        return QStringLiteral("Looking up code ") + QString::fromUtf8(parts[2]) + QStringLiteral(". Sent server JOIN");
+    }
+    return traversalPacketSummary(msg);
+}
 
 class KailleraSwitch : public QCheckBox
 {
@@ -824,6 +920,11 @@ KailleraP2PDialog::KailleraP2PDialog(bool isHost, const QString& gameName,
       m_gameName(gameName), m_username(username)
 {
     m_lobbyOpening = m_isHost || (!joinCode.isEmpty() && looksLikeTraversalCode(joinCode));
+    if (!m_isHost && !joinCode.trimmed().isEmpty())
+    {
+        const QString normalizedCode = normalizeTraversalCode(joinCode);
+        m_joinHostCode = normalizedCode.isEmpty() ? joinCode.trimmed() : normalizedCode;
+    }
     {
         QSettings settings("RMG-K", "n02");
         m_showDebugMessages = settings.value("P2P_ShowDebugMessages", false).toBool();
@@ -873,15 +974,11 @@ KailleraP2PDialog::KailleraP2PDialog(bool isHost, const QString& gameName,
     else if (!joinCode.isEmpty() && looksLikeTraversalCode(joinCode))
     {
         // Join by traversal code
-        m_travJoinEnabled = true;
-        m_travJoinCode = normalizeTraversalCode(joinCode);
-        updatePeerConnectionUI();
-        qint64 now = QDateTime::currentMSecsSinceEpoch();
-        travSendJoin();
-        m_travNextJoinMs = now + 3000;
-        m_travJoinDeadlineMs = now + 15000;
-
-        appendChatStatus("Looking up host for code " + joinCode, "green", true);
+        beginTraversalJoinAttempt();
+    }
+    else if (!m_isHost && !m_joinHostCode.isEmpty())
+    {
+        beginDirectJoinAttempt();
     }
 }
 
@@ -1053,12 +1150,18 @@ void KailleraP2PDialog::setupUI()
     m_btnDrop->setObjectName("KailleraP2PSecondaryButton");
     m_btnDrop->setIcon(themedP2PIcon("close-line"));
     m_btnDrop->setIconSize(QSize(16, 16));
+    m_btnRetryConnection = new QPushButton("Retry Connection", chatColumn);
+    m_btnRetryConnection->setObjectName("KailleraP2PPrimaryButton");
+    m_btnRetryConnection->setIcon(themedP2PIcon("refresh-line"));
+    m_btnRetryConnection->setIconSize(QSize(16, 16));
+    m_btnRetryConnection->setVisible(false);
     m_btnLeave = new QPushButton("Leave", chatColumn);
     m_btnLeave->setObjectName("KailleraP2PSecondaryButton");
     m_btnLeave->setIcon(themedP2PIcon("arrow-bar-right-line"));
     m_btnLeave->setIconSize(QSize(16, 16));
     chatActionLayout->addWidget(m_btnReady, 1);
     chatActionLayout->addWidget(m_btnDrop, 1);
+    chatActionLayout->addWidget(m_btnRetryConnection, 2);
     chatActionLayout->addWidget(m_btnLeave, 1);
     chatColumnLayout->addLayout(chatActionLayout);
 
@@ -1378,6 +1481,7 @@ void KailleraP2PDialog::setupUI()
     connect(m_chatInput, &QLineEdit::returnPressed, this, &KailleraP2PDialog::onSendChat);
     connect(m_btnReady, &QPushButton::clicked, this, &KailleraP2PDialog::onReady);
     connect(m_btnDrop, &QPushButton::clicked, this, &KailleraP2PDialog::onDrop);
+    connect(m_btnRetryConnection, &QPushButton::clicked, this, &KailleraP2PDialog::onRetryConnection);
     connect(m_btnLeave, &QPushButton::clicked, this, &KailleraP2PDialog::reject);
 
     m_copyFeedbackTimer = new QTimer(this);
@@ -1559,7 +1663,17 @@ void KailleraP2PDialog::updateLobbyStatusLabel()
         return;
     }
 
-    if (m_gameActive || (isRollbackMode() && m_rollbackGameActive) || n02::isGameRunning())
+    if (!m_isHost && m_hostLeft)
+    {
+        m_lobbyStatusLabel->setText("Host Left");
+        m_lobbyStatusLabel->setStyleSheet("color: #c03a3a; font-weight: 700;");
+    }
+    else if (!m_isHost && m_connectionFailed)
+    {
+        m_lobbyStatusLabel->setText("Failed to Connect");
+        m_lobbyStatusLabel->setStyleSheet("color: #c03a3a; font-weight: 700;");
+    }
+    else if (m_gameActive || (isRollbackMode() && m_rollbackGameActive) || n02::isGameRunning())
     {
         m_lobbyStatusLabel->setText("Playing");
         m_lobbyStatusLabel->setStyleSheet("color: #3f45c9; font-weight: 700;");
@@ -1573,6 +1687,11 @@ void KailleraP2PDialog::updateLobbyStatusLabel()
     {
         m_lobbyStatusLabel->setText("Waiting for Ready");
         m_lobbyStatusLabel->setStyleSheet("color: #a66a00; font-weight: 700;");
+    }
+    else if (!m_isHost)
+    {
+        m_lobbyStatusLabel->setText("Connecting...");
+        m_lobbyStatusLabel->setStyleSheet("color: #8a8a8a; font-weight: 700;");
     }
     else if (m_lobbyOpening)
     {
@@ -1612,7 +1731,9 @@ void KailleraP2PDialog::appendPeerJoinedNotice()
         return;
     }
 
-    const QString name = m_peerName.trimmed().isEmpty() ? QString("Opponent") : m_peerName.trimmed();
+    const QString defaultName = m_isHost ? QString("Opponent") : QString("You");
+    const QString joinedName = m_isHost ? m_peerName.trimmed() : m_username.trimmed();
+    const QString name = joinedName.isEmpty() ? defaultName : joinedName;
     appendChatStatus(name + " joined the lobby.", "green", false);
     m_peerJoinNoticeShown = true;
     m_peerLeaveNoticeShown = false;
@@ -1625,7 +1746,8 @@ void KailleraP2PDialog::appendPeerLeftNotice(const QString& name)
         return;
     }
 
-    const QString displayName = name.trimmed().isEmpty() ? QString("Opponent") : name.trimmed();
+    const QString fallbackName = m_isHost ? QString("Opponent") : QString("Host");
+    const QString displayName = name.trimmed().isEmpty() ? fallbackName : name.trimmed();
     appendChatStatus(displayName + " left the lobby.", "red", false);
     m_peerLeaveNoticeShown = true;
     m_peerJoinNoticeShown = false;
@@ -2059,26 +2181,45 @@ void KailleraP2PDialog::updatePeerConnectionUI()
     const QString playerName = m_isHost ? remoteName : localName;
 
     QString hostCode;
-    if (!m_travCode.isEmpty())
+    if (m_isHost)
     {
-        hostCode = m_travCode;
+        if (!m_travCode.isEmpty())
+        {
+            hostCode = m_travCode;
+        }
+        else if (!m_travHostIpPort.isEmpty())
+        {
+            hostCode = m_travHostIpPort;
+        }
     }
-    else if (!m_travJoinCode.isEmpty())
+    else if (m_peerConnected)
     {
-        hostCode = m_travJoinCode;
+        if (!m_joinHostCode.isEmpty())
+        {
+            hostCode = m_joinHostCode;
+        }
+        else if (!m_travJoinCode.isEmpty())
+        {
+            hostCode = m_travJoinCode;
+        }
+        else if (!m_travJoinFallbackIpPort.isEmpty())
+        {
+            hostCode = m_travJoinFallbackIpPort;
+        }
     }
-    else if (!m_travHostIpPort.isEmpty())
+
+    if (m_hostConnectCodeBadge != nullptr)
     {
-        hostCode = m_travHostIpPort;
+        m_hostConnectCodeBadge->setVisible(m_isHost || (m_peerConnected && !hostCode.isEmpty()));
     }
-    else if (!m_travJoinFallbackIpPort.isEmpty())
+    if (m_btnCopyConnectCode != nullptr)
     {
-        hostCode = m_travJoinFallbackIpPort;
+        m_btnCopyConnectCode->setVisible(m_isHost);
     }
 
     if (m_hostPlayerCard != nullptr)
     {
-        m_hostPlayerCard->setVisible(true);
+        m_hostPlayerCard->setVisible(m_isHost || m_peerConnected);
     }
     if (m_hostPlayerNameLabel != nullptr)
     {
@@ -2104,19 +2245,24 @@ void KailleraP2PDialog::updatePeerConnectionUI()
     }
     if (m_playerCard != nullptr)
     {
-        m_playerCard->setVisible(m_peerConnected);
+        m_playerCard->setVisible(!m_isHost || m_peerConnected);
     }
     if (m_playersEmptyLabel != nullptr)
     {
         m_playersEmptyLabel->setVisible(!m_peerConnected);
-        if (!m_peerName.trimmed().isEmpty())
+        if (!m_isHost && m_hostLeft)
+        {
+            m_playersEmptyLabel->setText("Host left");
+            m_playersEmptyLabel->setStyleSheet("color: #c03a3a; font-weight: 700;");
+        }
+        else if (!m_peerName.trimmed().isEmpty())
         {
             m_playersEmptyLabel->setText("Opponent left");
             m_playersEmptyLabel->setStyleSheet("color: #c03a3a; font-weight: 700;");
         }
         else
         {
-            m_playersEmptyLabel->setText(m_isHost ? "Waiting for opponent" : "Opponent not connected");
+            m_playersEmptyLabel->setText(m_isHost ? "Waiting for opponent" : "Connecting to host");
             m_playersEmptyLabel->setStyleSheet("color: #a66a00; font-weight: 700;");
         }
     }
@@ -2131,6 +2277,21 @@ void KailleraP2PDialog::updatePeerConnectionUI()
         const bool showKick = m_isHost && m_peerConnected && !inGame;
         m_btnKickPeer->setVisible(showKick);
         m_btnKickPeer->setEnabled(showKick);
+    }
+
+    const bool showRetryConnection = !m_isHost && !m_hostLeft && !m_peerConnected && m_connectionFailed;
+    if (m_btnReady != nullptr)
+    {
+        m_btnReady->setVisible(!showRetryConnection);
+    }
+    if (m_btnDrop != nullptr)
+    {
+        m_btnDrop->setVisible(!showRetryConnection);
+    }
+    if (m_btnRetryConnection != nullptr)
+    {
+        m_btnRetryConnection->setVisible(showRetryConnection);
+        m_btnRetryConnection->setEnabled(showRetryConnection && !m_joinHostCode.trimmed().isEmpty());
     }
     updateLobbyStatusLabel();
 }
@@ -2398,6 +2559,10 @@ void KailleraP2PDialog::travSendToServer(const QByteArray& msg)
 {
     if (msg.isEmpty()) return;
     // NAT traversal messages must NOT include the trailing NUL byte.
+    appendChatStatus(QString("NAT traversal: %1 (local port %2, server port %3)")
+        .arg(traversalServerSendDebugText(msg),
+             portDebugText(p2p_core_get_port()),
+             QString::number(kN02TraversalPort)), "green", true);
     p2p_send_ssrv_packet(const_cast<char*>(msg.constData()), msg.size(),
                          const_cast<char*>(kN02TraversalHost), kN02TraversalPort);
 }
@@ -2482,7 +2647,8 @@ bool KailleraP2PDialog::travTryFallbackConnect(const QString& reason)
         return false;
     if (port <= 0) port = 27886;
 
-    appendChatStatus("NAT traversal: " + reason + ". Falling back to direct connect", "green", true);
+    appendChatStatus(QString("NAT traversal: Trying direct IP/port connection (local port %1, host port %2)")
+        .arg(portDebugText(p2p_core_get_port()), portDebugText(port)), "green", true);
 
     QByteArray ipBytes = ip.toUtf8();
     if (!p2p_core_connect(ipBytes.data(), port))
@@ -2596,10 +2762,14 @@ void KailleraP2PDialog::onSsrvPacketReceived(QByteArray cmd, QByteArray saddr)
 
         if (partCount < 2) return;
         const char* type = parts[1];
+        const int sourcePort = sockaddrPortFromBytes(saddr);
 
         if (strcmp(type, "CLAIMOK") == 0 && partCount >= 4)
         {
             if (!m_travHostEnabled) return;
+
+            appendChatStatus(QString("NAT traversal <- server: CLAIMOK code %1 (server port %2)")
+                .arg(QString::fromUtf8(parts[2]), portDebugText(sourcePort)), "green", true);
 
             m_travCode = normalizeTraversalCode(QString::fromUtf8(parts[2]));
             m_travToken = QString::fromUtf8(parts[3]);
@@ -2623,6 +2793,10 @@ void KailleraP2PDialog::onSsrvPacketReceived(QByteArray cmd, QByteArray saddr)
 
         if (strcmp(type, "CLAIMSUGGEST") == 0 && partCount >= 4)
         {
+            appendChatStatus(QString("NAT traversal <- server: CLAIMSUGGEST requested %1, suggested %2 (server port %3)")
+                .arg(QString::fromUtf8(parts[2]),
+                     QString::fromUtf8(parts[3]),
+                     portDebugText(sourcePort)), "red", true);
             appendChatError("Requested code " + QString::fromUtf8(parts[2]) +
                 " is unavailable. Suggested: " + QString::fromUtf8(parts[3]));
             return;
@@ -2631,6 +2805,12 @@ void KailleraP2PDialog::onSsrvPacketReceived(QByteArray cmd, QByteArray saddr)
         if (strcmp(type, "HOSTOK") == 0 && partCount >= 6)
         {
             if (!m_travHostEnabled) return;
+
+            appendChatStatus(QString("NAT traversal <- server: HOSTOK code %1 (local port %2, public host port %3, server port %4)")
+                .arg(QString::fromUtf8(parts[2]),
+                     portDebugText(p2p_core_get_port()),
+                     QString::fromUtf8(parts[5]),
+                     portDebugText(sourcePort)), "green", true);
 
             m_travCode = normalizeTraversalCode(QString::fromUtf8(parts[2]));
             m_travLiveToken = QString::fromUtf8(parts[3]);
@@ -2661,7 +2841,9 @@ void KailleraP2PDialog::onSsrvPacketReceived(QByteArray cmd, QByteArray saddr)
             QString hostIp = QString::fromUtf8(parts[3]);
             int hostPort = atoi(parts[4]);
 
-            appendChatStatus("NAT traversal: got host endpoint", "green", true);
+            appendChatStatus(QString("NAT traversal: Server returned HOST IP (local port %1, host port %2)")
+                .arg(portDebugText(p2p_core_get_port()),
+                     portDebugText(hostPort)), "green", true);
 
             m_travJoinToken = token;
             m_travJoinHostIp = hostIp;
@@ -2679,6 +2861,9 @@ void KailleraP2PDialog::onSsrvPacketReceived(QByteArray cmd, QByteArray saddr)
 
             // Try connecting immediately
             m_travJoinPunchAttempts++;
+            appendChatStatus(QString("NAT traversal: Starting hole punch and login attempts (local port %1, host port %2)")
+                .arg(portDebugText(p2p_core_get_port()),
+                     portDebugText(m_travJoinHostPort)), "green", true);
             travPunchEndpoint(m_travJoinHostIp, m_travJoinHostPort, m_travJoinToken);
 
             QByteArray ipBytes = m_travJoinHostIp.toUtf8();
@@ -2704,13 +2889,19 @@ void KailleraP2PDialog::onSsrvPacketReceived(QByteArray cmd, QByteArray saddr)
 
             if (!m_travLiveToken.isEmpty() && token != m_travLiveToken) return;
 
-            appendChatStatus("NAT traversal: got peer endpoint", "green", true);
+            appendChatStatus(QString("NAT traversal <- server: PEER endpoint (local port %1, peer port %2, server port %3)")
+                .arg(portDebugText(p2p_core_get_port()),
+                     portDebugText(peerPort),
+                     portDebugText(sourcePort)), "green", true);
 
             m_travHostPeerIp = peerIp;
             m_travHostPeerPort = peerPort;
             m_travHostPeerDeadlineMs = QDateTime::currentMSecsSinceEpoch() + 15000;
             m_travNextHostPunchMs = 0;
 
+            appendChatStatus(QString("NAT traversal: Starting hole punch toward peer (local port %1, peer port %2)")
+                .arg(portDebugText(p2p_core_get_port()),
+                     portDebugText(peerPort)), "green", true);
             travPunchEndpoint(peerIp, peerPort, token);
             return;
         }
@@ -2719,27 +2910,35 @@ void KailleraP2PDialog::onSsrvPacketReceived(QByteArray cmd, QByteArray saddr)
         if (strcmp(type, "ERR") == 0 && partCount >= 3)
         {
             const QString reason = QString::fromUtf8(parts[2]);
+            appendChatStatus(QString("NAT traversal <- server: ERR %1 (server port %2)")
+                .arg(reason, portDebugText(sourcePort)), "red", true);
 
             if (m_travJoinEnabled && strcmp(parts[2], "BUSY") == 0)
             {
-                m_travJoinBusy = true;
-                m_travJoinDeadlineMs = QDateTime::currentMSecsSinceEpoch();
+                m_travJoinEnabled = false;
+                m_travJoinBusy = false;
+                m_travJoinDeadlineMs = 0;
                 m_travNextJoinMs = 0;
+                m_lobbyOpening = false;
+                m_connectionFailed = true;
+                appendChatError(friendlyNatTraversalErrorMessage(reason, m_travJoinCode));
+                updatePeerConnectionUI();
                 return;
             }
 
-            if (m_travJoinEnabled && (strcmp(parts[2], "OFFLINE") == 0 || strcmp(parts[2], "UNKNOWNCODE") == 0))
+            if (m_travJoinEnabled)
             {
                 m_travJoinEnabled = false;
                 m_travJoinDeadlineMs = 0;
                 m_travNextJoinMs = 0;
                 m_lobbyOpening = false;
-                updateLobbyStatusLabel();
+                m_connectionFailed = true;
+                updatePeerConnectionUI();
             }
 
             if (m_travHostEnabled && strcmp(parts[2], "NOAUTH") == 0)
             {
-                appendChatStatus("Saved connect code identity was rejected. Claiming a new code.", "green", true);
+                appendChatError(friendlyNatTraversalErrorMessage(reason));
                 travClearIdentity();
                 m_travRegAttempts = 0;
                 m_travNextRegMs = 0;
@@ -2759,15 +2958,25 @@ void KailleraP2PDialog::onSsrvPacketReceived(QByteArray cmd, QByteArray saddr)
                 updateLobbyStatusLabel();
             }
 
-            appendChatError("NAT traversal error: " + reason);
+            appendChatError(friendlyNatTraversalErrorMessage(reason, m_travJoinCode));
             return;
         }
 
         // OK: Acknowledgement
-        if (strcmp(type, "OK") == 0) return;
+        if (strcmp(type, "OK") == 0)
+        {
+            appendChatStatus(QString("NAT traversal <- server: OK (server port %1)")
+                .arg(portDebugText(sourcePort)), "green", true);
+            return;
+        }
 
         // PUNCH: No-op payload for NAT hole punching
-        if (strcmp(type, "PUNCH") == 0) return;
+        if (strcmp(type, "PUNCH") == 0)
+        {
+            appendChatStatus(QString("NAT traversal <- peer: PUNCH (peer port %1)")
+                .arg(portDebugText(sourcePort)), "green", true);
+            return;
+        }
 
         return;
     }
@@ -3087,6 +3296,10 @@ void KailleraP2PDialog::onPeerJoined()
     setPingLabelText("Ping: measuring...");
     resetAutomaticRollbackDelay();
     m_peerConnected = true;
+    m_hostLeft = false;
+    m_connectionFailed = false;
+    m_directJoinAttemptActive = false;
+    m_directJoinDeadlineMs = 0;
     m_peerReady = false;
     m_lobbyOpening = false;
     m_peerJoinNoticeShown = false;
@@ -3141,12 +3354,19 @@ void KailleraP2PDialog::onPeerLeft()
 {
     const bool kickedPeer = m_peerKickPending;
     const QString departedName = m_peerName;
+    const bool rollbackWasActive = isRollbackMode() && (m_rollbackGameActive || m_gameActive);
+    const bool standardWasRunning = !isRollbackMode() && (m_gameActive || n02::isGameRunning());
     m_peerKickPending = false;
     setPingLabelFromValue(-1);
     resetAutomaticRollbackDelay();
     m_peerConnected = false;
+    m_hostLeft = !m_isHost;
+    m_connectionFailed = false;
+    m_directJoinAttemptActive = false;
+    m_directJoinDeadlineMs = 0;
     m_peerName.clear();
     m_peerReady = false;
+    m_rollbackGameActive = false;
     m_gameActive = false;
     if (m_isHost && m_travHostEnabled)
     {
@@ -3168,6 +3388,20 @@ void KailleraP2PDialog::onPeerLeft()
     {
         updateRollbackDelayControls();
     }
+    if (rollbackWasActive)
+    {
+        emit rollbackSessionEnded();
+        QTimer::singleShot(0, this, []() {
+            CoreStopEmulation();
+        });
+    }
+    else if (standardWasRunning)
+    {
+        CoreMarkKailleraGameInactive();
+        QTimer::singleShot(0, this, []() {
+            CoreStopEmulation();
+        });
+    }
     updateRollbackPredictionControls();
     if (!kickedPeer)
     {
@@ -3176,6 +3410,7 @@ void KailleraP2PDialog::onPeerLeft()
     }
     m_ready = false;
     if (m_btnReady) m_btnReady->setChecked(false);
+    applyGameLayerUI();
     updatePeerConnectionUI();
     if (!m_isHost && m_btnReady != nullptr)
     {
@@ -3225,6 +3460,150 @@ void KailleraP2PDialog::onFodippResult(QString host)
     appendChatStatus("External IP: " + host, "green", true);
 }
 
+void KailleraP2PDialog::resetClientConnectionAttemptState()
+{
+    if (m_isHost)
+    {
+        return;
+    }
+
+    m_peerConnected = false;
+    m_peerReady = false;
+    m_peerJoinNoticeShown = false;
+    m_peerLeaveNoticeShown = false;
+    m_hostLeft = false;
+    m_connectionFailed = false;
+    m_lobbyOpening = true;
+    m_peerName.clear();
+    m_lastPing = -1;
+    m_hasRemoteRollbackDelaySettings = false;
+    m_hasRemoteRollbackPredictionSettings = false;
+    m_hasSentRollbackDelaySettings = false;
+    m_hasSentRollbackPredictionSettings = false;
+    m_lastSentRollbackDelayMode = -1;
+    m_lastSentRollbackFrameDelay = -1;
+    m_lastSentRollbackPredictionWindow = -1;
+
+    m_travJoinEnabled = false;
+    m_travNextJoinMs = 0;
+    m_travJoinDeadlineMs = 0;
+    m_travJoinCode.clear();
+    m_travJoinGotHost = false;
+    m_travJoinToken.clear();
+    m_travJoinHostIp.clear();
+    m_travJoinHostPort = 0;
+    m_travNextConnectMs = 0;
+    m_travJoinFallbackIpPort.clear();
+    m_travJoinFallbackTried = false;
+    m_travJoinBusy = false;
+    m_travJoinPunchAttempts = 0;
+
+    m_directJoinAttemptActive = false;
+    m_directJoinDeadlineMs = 0;
+
+    m_ready = false;
+    if (m_btnReady != nullptr)
+    {
+        m_btnReady->setChecked(false);
+        m_btnReady->setEnabled(false);
+    }
+    p2p_set_ready(false);
+
+    setPingLabelFromValue(-1);
+    resetAutomaticRollbackDelay();
+    if (isRollbackMode())
+    {
+        updateRollbackDelayControls();
+    }
+    updateRollbackPredictionControls();
+}
+
+void KailleraP2PDialog::beginTraversalJoinAttempt()
+{
+    if (m_isHost)
+    {
+        return;
+    }
+
+    const QString code = normalizeTraversalCode(m_joinHostCode);
+    if (code.isEmpty())
+    {
+        beginDirectJoinAttempt();
+        return;
+    }
+
+    resetClientConnectionAttemptState();
+    m_joinHostCode = code;
+    m_travJoinEnabled = true;
+    m_travJoinCode = code;
+    updatePeerConnectionUI();
+
+    const qint64 now = QDateTime::currentMSecsSinceEpoch();
+    travSendJoin();
+    m_travNextJoinMs = now + 3000;
+    m_travJoinDeadlineMs = now + 15000;
+}
+
+void KailleraP2PDialog::beginDirectJoinAttempt()
+{
+    if (m_isHost)
+    {
+        return;
+    }
+
+    const QString target = m_joinHostCode.trimmed();
+    resetClientConnectionAttemptState();
+    if (target.isEmpty())
+    {
+        m_lobbyOpening = false;
+        m_connectionFailed = true;
+        appendChatError("Connection failed: no host address was provided.");
+        updatePeerConnectionUI();
+        return;
+    }
+
+    QByteArray ipBytes;
+    int port = 27886;
+    const int colonIdx = target.lastIndexOf(':');
+    if (colonIdx >= 0)
+    {
+        ipBytes = target.left(colonIdx).toUtf8();
+        port = target.mid(colonIdx + 1).toInt();
+        if (port == 0)
+        {
+            port = 27886;
+        }
+    }
+    else
+    {
+        ipBytes = target.toUtf8();
+    }
+
+    if (ipBytes.trimmed().isEmpty())
+    {
+        m_lobbyOpening = false;
+        m_connectionFailed = true;
+        appendChatError(QString("Connection to %1 failed: no host address was provided.").arg(target));
+        updatePeerConnectionUI();
+        return;
+    }
+
+    appendChatStatus("Connecting to " + target, "green", false);
+    m_directJoinAttemptActive = true;
+    m_directJoinDeadlineMs = QDateTime::currentMSecsSinceEpoch() + kDirectJoinTimeoutMs;
+    updatePeerConnectionUI();
+
+    if (!p2p_core_connect(ipBytes.data(), port))
+    {
+        m_directJoinAttemptActive = false;
+        m_directJoinDeadlineMs = 0;
+        m_lobbyOpening = false;
+        m_connectionFailed = true;
+        appendChatError(QString("Connection to %1 failed: could not start the connection attempt.").arg(target));
+        updatePeerConnectionUI();
+    }
+}
+
 // ---- Button actions ----
 
 void KailleraP2PDialog::onSendChat()
@@ -3270,6 +3649,24 @@ void KailleraP2PDialog::onDrop()
     if (rollbackWasActive && m_rollbackGameActive)
     {
         onGameEnded();
+    }
+}
+
+void KailleraP2PDialog::onRetryConnection()
+{
+    if (m_isHost || m_peerConnected || m_joinHostCode.trimmed().isEmpty())
+    {
+        updatePeerConnectionUI();
+        return;
+    }
+
+    if (looksLikeTraversalCode(m_joinHostCode))
+    {
+        beginTraversalJoinAttempt();
+    }
+    else
+    {
+        beginDirectJoinAttempt();
     }
 }
 
@@ -3428,17 +3825,25 @@ void KailleraP2PDialog::onTravTimer()
         if (m_travJoinDeadlineMs != 0 && now >= m_travJoinDeadlineMs)
         {
             // Timed out
+            appendChatStatus(QString("NAT traversal timeout: got host endpoint %1, punch attempts %2, local port %3, host port %4")
+                .arg(m_travJoinGotHost ? QStringLiteral("yes") : QStringLiteral("no"),
+                     QString::number(m_travJoinPunchAttempts),
+                     portDebugText(p2p_core_get_port()),
+                     portDebugText(m_travJoinHostPort)), "red", true);
             if (m_travJoinBusy)
             {
-                appendChatError("NAT traversal: host is busy. Please wait and try again.");
+                appendChatError(friendlyNatTraversalErrorMessage(QStringLiteral("BUSY")));
             }
             else
             {
-                appendChatError("NAT traversal: timed out (try direct IP/port-forwarding or server mode)");
+                const QString target = m_travJoinCode.trimmed().isEmpty() ? QStringLiteral("host") : m_travJoinCode.trimmed();
+                appendChatError(QString("Connection to %1 failed: NAT traversal timed out. Host may need to port-forward. Alternatively, try server mode.")
+                    .arg(target));
             }
             m_travJoinEnabled = false;
             m_lobbyOpening = false;
-            updateLobbyStatusLabel();
+            m_connectionFailed = true;
+            updatePeerConnectionUI();
             if (!m_travJoinBusy)
             {
                 travTryFallbackConnect("timed out");
@@ -3478,6 +3883,27 @@ void KailleraP2PDialog::onTravTimer()
         // Connected — stop traversal retries
         m_travJoinEnabled = false;
         m_travJoinDeadlineMs = 0;
+    }
+
+    // ---- Direct-IP connection timeout ----
+    if (!m_isHost && m_directJoinAttemptActive)
+    {
+        if (p2p_is_connected())
+        {
+            m_directJoinAttemptActive = false;
+            m_directJoinDeadlineMs = 0;
+        }
+        else if (m_directJoinDeadlineMs != 0 && now >= m_directJoinDeadlineMs)
+        {
+            const QString target = m_joinHostCode.trimmed().isEmpty() ? QStringLiteral("host") : m_joinHostCode.trimmed();
+            appendChatError(QString("Connection to %1 failed: timed out. Make sure the host is ready and try again.")
+                .arg(target));
+            m_directJoinAttemptActive = false;
+            m_directJoinDeadlineMs = 0;
+            m_lobbyOpening = false;
+            m_connectionFailed = true;
+            updatePeerConnectionUI();
+        }
     }
 
     // ---- Periodic re-enlist on public game list (every 30s while waiting) ----

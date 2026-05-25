@@ -66,6 +66,7 @@ private slots:
     void onSendChat();
     void onReady();
     void onDrop();
+    void onRetryConnection();
     void onKickPeer();
     void onCopyConnectCode();
     void onStepTimer();
@@ -120,6 +121,9 @@ private:
     void positionCornerButtons();
     void appendPeerJoinedNotice();
     void appendPeerLeftNotice(const QString& name);
+    void resetClientConnectionAttemptState();
+    void beginTraversalJoinAttempt();
+    void beginDirectJoinAttempt();
 
     struct ChatEntry
     {
@@ -158,6 +162,8 @@ private:
     bool m_peerKickPending = false;
     bool m_peerJoinNoticeShown = false;
     bool m_peerLeaveNoticeShown = false;
+    bool m_hostLeft = false;
+    bool m_connectionFailed = false;
     bool m_initialShowOnPublicList = true;
     bool m_lobbyOpening = false;
     bool m_gameActive = false;
@@ -165,6 +171,7 @@ private:
     QString m_gameName;
     QString m_username;
     QString m_peerName;
+    QString m_joinHostCode;
 
     // Top
     QLabel* m_lobbyStatusLabel = nullptr;
@@ -196,6 +203,7 @@ private:
     // Control buttons
     QPushButton* m_btnReady = nullptr;
     QPushButton* m_btnDrop = nullptr;
+    QPushButton* m_btnRetryConnection = nullptr;
     QPushButton* m_btnLeave = nullptr;
     QCheckBox* m_recordCheck = nullptr;
     QCheckBox* m_enlistCheck = nullptr;
@@ -270,6 +278,10 @@ private:
     bool m_travJoinFallbackTried = false;
     bool m_travJoinBusy = false;
     int m_travJoinPunchAttempts = 0;
+
+    // Direct-IP join state
+    qint64 m_directJoinDeadlineMs = 0;
+    bool m_directJoinAttemptActive = false;
 
     // Host peer-punching state
     QString m_travHostPeerIp;
