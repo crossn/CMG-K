@@ -18,6 +18,7 @@
 #include <RMG-Core/Kaillera.hpp>
 #include <RMG-Core/Settings.hpp>
 
+#include "common/k_socket.h"
 #include "core/p2p_core.h"
 #include "kailleraclient.h"
 #include "n02_client.h"
