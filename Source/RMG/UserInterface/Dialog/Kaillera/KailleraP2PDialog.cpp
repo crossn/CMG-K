@@ -296,11 +296,11 @@ static int automaticRollbackFrameDelayForPing(int ping)
     {
         return 2;
     }
-    if (ping <= 140)
+    if (ping <= 150)
     {
         return 3;
     }
-    if (ping <= 200)
+    if (ping <= 220)
     {
         return 4;
     }
