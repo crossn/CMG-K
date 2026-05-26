@@ -92,7 +92,7 @@ static constexpr int kConnectPollIntervalMs = 1;
 static constexpr int kP2PWaitingGamesRefreshMs = 8000;
 static constexpr int kP2PWaitingCodeRole = static_cast<int>(Qt::UserRole) + 1;
 static constexpr int kP2PWaitingHostRole = static_cast<int>(Qt::UserRole) + 2;
-static const char* kP2PWaitingGamesUrl = "http://kaillerareborn.2manygames.fr:27887/plist.txt";
+static const char* kP2PWaitingGamesUrl = "http://p2plist.smash64.net:27887/plist.txt";
 
 enum class P2PWaitingStatus {
     Favorite = 0,

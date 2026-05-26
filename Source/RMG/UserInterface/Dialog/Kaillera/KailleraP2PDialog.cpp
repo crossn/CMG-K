@@ -52,7 +52,7 @@ static inline unsigned long monotonicTickCount() {
     return (unsigned long)duration_cast<milliseconds>(steady_clock::now().time_since_epoch()).count();
 }
 
-static const char* kSsrvHost = "kaillerareborn.2manygames.fr";
+static const char* kSsrvHost = "p2plist.smash64.net";
 static const int kSsrvPort = 27887;
 static const char* kGameLayerMessagePrefix = "RMGK:MODE:";
 static const char* kGameLayerStandard = "STD";
