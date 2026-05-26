@@ -89,10 +89,16 @@ std::vector<int> g_GekkoPlayerHandles;
 std::vector<int> g_GekkoLocalHandles;
 std::vector<unsigned char> g_GekkoLatchedInput;
 bool g_GekkoHasLatchedInput = false;
-// Per-frame input buffer for rollback-aware krec recording. Buffered until
-// each frame ages past the rollback window so that rolling-back re-sims can
-// overwrite the initial speculative entry with the corrected input before
-// it gets committed to the .krec file.
+// Frame number / flags associated with the most recent latch_gekko_input
+// call. Used by synchronize_input to push the right key into the recording
+// buffer once a PIF controller-read actually consumes the latched input.
+int g_GekkoLatchedFrame = -1;
+bool g_GekkoLatchedRunningAhead = false;
+// Per-frame input buffer for rollback-aware krec recording. Pushed by
+// synchronize_input (i.e. only when the game actually polled the controller
+// that frame) and held until each frame ages past the rollback window, so
+// rolling-back re-sims can overwrite the initial speculative entry with the
+// corrected input before it gets committed to the .krec file.
 std::map<int, std::vector<unsigned char>> g_GekkoFrameInputBuffer;
 int g_GekkoMaxObservedFrame = -1;
 constexpr int kGekkoRecordingRollbackHorizon = 32;
@@ -686,35 +692,15 @@ bool latch_gekko_input(const GekkoGameEvent* event)
         }
     }
 
-    // Mirror the per-frame input record that modifyPlayValues normally writes
-    // for non-rollback Kaillera/P2P play. The initial speculative advance for
-    // frame K can carry predicted inputs that GekkoNet later corrects via a
-    // rolling-back re-sim of frame K. To keep the .krec deterministic, buffer
-    // by frame number (latest write wins) and commit only once the frame ages
-    // past the rollback window. Run-ahead advances are skipped — GekkoNet
-    // resets the sync frame after run-ahead, so those frames are advanced
-    // again later as settled or rolling-back.
-#ifdef RMGK_HAVE_P2P_TRANSPORT
-    if (!event->data.adv.running_ahead)
-    {
-        const int frame = event->data.adv.frame;
-        g_GekkoFrameInputBuffer[frame] = g_GekkoLatchedInput;
-        if (frame > g_GekkoMaxObservedFrame)
-        {
-            g_GekkoMaxObservedFrame = frame;
-        }
-        while (!g_GekkoFrameInputBuffer.empty())
-        {
-            auto it = g_GekkoFrameInputBuffer.begin();
-            if (g_GekkoMaxObservedFrame - it->first <= kGekkoRecordingRollbackHorizon)
-            {
-                break;
-            }
-            n02::recordingWriteInputs(it->second.data(), static_cast<int>(it->second.size()));
-            g_GekkoFrameInputBuffer.erase(it);
-        }
-    }
-#endif
+    // Remember which frame/flags this latched input belongs to so that
+    // synchronize_input — invoked from the rollback PIF callback only when
+    // the game actually issues a JCMD_CONTROLLER_READ that frame — can push
+    // it to the per-frame recording buffer. Pushing here instead would record
+    // one entry per gekko advance regardless of whether the emulator polled
+    // the controller, which drifts against playback (PlaybackBuffer consumes
+    // one entry per PIF poll) and silently desyncs the .krec.
+    g_GekkoLatchedFrame = event->data.adv.frame;
+    g_GekkoLatchedRunningAhead = event->data.adv.running_ahead;
 
     if (g_GekkoLogEnabled &&
         (g_GekkoLogFrames < kGekkoMaxLoggedFrames || g_GekkoLatchedInput != g_GekkoLastLatchedInput))
@@ -1316,6 +1302,8 @@ CORE_EXPORT bool rmgk_gekko::start_p2p_session(const char* gameName, int players
     g_GekkoLocalHandles.assign(static_cast<size_t>(players), -1);
     g_GekkoLatchedInput.assign(static_cast<size_t>(players * inputSize), 0);
     g_GekkoHasLatchedInput = false;
+    g_GekkoLatchedFrame = -1;
+    g_GekkoLatchedRunningAhead = false;
     g_GekkoFrameInputBuffer.clear();
     g_GekkoMaxObservedFrame = -1;
     g_GekkoPendingSaves.clear();
@@ -1463,6 +1451,8 @@ CORE_EXPORT bool rmgk_gekko::start_local_session(const char* gameName, int playe
     g_GekkoLocalHandles.assign(static_cast<size_t>(players), -1);
     g_GekkoLatchedInput.assign(static_cast<size_t>(players * inputSize), 0);
     g_GekkoHasLatchedInput = false;
+    g_GekkoLatchedFrame = -1;
+    g_GekkoLatchedRunningAhead = false;
     g_GekkoFrameInputBuffer.clear();
     g_GekkoMaxObservedFrame = -1;
     g_GekkoPendingSaves.clear();
@@ -1529,6 +1519,8 @@ CORE_EXPORT void rmgk_gekko::close_session()
     g_GekkoLocalHandles.clear();
     g_GekkoLatchedInput.clear();
     g_GekkoHasLatchedInput = false;
+    g_GekkoLatchedFrame = -1;
+    g_GekkoLatchedRunningAhead = false;
 #ifdef RMGK_HAVE_P2P_TRANSPORT
     // Flush any remaining frames still inside the rollback window at teardown.
     for (auto& entry : g_GekkoFrameInputBuffer)
@@ -1637,6 +1629,34 @@ CORE_EXPORT bool rmgk_gekko::synchronize_input(void* values, int size, int playe
 
         std::memset(values, 0, static_cast<size_t>(size) * static_cast<size_t>(players));
         std::memcpy(values, g_GekkoLatchedInput.data(), static_cast<size_t>(expectedBytes));
+
+        // Recording push happens here (not in latch_gekko_input) because this
+        // callback only fires when the emulator actually issued a controller
+        // read this frame — matching what playback consumes. Skipping the
+        // push for frames the game didn't poll keeps the .krec consume/produce
+        // cadences in lockstep and prevents the silent off-by-one drift that
+        // would otherwise compound into a mid-session desync.
+#ifdef RMGK_HAVE_P2P_TRANSPORT
+        if (g_GekkoLatchedFrame >= 0 && !g_GekkoLatchedRunningAhead)
+        {
+            const int frame = g_GekkoLatchedFrame;
+            g_GekkoFrameInputBuffer[frame] = g_GekkoLatchedInput;
+            if (frame > g_GekkoMaxObservedFrame)
+            {
+                g_GekkoMaxObservedFrame = frame;
+            }
+            while (!g_GekkoFrameInputBuffer.empty())
+            {
+                auto it = g_GekkoFrameInputBuffer.begin();
+                if (g_GekkoMaxObservedFrame - it->first <= kGekkoRecordingRollbackHorizon)
+                {
+                    break;
+                }
+                n02::recordingWriteInputs(it->second.data(), static_cast<int>(it->second.size()));
+                g_GekkoFrameInputBuffer.erase(it);
+            }
+        }
+#endif
         return true;
     }
 #endif
