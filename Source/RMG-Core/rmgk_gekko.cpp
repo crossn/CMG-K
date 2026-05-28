@@ -47,17 +47,14 @@ namespace
 constexpr unsigned int kGekkoStateCapacity = 24u * 1024u * 1024u;
 constexpr int kGekkoMaxLoggedFrames = 600;
 constexpr int kGekkoWaitSleepUs = 100;
-constexpr float kGekkoTimesyncDeadzone = 0.5f;
-constexpr double kGekkoTimesyncStrength = 0.002;
-constexpr double kGekkoTimesyncMinScale = 0.99;
-constexpr double kGekkoTimesyncMaxScale = 1.01;
-constexpr double kGekkoTimesyncLerp = 0.15;
-// Sample gekko_frames_ahead() this often when recomputing the target
-// emulation speed. Mirrors Slippi's SLIPPI_ONLINE_LOCKSTEP_INTERVAL (30
-// frames @ 60Hz = once per ~500ms) — single-frame jitter spikes no
-// longer kick the speed scale around; the lerp keeps speed_scale
-// converging toward the cached target on every frame in between.
-constexpr int kGekkoTimesyncIntervalFrames = 30;
+constexpr float kGekkoTimesyncDeadzone = 0.20f;
+constexpr double kGekkoTimesyncStrength = 0.015;
+constexpr double kGekkoTimesyncMinScale = 0.97;
+constexpr double kGekkoTimesyncMaxScale = 1.03;
+constexpr double kGekkoTimesyncLerp = 0.35;
+// Recompute timesync every frame so clients that drift ahead are pulled back
+// immediately instead of waiting on a coarse lockstep interval.
+constexpr int kGekkoTimesyncIntervalFrames = 1;
 constexpr size_t kGekkoClientReplayFrames = 600;
 
 #ifdef RMGK_HAVE_GEKKONET
@@ -104,9 +101,8 @@ int g_GekkoWaitingLoops = 0;
 int g_GekkoLocalInputLogRepeats = 0;
 int g_GekkoPacingLogFrames = 0;
 double g_GekkoSpeedScale = 1.0;
-// Timesync sample state. Counter wraps every kGekkoTimesyncIntervalFrames
-// to trigger a fresh frames_ahead sample. TargetScale is what g_GekkoSpeedScale
-// lerps toward between samples.
+// Timesync state. TargetScale is recomputed every frame; SpeedScale lerps
+// toward it so pacing is strong without hard frame-rate steps.
 int g_GekkoTimesyncSampleCounter = 0;
 double g_GekkoTimesyncTargetScale = 1.0;
 bool g_GekkoLogEnabled = false;
@@ -485,7 +481,7 @@ bool submit_local_input()
         uint32_t input = localOnlySession ? physicalInputs[playerIndex] : physicalInputs[0];
         {
             std::lock_guard<std::mutex> lock(g_GekkoClientReplayMutex);
-            if (!localOnlySession && g_GekkoLocalPlayer == 2 && g_GekkoClientReplayMode == ClientInputReplayMode::Recording)
+            if (!localOnlySession && g_GekkoLocalPlayer > 1 && g_GekkoClientReplayMode == ClientInputReplayMode::Recording)
             {
                 g_GekkoClientReplayInputs.push_back(input);
                 if (g_GekkoClientReplayInputs.size() >= kGekkoClientReplayFrames)
@@ -495,7 +491,7 @@ bool submit_local_input()
                     write_gekko_log("client_input_replay mode=playing recorded_frames=600");
                 }
             }
-            else if (!localOnlySession && g_GekkoLocalPlayer == 2 && g_GekkoClientReplayMode == ClientInputReplayMode::Playing &&
+            else if (!localOnlySession && g_GekkoLocalPlayer > 1 && g_GekkoClientReplayMode == ClientInputReplayMode::Playing &&
                 !g_GekkoClientReplayInputs.empty())
             {
                 input = g_GekkoClientReplayInputs[g_GekkoClientReplayIndex++];
@@ -600,7 +596,7 @@ bool latch_gekko_input(const GekkoGameEvent* event)
     // frame K can carry predicted inputs that GekkoNet later corrects via a
     // rolling-back re-sim of frame K. To keep the .krec deterministic, buffer
     // by frame number (latest write wins) and commit only once the frame ages
-    // past the rollback window. Run-ahead advances are skipped — GekkoNet
+    // past the rollback window. Run-ahead advances are skipped  EGekkoNet
     // resets the sync frame after run-ahead, so those frames are advanced
     // again later as settled or rolling-back.
 #ifdef RMGK_HAVE_P2P_TRANSPORT
@@ -1083,7 +1079,9 @@ int rollback_execute_begin_frame(void* userData)
                            << " last_run_frame_us=" << g_GekkoLastRunFrameUs
                            << " pending_save_us=" << g_GekkoLastPendingSaveUs
                            << " frames_ahead=" << std::fixed << std::setprecision(2)
-                           << gekko_frames_ahead(g_GekkoSession);
+                           << gekko_frames_ahead(g_GekkoSession)
+                           << " target_scale=" << std::setprecision(4) << g_GekkoTimesyncTargetScale
+                           << " speed_scale=" << g_GekkoSpeedScale;
                     write_gekko_log(stream.str());
                 }
             }
@@ -1387,7 +1385,7 @@ CORE_EXPORT bool rmgk_gekko::start_lobby_session(const char* gameName, int playe
     config.check_distance = 10;
     gekko_start(g_GekkoSession, &config);
 
-    // Use GekkoNet's built-in UDP adapter directly — the lobby doesn't
+    // Use GekkoNet's built-in UDP adapter directly  Ethe lobby doesn't
     // initialize n02's P2P core, so the n02-based transport used by
     // start_p2p_session would have no socket to ride on. The lobby's
     // anchor socket was released just before this call so the OS port
@@ -1889,7 +1887,7 @@ CORE_EXPORT bool rmgk_gekko::debug_run_frame_with_inputs(const uint32_t* inputs,
 CORE_EXPORT bool rmgk_gekko::toggle_client_input_replay()
 {
 #ifdef RMGK_HAVE_GEKKONET
-    if (g_GekkoSession == nullptr || g_GekkoLocalPlayer != 2)
+    if (g_GekkoSession == nullptr || g_GekkoLocalPlayer <= 1)
     {
         return false;
     }
