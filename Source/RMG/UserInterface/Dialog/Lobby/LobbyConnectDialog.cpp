@@ -29,6 +29,11 @@ namespace
     constexpr const char* kDefaultLobbyUrl = "ws://216.128.157.98:8080/ws";
 } // namespace
 
+QString LobbyConnectDialog::defaultServerUrl()
+{
+    return QString::fromUtf8(kDefaultLobbyUrl);
+}
+
 LobbyConnectDialog::LobbyConnectDialog(QWidget* parent)
     : QDialog(parent)
 {

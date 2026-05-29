@@ -2823,7 +2823,9 @@ void MainWindow::updateActions(bool inEmulation, bool isPaused)
     this->action_View_Search->setEnabled(!inEmulation);
 
 #ifdef NETPLAY
-    this->action_Netplay_BrowseSessions->setEnabled(!inEmulation && this->netplaySessionDialog == nullptr && this->kailleraSessionManager == nullptr);
+    const bool netplayLauncherAvailable = !inEmulation && this->netplaySessionDialog == nullptr && this->kailleraSessionManager == nullptr;
+    this->action_Netplay_BrowseSessions->setEnabled(netplayLauncherAvailable);
+    this->action_Netplay_P2P->setEnabled(netplayLauncherAvailable);
 #endif // NETPLAY
 
     keyBinding = QString::fromStdString(CoreSettingsGetStringValue(SettingsID::KeyBinding_IncreaseVolume));
@@ -3119,7 +3121,9 @@ void MainWindow::connectActionSignals(void)
 
     connect(this->action_System_Shutdown, &QAction::triggered, this, &MainWindow::on_Action_System_Shutdown);
 #ifdef NETPLAY
-    connect(this->action_Netplay_Start, &QAction::triggered, this, &MainWindow::on_Action_Netplay_BrowseSessions);
+    // The toolbar Netplay button is the primary, streamlined entry: it connects
+    // straight to the rollback lobby (onboarding the first time).
+    connect(this->action_Netplay_Start, &QAction::triggered, this, &MainWindow::on_Action_Rollback_Lobby);
 #else
     connect(this->action_Netplay_Start, &QAction::triggered, this, &MainWindow::on_Action_System_SoftReset);
 #endif
@@ -3164,7 +3168,10 @@ void MainWindow::connectActionSignals(void)
     connect(this->action_View_Log, &QAction::triggered, this, &MainWindow::on_Action_View_Log);
     connect(this->action_View_Search, &QAction::triggered, this, &MainWindow::on_Action_View_Search);
 
-    connect(this->action_Netplay_BrowseSessions, &QAction::triggered, this, &MainWindow::on_Action_Netplay_BrowseSessions);
+    // Menu-bar Netplay: legacy (delay) server + peer-to-peer open the launcher
+    // straight to their tab; rollback lobby is the streamlined entry.
+    connect(this->action_Netplay_BrowseSessions, &QAction::triggered, this, &MainWindow::on_Action_Netplay_LegacyServer);
+    connect(this->action_Netplay_P2P, &QAction::triggered, this, &MainWindow::on_Action_Netplay_P2P);
 #ifdef NETPLAY
     connect(this->action_Rollback_Lobby, &QAction::triggered, this, &MainWindow::on_Action_Rollback_Lobby);
 #endif
@@ -4320,7 +4327,7 @@ void MainWindow::on_Action_Netplay_CreateSession(void)
 #endif // NETPLAY
 }
 
-void MainWindow::on_Action_Netplay_BrowseSessions(void)
+void MainWindow::openNetplayLauncher(int initialTab)
 {
 #ifdef NETPLAY
     // Initialize Kaillera if not already initialized
@@ -4411,6 +4418,7 @@ void MainWindow::on_Action_Netplay_BrowseSessions(void)
 
     // Disable buttons while Kaillera dialog is open
     this->action_Netplay_BrowseSessions->setEnabled(false);
+    this->action_Netplay_P2P->setEnabled(false);
     this->action_Netplay_Start->setEnabled(false);
     this->action_System_StartRom->setEnabled(false);
 
@@ -4418,7 +4426,7 @@ void MainWindow::on_Action_Netplay_BrowseSessions(void)
     // This is a blocking call - user will select server, join/create game
     // When they start a game, gameStarted signal will be emitted
     // Dialog stays open until user closes it
-    this->kailleraSessionManager->showServerDialog();
+    this->kailleraSessionManager->showServerDialog(initialTab);
     if (!this->ui_RollbackNetplayLaunchActive)
     {
         this->ui_RollbackNetplayRoomActive = false;
@@ -4441,11 +4449,33 @@ void MainWindow::on_Action_Netplay_BrowseSessions(void)
 
         // Re-enable buttons and update UI
         this->action_Netplay_BrowseSessions->setEnabled(true);
+        this->action_Netplay_P2P->setEnabled(true);
         this->action_Netplay_Start->setEnabled(true);
         this->action_System_StartRom->setEnabled(true);
         this->updateUI(this->emulationThread->isRunning(), CoreIsEmulationPaused());
     }
+#else
+    (void)initialTab;
 #endif // NETPLAY
+}
+
+void MainWindow::on_Action_Netplay_BrowseSessions(void)
+{
+    // Legacy entry kept for auto-start-on-startup; opens the launcher at the
+    // persisted last tab.
+    this->openNetplayLauncher(-1);
+}
+
+void MainWindow::on_Action_Netplay_LegacyServer(void)
+{
+    // Menu "Legacy Server" → launcher on the delay-based Kaillera server tab.
+    this->openNetplayLauncher(0);
+}
+
+void MainWindow::on_Action_Netplay_P2P(void)
+{
+    // Menu "Peer to Peer" → launcher on the P2P tab.
+    this->openNetplayLauncher(1);
 }
 
 void MainWindow::on_Action_Netplay_ViewSession(void)
@@ -4459,31 +4489,42 @@ void MainWindow::on_Action_Netplay_ViewSession(void)
 #endif
 }
 
+#ifdef NETPLAY
+void MainWindow::ensureRollbackLobbyDialog()
+{
+    if (this->rollbackLobbyDialog != nullptr)
+    {
+        return;
+    }
+
+    // No parent — the lobby is its own top-level window with independent
+    // Z-order and taskbar entry, so the emulator can come to the
+    // foreground when running. Lifetime is managed in MainWindow::~.
+    this->rollbackLobbyDialog = new Dialog::RollbackLobbyDialog(nullptr);
+    this->rollbackLobbyDialog->setAttribute(Qt::WA_DeleteOnClose, false);
+    // Route the lobby's match-ready signal to the lobby-specific slot.
+    // That slot calls SetLobbyNetplay (LOBBY| address prefix) so
+    // CoreStartEmulation uses GekkoNet's default UDP adapter instead
+    // of the n02-backed P2P transport.
+    connect(this->rollbackLobbyDialog, &Dialog::RollbackLobbyDialog::matchReady,
+            this, &MainWindow::on_Lobby_SessionRequested);
+    // "Close Game" button (or peer-drop) → tear down emulation locally.
+    connect(this->rollbackLobbyDialog, &Dialog::RollbackLobbyDialog::closeMatchRequested,
+            this, [this]() {
+                if (this->emulationThread && this->emulationThread->isRunning())
+                    CoreStopEmulation();
+            });
+}
+#endif
+
 void MainWindow::on_Action_Rollback_Lobby(void)
 {
 #ifdef NETPLAY
-    if (this->rollbackLobbyDialog == nullptr)
-    {
-        // No parent — the lobby is its own top-level window with independent
-        // Z-order and taskbar entry, so the emulator can come to the
-        // foreground when running. Lifetime is managed in MainWindow::~.
-        this->rollbackLobbyDialog = new Dialog::RollbackLobbyDialog(nullptr);
-        this->rollbackLobbyDialog->setAttribute(Qt::WA_DeleteOnClose, false);
-        // Route the lobby's match-ready signal to the lobby-specific slot.
-        // That slot calls SetLobbyNetplay (LOBBY| address prefix) so
-        // CoreStartEmulation uses GekkoNet's default UDP adapter instead
-        // of the n02-backed P2P transport.
-        connect(this->rollbackLobbyDialog, &Dialog::RollbackLobbyDialog::matchReady,
-                this, &MainWindow::on_Lobby_SessionRequested);
-        // "Close Game" button (or peer-drop) → tear down emulation locally.
-        connect(this->rollbackLobbyDialog, &Dialog::RollbackLobbyDialog::closeMatchRequested,
-                this, [this]() {
-                    if (this->emulationThread && this->emulationThread->isRunning())
-                        CoreStopEmulation();
-                });
-    }
+    this->ensureRollbackLobbyDialog();
     // Refresh ROM library on every open so newly-added games show up.
     this->rollbackLobbyDialog->setRomLibrary(this->ui_Widget_RomBrowser->GetModelData());
+    // The lobby shows its own inline connect screen (username + Connect) when
+    // not yet connected, then transforms into the live lobby in-place.
     this->rollbackLobbyDialog->show();
     this->rollbackLobbyDialog->raise();
     this->rollbackLobbyDialog->activateWindow();

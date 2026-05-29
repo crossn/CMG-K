@@ -153,6 +153,8 @@ class MainWindow : public QMainWindow, private Ui::MainWindow
     bool ui_RollbackLivePumpActive = false;
     bool ui_RollbackNetplayRoomActive = false;
     bool ui_RollbackNetplayLaunchActive = false;
+    // Lazily creates rollbackLobbyDialog and wires its signals (once).
+    void ensureRollbackLobbyDialog();
     struct PendingLocalChatEcho
     {
         QString message;
@@ -162,6 +164,11 @@ class MainWindow : public QMainWindow, private Ui::MainWindow
 #endif // NETPLAY
 
     bool ui_CheckRaphnetPluginMismatchPending = false;
+
+    // Opens the Kaillera launcher; initialTab >= 0 jumps to that tab
+    // (0=Server delay, 1=Peer to Peer), -1 uses the persisted last tab.
+    // No-op when built without NETPLAY.
+    void openNetplayLauncher(int initialTab);
 
     void closeEvent(QCloseEvent *) Q_DECL_OVERRIDE;
 
@@ -282,6 +289,8 @@ class MainWindow : public QMainWindow, private Ui::MainWindow
 
     void on_Action_Netplay_CreateSession(void);
     void on_Action_Netplay_BrowseSessions(void);
+    void on_Action_Netplay_P2P(void);
+    void on_Action_Netplay_LegacyServer(void);
     void on_Action_Netplay_ViewSession(void);
     void on_Action_Rollback_Lobby(void);
 
