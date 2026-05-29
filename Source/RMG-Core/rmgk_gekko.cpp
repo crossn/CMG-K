@@ -10,6 +10,7 @@
 #define CORE_INTERNAL
 #include "rmgk_gekko.hpp"
 
+#include "Directories.hpp"
 #include "Error.hpp"
 #include "Library.hpp"
 #include "Settings.hpp"
@@ -30,9 +31,11 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <ctime>
 #include <cstdlib>
 #include <cstring>
 #include <exception>
+#include <filesystem>
 #include <fstream>
 #include <iomanip>
 #include <map>
@@ -86,10 +89,16 @@ std::vector<int> g_GekkoPlayerHandles;
 std::vector<int> g_GekkoLocalHandles;
 std::vector<unsigned char> g_GekkoLatchedInput;
 bool g_GekkoHasLatchedInput = false;
-// Per-frame input buffer for rollback-aware krec recording. Buffered until
-// each frame ages past the rollback window so that rolling-back re-sims can
-// overwrite the initial speculative entry with the corrected input before
-// it gets committed to the .krec file.
+// Frame number / flags associated with the most recent latch_gekko_input
+// call. Used by synchronize_input to push the right key into the recording
+// buffer once a PIF controller-read actually consumes the latched input.
+int g_GekkoLatchedFrame = -1;
+bool g_GekkoLatchedRunningAhead = false;
+// Per-frame input buffer for rollback-aware krec recording. Pushed by
+// synchronize_input (i.e. only when the game actually polled the controller
+// that frame) and held until each frame ages past the rollback window, so
+// rolling-back re-sims can overwrite the initial speculative entry with the
+// corrected input before it gets committed to the .krec file.
 std::map<int, std::vector<unsigned char>> g_GekkoFrameInputBuffer;
 int g_GekkoMaxObservedFrame = -1;
 constexpr int kGekkoRecordingRollbackHorizon = 32;
@@ -97,6 +106,8 @@ std::atomic_bool g_GekkoExecuting{false};
 std::atomic_bool g_GekkoStopRequested{false};
 std::vector<PendingGekkoSave> g_GekkoPendingSaves;
 std::mutex g_GekkoLogMutex;
+std::filesystem::path g_GekkoLogDirectory;
+std::string g_GekkoLogPrefix;
 int g_GekkoLogFrames = 0;
 uint32_t g_GekkoLastSubmittedInput = 0xffffffffu;
 std::vector<unsigned char> g_GekkoLastLatchedInput;
@@ -142,8 +153,94 @@ std::string hex_input(uint32_t value)
     return stream.str();
 }
 
+void set_environment_value(const char* name, const std::string& value)
+{
+#ifdef _WIN32
+    _putenv_s(name, value.c_str());
+#else
+    setenv(name, value.c_str(), 1);
+#endif
+}
+
+std::string make_rollback_log_prefix()
+{
+    static unsigned int sessionCounter = 0;
+
+    const auto now = std::chrono::system_clock::now();
+    const std::time_t nowTime = std::chrono::system_clock::to_time_t(now);
+    const auto nowMs = std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()) %
+        std::chrono::seconds(1);
+    std::tm localTime = {};
+
+#ifdef _WIN32
+    localtime_s(&localTime, &nowTime);
+#else
+    localtime_r(&nowTime, &localTime);
+#endif
+
+    std::ostringstream stream;
+    stream << "rollback_"
+           << std::put_time(&localTime, "%Y%m%d_%H%M%S")
+           << "_"
+           << std::setw(3) << std::setfill('0') << nowMs.count()
+           << "_"
+           << ++sessionCounter;
+    return stream.str();
+}
+
+std::filesystem::path create_rollback_log_directory()
+{
+    std::error_code errorCode;
+    std::filesystem::path directory = CoreGetLibraryDirectory() / "Logs";
+
+    if (std::filesystem::is_directory(directory, errorCode) ||
+        std::filesystem::create_directories(directory, errorCode))
+    {
+        return directory.make_preferred();
+    }
+
+    errorCode.clear();
+    directory = "Logs";
+    if (std::filesystem::is_directory(directory, errorCode) ||
+        std::filesystem::create_directories(directory, errorCode))
+    {
+        return directory.make_preferred();
+    }
+
+    return std::filesystem::path();
+}
+
+void reset_rollback_log_session()
+{
+    g_GekkoLogDirectory = create_rollback_log_directory();
+    g_GekkoLogPrefix = make_rollback_log_prefix();
+
+    set_environment_value("RMGK_ROLLBACK_LOG_DIR", g_GekkoLogDirectory.string());
+    set_environment_value("RMGK_ROLLBACK_LOG_PREFIX", g_GekkoLogPrefix);
+}
+
+std::filesystem::path get_gekko_log_path()
+{
+    if (g_GekkoLogPrefix.empty())
+    {
+        reset_rollback_log_session();
+    }
+
+    std::string filename = g_GekkoLogPrefix;
+    filename += g_GekkoLocalPlayer == 2 ? "_gekko_client.log" : "_gekko_host.log";
+
+    if (!g_GekkoLogDirectory.empty())
+    {
+        return g_GekkoLogDirectory / filename;
+    }
+
+    return std::filesystem::path(filename);
+}
+
 void reset_gekko_log()
 {
+    reset_rollback_log_session();
+
     const char* logEnv = std::getenv("RMGK_GEKKO_LOG");
     g_GekkoLogEnabled = CoreSettingsGetBoolValue(SettingsID::Rollback_VerboseStats) ||
         (logEnv != nullptr && std::strcmp(logEnv, "0") != 0);
@@ -166,7 +263,7 @@ void reset_gekko_log()
     }
 
     std::lock_guard<std::mutex> lock(g_GekkoLogMutex);
-    const char* path = g_GekkoLocalPlayer == 2 ? "rollback_gekko_client.log" : "rollback_gekko_host.log";
+    const std::filesystem::path path = get_gekko_log_path();
     std::ofstream file(path, std::ios::out | std::ios::trunc);
     file << "RMG-K GekkoNet input log\n";
     g_GekkoLogFrames = 0;
@@ -192,7 +289,7 @@ void write_gekko_log(const std::string& message)
     }
 
     std::lock_guard<std::mutex> lock(g_GekkoLogMutex);
-    const char* path = g_GekkoLocalPlayer == 2 ? "rollback_gekko_client.log" : "rollback_gekko_host.log";
+    const std::filesystem::path path = get_gekko_log_path();
     std::ofstream file(path, std::ios::out | std::ios::app);
     file << "core_frame=" << CoreGetCurrentFrameCount() << " " << message << "\n";
 }
@@ -595,35 +692,15 @@ bool latch_gekko_input(const GekkoGameEvent* event)
         }
     }
 
-    // Mirror the per-frame input record that modifyPlayValues normally writes
-    // for non-rollback Kaillera/P2P play. The initial speculative advance for
-    // frame K can carry predicted inputs that GekkoNet later corrects via a
-    // rolling-back re-sim of frame K. To keep the .krec deterministic, buffer
-    // by frame number (latest write wins) and commit only once the frame ages
-    // past the rollback window. Run-ahead advances are skipped — GekkoNet
-    // resets the sync frame after run-ahead, so those frames are advanced
-    // again later as settled or rolling-back.
-#ifdef RMGK_HAVE_P2P_TRANSPORT
-    if (!event->data.adv.running_ahead)
-    {
-        const int frame = event->data.adv.frame;
-        g_GekkoFrameInputBuffer[frame] = g_GekkoLatchedInput;
-        if (frame > g_GekkoMaxObservedFrame)
-        {
-            g_GekkoMaxObservedFrame = frame;
-        }
-        while (!g_GekkoFrameInputBuffer.empty())
-        {
-            auto it = g_GekkoFrameInputBuffer.begin();
-            if (g_GekkoMaxObservedFrame - it->first <= kGekkoRecordingRollbackHorizon)
-            {
-                break;
-            }
-            n02::recordingWriteInputs(it->second.data(), static_cast<int>(it->second.size()));
-            g_GekkoFrameInputBuffer.erase(it);
-        }
-    }
-#endif
+    // Remember which frame/flags this latched input belongs to so that
+    // synchronize_input — invoked from the rollback PIF callback only when
+    // the game actually issues a JCMD_CONTROLLER_READ that frame — can push
+    // it to the per-frame recording buffer. Pushing here instead would record
+    // one entry per gekko advance regardless of whether the emulator polled
+    // the controller, which drifts against playback (PlaybackBuffer consumes
+    // one entry per PIF poll) and silently desyncs the .krec.
+    g_GekkoLatchedFrame = event->data.adv.frame;
+    g_GekkoLatchedRunningAhead = event->data.adv.running_ahead;
 
     if (g_GekkoLogEnabled &&
         (g_GekkoLogFrames < kGekkoMaxLoggedFrames || g_GekkoLatchedInput != g_GekkoLastLatchedInput))
@@ -1225,6 +1302,8 @@ CORE_EXPORT bool rmgk_gekko::start_p2p_session(const char* gameName, int players
     g_GekkoLocalHandles.assign(static_cast<size_t>(players), -1);
     g_GekkoLatchedInput.assign(static_cast<size_t>(players * inputSize), 0);
     g_GekkoHasLatchedInput = false;
+    g_GekkoLatchedFrame = -1;
+    g_GekkoLatchedRunningAhead = false;
     g_GekkoFrameInputBuffer.clear();
     g_GekkoMaxObservedFrame = -1;
     g_GekkoPendingSaves.clear();
@@ -1548,7 +1627,7 @@ CORE_EXPORT bool rmgk_gekko::start_local_session(const char* gameName, int playe
     }
 
     const int clampedLocalDelay = std::clamp(localDelay, 0, 10);
-    const int predictionWindow = 4;
+    const int predictionWindow = 7;
 
     GekkoConfig config = {};
     config.num_players = static_cast<unsigned char>(players);
@@ -1570,6 +1649,8 @@ CORE_EXPORT bool rmgk_gekko::start_local_session(const char* gameName, int playe
     g_GekkoLocalHandles.assign(static_cast<size_t>(players), -1);
     g_GekkoLatchedInput.assign(static_cast<size_t>(players * inputSize), 0);
     g_GekkoHasLatchedInput = false;
+    g_GekkoLatchedFrame = -1;
+    g_GekkoLatchedRunningAhead = false;
     g_GekkoFrameInputBuffer.clear();
     g_GekkoMaxObservedFrame = -1;
     g_GekkoPendingSaves.clear();
@@ -1636,6 +1717,8 @@ CORE_EXPORT void rmgk_gekko::close_session()
     g_GekkoLocalHandles.clear();
     g_GekkoLatchedInput.clear();
     g_GekkoHasLatchedInput = false;
+    g_GekkoLatchedFrame = -1;
+    g_GekkoLatchedRunningAhead = false;
 #ifdef RMGK_HAVE_P2P_TRANSPORT
     // Flush any remaining frames still inside the rollback window at teardown.
     for (auto& entry : g_GekkoFrameInputBuffer)
@@ -1744,6 +1827,34 @@ CORE_EXPORT bool rmgk_gekko::synchronize_input(void* values, int size, int playe
 
         std::memset(values, 0, static_cast<size_t>(size) * static_cast<size_t>(players));
         std::memcpy(values, g_GekkoLatchedInput.data(), static_cast<size_t>(expectedBytes));
+
+        // Recording push happens here (not in latch_gekko_input) because this
+        // callback only fires when the emulator actually issued a controller
+        // read this frame — matching what playback consumes. Skipping the
+        // push for frames the game didn't poll keeps the .krec consume/produce
+        // cadences in lockstep and prevents the silent off-by-one drift that
+        // would otherwise compound into a mid-session desync.
+#ifdef RMGK_HAVE_P2P_TRANSPORT
+        if (g_GekkoLatchedFrame >= 0 && !g_GekkoLatchedRunningAhead)
+        {
+            const int frame = g_GekkoLatchedFrame;
+            g_GekkoFrameInputBuffer[frame] = g_GekkoLatchedInput;
+            if (frame > g_GekkoMaxObservedFrame)
+            {
+                g_GekkoMaxObservedFrame = frame;
+            }
+            while (!g_GekkoFrameInputBuffer.empty())
+            {
+                auto it = g_GekkoFrameInputBuffer.begin();
+                if (g_GekkoMaxObservedFrame - it->first <= kGekkoRecordingRollbackHorizon)
+                {
+                    break;
+                }
+                n02::recordingWriteInputs(it->second.data(), static_cast<int>(it->second.size()));
+                g_GekkoFrameInputBuffer.erase(it);
+            }
+        }
+#endif
         return true;
     }
 #endif

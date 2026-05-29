@@ -115,7 +115,7 @@ static bool parse_gekko_address(const std::string& address, std::string& remoteA
         if (predictionSeparator == std::string::npos)
         {
             frameDelay = std::stoi(address.substr(delaySeparator + 1));
-            predictionWindow = 4;
+            predictionWindow = 7;
         }
         else
         {
@@ -297,13 +297,18 @@ static void KailleraPifSyncCallback(struct pif* pif)
         int ret = CoreModifyKailleraPlayValues(sync_buffer, sizeof(uint32_t));
 
         if (ret < 0) {
-            // Game ended or network error - cache zeros and continue
-            // Don't stop emulation - let user manually stop
-            // Mark game as inactive so UI buttons are re-enabled
+            // Game ended or network error. For live netplay we keep emulation
+            // running so the user can manually exit; for krec playback there
+            // are no more inputs to feed, so stop emulation here (the dialog
+            // timer would otherwise only catch this while the dialog is open).
+            const bool wasPlayback = CoreIsKailleraPlaybackMode();
             CoreMarkKailleraGameInactive();
             s_CachedNumReceived = 0;
             for (int i = 0; i < MAX_PLAYERS; i++) {
                 s_CachedSyncBuffer[i] = 0;
+            }
+            if (wasPlayback) {
+                CoreStopEmulation();
             }
             return;
         }
@@ -664,7 +669,7 @@ CORE_EXPORT bool CoreStartEmulation(std::filesystem::path n64rom, std::filesyste
             std::string remoteAddress;
             int remotePort = 0;
             int frameDelay = 0;
-            int predictionWindow = 4;
+            int predictionWindow = 7;
             if (!parse_gekko_address(address, remoteAddress, remotePort, frameDelay, predictionWindow))
             {
                 CoreSetError("CoreStartEmulation: invalid GekkoNet session parameters");
