@@ -75,7 +75,7 @@ protected:
     void closeEvent(QCloseEvent* event) override;
 
 private slots:
-    void promptConnect();
+    void onConnectClicked();
     void onClientStateChanged(LobbyClient::ConnectionState s);
     void onHelloFailed(const QString& reason);
     void onConnectError(const QString& msg);
@@ -117,12 +117,19 @@ private slots:
 
 private:
     void buildUi();
+    QWidget* buildConnectView();   // inline username/connect screen (index 0)
+    QWidget* buildLobbyView();     // marquee + splitter (index 1)
     QWidget* buildMarquee();
     QWidget* buildBrowseView();
     QWidget* buildInRoomView();
     QWidget* buildChatColumn();
     QWidget* buildPlayersColumn();
     void     applyStylesheet();
+
+    // Swap the top-level stack between the connect screen and the live lobby.
+    void     showConnectView(const QString& statusMessage = QString());
+    void     showLobbyView();
+    QString  prefillUsername() const;
 
     void refreshPlayerRow(QTreeWidgetItem* item, const LobbyClient::LobbyUser& u);
     void refreshRoomRow(QTreeWidgetItem* item, const LobbyClient::LobbyRoomSummary& r);
@@ -156,6 +163,12 @@ private:
                           bool isSelf, int pingMs);
 
     LobbyClient* m_client = nullptr;
+
+    // ── Top-level stack: connect screen (0) ↔ live lobby (1) ──
+    QStackedWidget* m_topStack            = nullptr;
+    QLineEdit*      m_connectUsernameEdit = nullptr;
+    QPushButton*    m_connectButton       = nullptr;
+    QLabel*         m_connectStatusLabel  = nullptr;
 
     // ── Marquee bar ──
     QFrame*  m_marquee     = nullptr;

@@ -153,8 +153,9 @@
     <property name="title">
      <string>Netplay</string>
     </property>
-    <addaction name="action_Netplay_BrowseSessions"/>
     <addaction name="action_Rollback_Lobby"/>
+    <addaction name="action_Netplay_P2P"/>
+    <addaction name="action_Netplay_BrowseSessions"/>
    </widget>
    <widget class="QMenu" name="menuRollback">
     <property name="title">
@@ -654,7 +655,15 @@
     <iconset theme="plug-line"/>
    </property>
    <property name="text">
-    <string>Start Netplay</string>
+    <string>Legacy Server</string>
+   </property>
+  </action>
+  <action name="action_Netplay_P2P">
+   <property name="icon">
+    <iconset theme="links-line"/>
+   </property>
+   <property name="text">
+    <string>Peer to Peer</string>
    </property>
   </action>
   <action name="action_Rollback_Lobby">
@@ -662,7 +671,7 @@
     <iconset theme="group-line"/>
    </property>
    <property name="text">
-    <string>Rollback Lobby...</string>
+    <string>Rollback Lobby</string>
    </property>
   </action>
   <action name="action_View_Search">

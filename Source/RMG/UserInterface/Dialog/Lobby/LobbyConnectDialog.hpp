@@ -34,6 +34,11 @@ public:
     QString serverUrl() const { return m_serverUrl; }
     QString username()  const { return m_username; }
 
+    // Production lobby endpoint every client connects to. Exposed so callers
+    // that bypass this dialog (e.g. the netplay launcher's rollback tab) can
+    // connect with the same URL without duplicating the constant.
+    static QString defaultServerUrl();
+
 private slots:
     void onConnect();
     void validateInput();

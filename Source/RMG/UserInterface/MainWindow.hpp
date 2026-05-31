@@ -105,6 +105,7 @@ class MainWindow : public QMainWindow, private Ui::MainWindow
     bool ui_ShowToolbar   = false;
     bool ui_ShowStatusbar = false;
 
+    bool ui_FocusPausedEmulation = false;
     bool ui_ManuallySavedState  = false;
     bool ui_ManuallyLoadedState = false;
     CoreRollbackState ui_RollbackDebugState;
@@ -152,6 +153,8 @@ class MainWindow : public QMainWindow, private Ui::MainWindow
     bool ui_RollbackLivePumpActive = false;
     bool ui_RollbackNetplayRoomActive = false;
     bool ui_RollbackNetplayLaunchActive = false;
+    // Lazily creates rollbackLobbyDialog and wires its signals (once).
+    void ensureRollbackLobbyDialog();
     struct PendingLocalChatEcho
     {
         QString message;
@@ -161,6 +164,11 @@ class MainWindow : public QMainWindow, private Ui::MainWindow
 #endif // NETPLAY
 
     bool ui_CheckRaphnetPluginMismatchPending = false;
+
+    // Opens the Kaillera launcher; initialTab >= 0 jumps to that tab
+    // (0=Server delay, 1=Peer to Peer), -1 uses the persisted last tab.
+    // No-op when built without NETPLAY.
+    void openNetplayLauncher(int initialTab);
 
     void closeEvent(QCloseEvent *) Q_DECL_OVERRIDE;
 
@@ -202,6 +210,8 @@ class MainWindow : public QMainWindow, private Ui::MainWindow
     void addActions(void);
     void removeActions(void);
 
+    bool shouldBlockEmulationPauseForNetplay(void) const;
+
 #ifdef UPDATER
     void checkForUpdates(bool silent, bool force);
 #endif // UPDATER
@@ -226,6 +236,8 @@ class MainWindow : public QMainWindow, private Ui::MainWindow
     void updateNetplayChatPrompt(void);
     void closeNetplayChatPrompt(void);
 #endif // NETPLAY
+
+    void on_QGuiApplication_applicationStateChanged(Qt::ApplicationState state);
 
 #ifdef UPDATER
     void on_networkAccessManager_Finished(QNetworkReply *reply);
@@ -277,6 +289,8 @@ class MainWindow : public QMainWindow, private Ui::MainWindow
 
     void on_Action_Netplay_CreateSession(void);
     void on_Action_Netplay_BrowseSessions(void);
+    void on_Action_Netplay_P2P(void);
+    void on_Action_Netplay_LegacyServer(void);
     void on_Action_Netplay_ViewSession(void);
     void on_Action_Rollback_Lobby(void);
 
