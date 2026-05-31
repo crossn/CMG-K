@@ -64,6 +64,32 @@
 
 using namespace UserInterface::Dialog;
 
+namespace {
+// Auto input-delay buckets by ping, migrated from the P2P rollback tab.
+// Ping < 0 (unknown) falls back to the default. Never returns 0 — the dropdown
+// hides zero delay (zero-delay rollback has open bugs; see project memory).
+int autoFrameDelayForPing(int ping)
+{
+    if (ping < 0)    return 2;   // default when ping is unknown
+    if (ping <= 50)  return 1;
+    if (ping <= 100) return 2;
+    if (ping <= 150) return 3;
+    if (ping <= 220) return 4;
+    return 5;
+}
+
+// Auto prediction is a fixed value so users don't have to think about it.
+constexpr int kAutoPredictionWindow = 7;
+
+// Show the resolved value on the "Auto" entry, e.g. "Auto (3 f)".
+void setAutoComboLabel(QComboBox* combo, int resolved)
+{
+    if (!combo) return;
+    const int idx = combo->findData(0);
+    if (idx >= 0) combo->setItemText(idx, QStringLiteral("Auto (%1 f)").arg(resolved));
+}
+} // namespace
+
 // ──────────────────────────────────────────────────────────────────────
 // Standardized sizes — keep all paddings/heights/font deltas going through
 // these so the dialog visually balances and any future tweak only happens
@@ -458,6 +484,19 @@ QWidget* RollbackLobbyDialog::buildBrowseView()
     heroRow->addWidget(m_createRoomBtn, 0);
     lay->addLayout(heroRow);
 
+    // ── Game picker — pulls from the RMG-K library; Create Room opens on it.
+    //    (Quick Match is game-agnostic, so it isn't affected.) ──
+    auto* gameRow = new QHBoxLayout;
+    gameRow->setSpacing(SPACING_DEFAULT);
+    auto* gameLbl = new QLabel("Game:", this);
+    m_browseRomCombo = new QComboBox(this);
+    m_browseRomCombo->setObjectName("BrowseRomCombo");
+    m_browseRomCombo->setSizeAdjustPolicy(QComboBox::AdjustToContents);
+    gameRow->addWidget(gameLbl, 0);
+    gameRow->addWidget(m_browseRomCombo, 1);
+    lay->addLayout(gameRow);
+    populateBrowseRoms(); // fill from whatever library we have so far
+
     // ── Active Rooms ──
     auto* roomsHeader = new QLabel("ACTIVE ROOMS", this);
     roomsHeader->setProperty("class", "SectionHeader");
@@ -572,20 +611,19 @@ QWidget* RollbackLobbyDialog::buildInRoomView()
     // users until that's resolved. Editing this list updates the UI; the
     // server's clamp range governs what values it'll actually accept.
     static const QList<int> FRAME_OPTIONS = { 1, 2, 3, 4, 5, 6, 7, 8, 9 };
-    auto fillFrameCombo = [](QComboBox* combo) {
+    // The auto entry is data 0 (a value the numeric list never uses), inserted
+    // at the top of each combo. Delay's auto resolves from ping (labelled
+    // "Auto"); prediction's is a fixed 7 (labelled "Default").
+    auto fillFrameCombo = [](QComboBox* combo, const QString& autoLabel) {
+        combo->addItem(autoLabel, 0);
         for (int v : FRAME_OPTIONS)
             combo->addItem(QString("%1 f").arg(v), v);
-    };
-    auto selectComboValue = [](QComboBox* combo, int value) {
-        const int idx = combo->findData(value);
-        if (idx >= 0) combo->setCurrentIndex(idx);
-        else          combo->setCurrentIndex(0); // value not in list — pick the floor
+        combo->setCurrentIndex(0); // default to the auto/default entry
     };
 
     auto* delayLbl = new QLabel("Frame delay:", this);
     m_delayCombo = new QComboBox(this);
-    fillFrameCombo(m_delayCombo);
-    selectComboValue(m_delayCombo, 2);
+    fillFrameCombo(m_delayCombo, "Auto");
     m_delayCombo->setToolTip(delayTip);
     // Stash the explainer so onRoomStateChanged can restore it after a
     // disabled stint (host became host again, or match ended).
@@ -597,8 +635,7 @@ QWidget* RollbackLobbyDialog::buildInRoomView()
 
     auto* predLbl = new QLabel("Prediction:", this);
     m_predictionCombo = new QComboBox(this);
-    fillFrameCombo(m_predictionCombo);
-    selectComboValue(m_predictionCombo, 7);
+    fillFrameCombo(m_predictionCombo, "Default");
     m_predictionCombo->setToolTip(predictionTip);
     m_predictionCombo->setProperty("originalTip", predictionTip);
     settingsRow->addWidget(predLbl);
@@ -614,15 +651,11 @@ QWidget* RollbackLobbyDialog::buildInRoomView()
         if (m_suppressSettingsSignal) return;
         if (m_currentRoomId == 0) return;
         if (!m_client) return;
-        const int delayVal = m_delayCombo->currentData().toInt();
-        const int predVal  = m_predictionCombo->currentData().toInt();
-        m_client->updateRoomSettings(delayVal, predVal);
-        // Persist as the host's preferred defaults for the next room.
-        QSettings s;
-        s.beginGroup("Lobby/CreateRoom");
-        s.setValue("Delay",      delayVal);
-        s.setValue("Prediction", predVal);
-        s.endGroup();
+        // A combo's "Auto" entry has data 0; track each mode, then resolve and
+        // push the concrete values (applyHostRoomSettings never sends 0).
+        m_delayAuto      = (m_delayCombo->currentData().toInt() == 0);
+        m_predictionAuto = (m_predictionCombo->currentData().toInt() == 0);
+        applyHostRoomSettings(true);
     };
     connect(m_delayCombo,      QOverload<int>::of(&QComboBox::currentIndexChanged), this, pushSettings);
     connect(m_predictionCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, pushSettings);
@@ -911,6 +944,63 @@ void RollbackLobbyDialog::applyStylesheet()
     ).arg(border, bannerBg, bannerBorder);
 
     setStyleSheet(qss);
+}
+
+// ──────────────────────────────────────────────────────────────────────
+//  ROM library
+// ──────────────────────────────────────────────────────────────────────
+
+void RollbackLobbyDialog::setRomLibrary(const QMap<QString, CoreRomSettings>& roms)
+{
+    m_roms = roms;
+    populateBrowseRoms();
+}
+
+void RollbackLobbyDialog::populateBrowseRoms()
+{
+    if (!m_browseRomCombo) return;
+
+    m_browseRomCombo->blockSignals(true);
+    m_browseRomCombo->clear();
+
+    if (m_roms.isEmpty())
+    {
+        m_browseRomCombo->addItem("No ROMs in your library — add some first");
+        m_browseRomCombo->setEnabled(false);
+        m_browseRomCombo->blockSignals(false);
+        return;
+    }
+    m_browseRomCombo->setEnabled(true);
+
+    // Sort by display name (file path as tiebreaker), matching CreateRoomDialog
+    // so the names line up and the Create Room pre-select resolves.
+    QMap<QString, QString> sortedByName; // "<name>\x01<file>" → file
+    for (auto it = m_roms.constBegin(); it != m_roms.constEnd(); ++it)
+    {
+        const QString display = CreateRoomDialog::displayGameName(
+            QString::fromStdString(it.value().GoodName), it.key());
+        sortedByName.insert(display + "\x01" + it.key(), it.key());
+    }
+    for (auto it = sortedByName.constBegin(); it != sortedByName.constEnd(); ++it)
+    {
+        const QString file = it.value();
+        const QString display = CreateRoomDialog::displayGameName(
+            QString::fromStdString(m_roms.value(file).GoodName), file);
+        m_browseRomCombo->addItem(display);
+    }
+
+    // Restore the last-used selection (shared with Create Room via QSettings).
+    QSettings s;
+    s.beginGroup("Lobby/CreateRoom");
+    const QString preferred = s.value("Rom").toString();
+    s.endGroup();
+    if (!preferred.isEmpty())
+    {
+        const int idx = m_browseRomCombo->findText(preferred);
+        if (idx >= 0) m_browseRomCombo->setCurrentIndex(idx);
+    }
+
+    m_browseRomCombo->blockSignals(false);
 }
 
 // ──────────────────────────────────────────────────────────────────────
@@ -1330,6 +1420,17 @@ void RollbackLobbyDialog::onCreateRoomClicked()
         m_createRoomDialog->activateWindow();
         return;
     }
+    // Open Create Room on the game chosen in the browse picker. CreateRoomDialog
+    // seeds its ROM from this key (findText on identical display names).
+    if (m_browseRomCombo && m_browseRomCombo->isEnabled() &&
+        !m_browseRomCombo->currentText().isEmpty())
+    {
+        QSettings s;
+        s.beginGroup("Lobby/CreateRoom");
+        s.setValue("Rom", m_browseRomCombo->currentText());
+        s.endGroup();
+    }
+
     m_createRoomDialog = new CreateRoomDialog(m_username, m_roms, this);
     connect(m_createRoomDialog, &CreateRoomDialog::createRequested,
             this, &RollbackLobbyDialog::onRoomCreateRequested);
@@ -1545,15 +1646,27 @@ void RollbackLobbyDialog::onRoomStateChanged(const QJsonObject& roomState)
         const bool editable = iAmHost && state == "waiting";
         m_suppressSettingsSignal = true;
         // Look up the index for the server-supplied value via findData
-        // since the combo's index no longer maps 1:1 to the value (0 is
-        // omitted from the dropdown). Falls back to the floor entry if
-        // the server somehow handed us a value we don't expose.
+        // since the combo's index no longer maps 1:1 to the value (0/Auto is
+        // not a real value). Falls back to the floor entry if the server
+        // somehow handed us a value we don't expose.
         auto pickIndex = [](QComboBox* combo, int value) {
             const int idx = combo->findData(value);
             return idx >= 0 ? idx : 0;
         };
-        m_delayCombo->setCurrentIndex(pickIndex(m_delayCombo, delay));
-        m_predictionCombo->setCurrentIndex(pickIndex(m_predictionCombo, prediction));
+        // For the host of a waiting room, keep the combo on "Auto" when that's
+        // the chosen mode — otherwise the server's echo of the resolved number
+        // would knock it off Auto. Everyone else shows the concrete value.
+        if (editable && m_delayAuto)
+            m_delayCombo->setCurrentIndex(m_delayCombo->findData(0));
+        else
+            m_delayCombo->setCurrentIndex(pickIndex(m_delayCombo, delay));
+        if (editable && m_predictionAuto)
+            m_predictionCombo->setCurrentIndex(m_predictionCombo->findData(0));
+        else
+            m_predictionCombo->setCurrentIndex(pickIndex(m_predictionCombo, prediction));
+        // Keep the delay "Auto" entry's label showing the live resolved value.
+        // (Prediction's "Default" entry is a plain, fixed label.)
+        setAutoComboLabel(m_delayCombo, delay);
         m_delayCombo->setEnabled(editable);
         m_predictionCombo->setEnabled(editable);
 
@@ -1729,6 +1842,60 @@ void RollbackLobbyDialog::onPingMeasured(quint64 userId, int rttMs)
         s.metaLabel->setText(parts.join(QStringLiteral(" · ")));
         break;
     }
+
+    // Auto delay follows ping — re-resolve when a fresh RTT lands. The helper
+    // only acts when we're the host of a waiting room with Auto selected.
+    if (m_delayAuto)
+        applyHostRoomSettings(false);
+}
+
+int RollbackLobbyDialog::worstSeatPingMs() const
+{
+    if (!m_client) return -1;
+    const quint64 selfId = m_client->selfUserId();
+    int worst = -1;
+    for (const auto& s : m_seats)
+    {
+        if (s.userId == 0 || s.userId == selfId)
+            continue;
+        const int p = m_client->measuredPingMs(s.userId);
+        if (p > worst) worst = p; // tune against the worst host↔peer link
+    }
+    return worst;
+}
+
+void RollbackLobbyDialog::applyHostRoomSettings(bool force)
+{
+    if (m_currentRoomId == 0 || !m_client || !m_delayCombo || !m_predictionCombo)
+        return;
+    // The delay combo is enabled only for the host of a waiting room, so its
+    // enabled state doubles as the "I'm allowed to push settings now" gate.
+    if (!m_delayCombo->isEnabled())
+        return;
+
+    const int effDelay = m_delayAuto
+        ? autoFrameDelayForPing(worstSeatPingMs())
+        : m_delayCombo->currentData().toInt();
+    const int effPred = m_predictionAuto
+        ? kAutoPredictionWindow
+        : m_predictionCombo->currentData().toInt();
+
+    // Delay's "Auto" entry shows the resolved value, e.g. "Auto (4 f)".
+    // Prediction's "Default" entry stays a plain label (always 7, not ping-based).
+    if (m_delayAuto) setAutoComboLabel(m_delayCombo, effDelay);
+
+    if (!force && effDelay == m_currentRoomDelay && effPred == m_currentRoomPrediction)
+        return;
+
+    m_client->updateRoomSettings(effDelay, effPred);
+
+    // Persist the concrete resolved values (never the Auto sentinel 0) so
+    // CreateRoomDialog seeds a valid delay/prediction for the next room.
+    QSettings s;
+    s.beginGroup("Lobby/CreateRoom");
+    s.setValue("Delay",      effDelay);
+    s.setValue("Prediction", effPred);
+    s.endGroup();
 }
 
 void RollbackLobbyDialog::onRoomLeft()

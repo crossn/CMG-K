@@ -52,7 +52,7 @@ public:
 
     // MainWindow refreshes this on every open so the Create Room dropdown
     // reflects the user's latest ROM library.
-    void setRomLibrary(const QMap<QString, CoreRomSettings>& roms) { m_roms = roms; }
+    void setRomLibrary(const QMap<QString, CoreRomSettings>& roms);
 
     // MainWindow calls these from its existing emulation-thread signal slots
     // so the lobby server stays in sync with the actual game lifecycle.
@@ -126,6 +126,9 @@ private:
     QWidget* buildPlayersColumn();
     void     applyStylesheet();
 
+    // Repopulate the browse-view ROM picker from m_roms (RMG-K library).
+    void     populateBrowseRoms();
+
     // Swap the top-level stack between the connect screen and the live lobby.
     void     showConnectView(const QString& statusMessage = QString());
     void     showLobbyView();
@@ -143,6 +146,12 @@ private:
     void    updateStatusIndicator(LobbyClient::ConnectionState s);
     void    updateServerMeta();
     void    updateInRoomBanner();   // refresh "you're in: X" banner in browse view
+
+    // Host-only auto delay/prediction. worstSeatPingMs() = max measured RTT
+    // over seated peers (-1 if none). applyHostRoomSettings() resolves the
+    // Auto selections and pushes the concrete values via the lobby client.
+    int     worstSeatPingMs() const;
+    void    applyHostRoomSettings(bool force);
 
     // Seat row API — 4 fixed slots rendered as a vertical player list.
     // Empty rows show a ○ dot + "Waiting…"; filled rows show ● + name + meta.
@@ -226,6 +235,7 @@ private:
     // Hero / browse-view action buttons
     QPushButton* m_quickMatchBtn = nullptr;   // primary CTA (blue)
     QPushButton* m_createRoomBtn = nullptr;
+    QComboBox*   m_browseRomCombo = nullptr;   // library game picker (feeds Create Room)
 
     QHash<quint64, QTreeWidgetItem*> m_userItems;
     QHash<quint64, QTreeWidgetItem*> m_roomItems;
@@ -242,6 +252,12 @@ private:
     int     m_currentRoomDelay      = 2;
     int     m_currentRoomPrediction = 7;
     quint64 m_currentMatchId        = 0;
+
+    // Host-only "Auto" selections for the in-room dropdowns. Delay-auto is
+    // ping-based; prediction-auto is a fixed 7. Default on so a fresh host
+    // gets sensible tuning without thinking about it.
+    bool    m_delayAuto      = true;
+    bool    m_predictionAuto = true;
 
     bool m_awaitingEmulationStart = false;
     bool m_emulationActive        = false;
