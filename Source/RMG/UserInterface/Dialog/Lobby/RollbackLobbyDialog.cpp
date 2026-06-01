@@ -1490,6 +1490,15 @@ void RollbackLobbyDialog::enterRoom(quint64 roomId, const QString& greetingChatL
 {
     m_currentRoomId = roomId;
 
+    // Being in a room is mutually exclusive with searching. A successful Quick
+    // Match drops us straight into an auto-created room without the server ever
+    // sending QUICK_MATCH_STATUS{searching:false}, so clear the toggle state
+    // here. Otherwise m_quickMatchActive stays true through the game and onClick
+    // sends quickMatchCancel() (a no-op once we're out of the queue) instead of
+    // quickMatchJoin() — leaving the button unable to start a new search.
+    m_quickMatchActive = false;
+    if (m_quickMatchBtn) m_quickMatchBtn->setText("⚡  Quick Match");
+
     if (!m_chatViewRoom)
     {
         m_chatViewRoom = new QTextEdit(this);
