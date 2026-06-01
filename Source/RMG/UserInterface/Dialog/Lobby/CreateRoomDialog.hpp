@@ -53,6 +53,10 @@ public:
     // Re-enables the form so the user can edit and retry.
     void showCreateFailure(const QString& reason);
 
+    // Display-name formatting, exposed so the lobby's browse ROM picker can
+    // render identical game names (keeps the Create Room pre-select in sync).
+    static QString displayGameName(const QString& goodName, const QString& filePath);
+
 signals:
     // Emitted when user clicks Create with valid input. The dialog stays
     // open in a "Creating..." state until either showCreateFailure() is
@@ -70,7 +74,6 @@ private:
     void loadDefaults();
     void saveDefaults();
     void setFormEnabled(bool enabled);
-    static QString displayGameName(const QString& goodName, const QString& filePath);
 
     // UI — delay/prediction spinners live in the in-room view now, not here.
     QLineEdit*   m_nameEdit       = nullptr;

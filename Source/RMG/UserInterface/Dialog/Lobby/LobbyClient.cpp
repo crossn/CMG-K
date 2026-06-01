@@ -13,6 +13,7 @@
 
 #include <QWebSocket>
 #include <QUdpSocket>
+#include <QAbstractSocket>
 #include <QUrl>
 #include <QJsonDocument>
 #include <QJsonValue>
@@ -216,7 +217,12 @@ LobbyClient::LobbyClient(QObject* parent)
     connect(m_ws, &QWebSocket::connected,           this, &LobbyClient::onWsConnected);
     connect(m_ws, &QWebSocket::disconnected,        this, &LobbyClient::onWsDisconnected);
     connect(m_ws, &QWebSocket::textMessageReceived, this, &LobbyClient::onWsTextMessageReceived);
+#if QT_VERSION >= QT_VERSION_CHECK(6, 5, 0)
     connect(m_ws, &QWebSocket::errorOccurred,       this, &LobbyClient::onWsErrorOccurred);
+#else
+    connect(m_ws, QOverload<QAbstractSocket::SocketError>::of(&QWebSocket::error),
+            this, &LobbyClient::onWsErrorOccurred);
+#endif
 
     m_udp = new QUdpSocket(this);
     connect(m_udp, &QUdpSocket::readyRead, this, &LobbyClient::onUdpReadyRead);
