@@ -55,6 +55,7 @@ public:
         quint16 pingToServer = 0;
         quint64 currentRoomId = 0;
         QString currentRoomName;
+        QString searchingRom;    // ROM the user is queued for while state == searching
     };
 
     struct LobbyRoomSummary

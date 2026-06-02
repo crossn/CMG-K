@@ -780,6 +780,7 @@ LobbyClient::LobbyUser LobbyClient::parsePresenceUser(const QJsonObject& obj)
     u.pingToServer    = static_cast<quint16>(obj.value("pingToServer").toInt());
     u.currentRoomId   = static_cast<quint64>(obj.value("currentRoomId").toDouble());
     u.currentRoomName = obj.value("currentRoomName").toString();
+    u.searchingRom    = obj.value("searchingRom").toString();
     return u;
 }
 

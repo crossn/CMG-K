@@ -1335,6 +1335,12 @@ void RollbackLobbyDialog::refreshPlayerRow(QTreeWidgetItem* item, const LobbyCli
     }
     item->setText(1, stateGlyph(u.state));
 
+    // While searching, hovering the state shows which ROM they're queued for.
+    if (u.state == "searching" && !u.searchingRom.isEmpty())
+        item->setToolTip(1, QString("Searching for: %1").arg(u.searchingRom));
+    else
+        item->setToolTip(1, QString());
+
     // Ping column shows an estimated round-trip between *this* client and the
     // peer, based on region buckets the server assigned via IP geolocation.
     // It's intentionally rough — same-region pairs read ~30 ms, transatlantic
