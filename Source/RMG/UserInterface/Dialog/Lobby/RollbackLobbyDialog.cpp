@@ -1261,14 +1261,14 @@ void RollbackLobbyDialog::updateInRoomBanner()
     m_inRoomBanner->setVisible(inRoom);
     if (!inRoom) return;
 
-    // Prefer the live room name from the rooms map; fall back to "#id".
+    // Prefer the live room name from the rooms map; fall back to a neutral label.
     QString name;
     const auto& rooms = m_client->rooms();
     const auto it = rooms.constFind(m_currentRoomId);
     if (it != rooms.constEnd() && !it->name.isEmpty())
         name = it->name;
     else
-        name = QString("#%1").arg(m_currentRoomId);
+        name = QStringLiteral("Your room");
 
     // Also include seat count when we have it cached from ROOM_STATE.
     QString seats;
@@ -1548,7 +1548,7 @@ void RollbackLobbyDialog::onRoomCreated(quint64 roomId)
     if (m_createRoomDialog)
         m_createRoomDialog->accept();
     enterRoom(roomId,
-        QString("<i>You created room #%1 — waiting for players</i>").arg(roomId));
+        QStringLiteral("<i>Room created — waiting for players</i>"));
 }
 
 void RollbackLobbyDialog::onRoomJoinOk(quint64 roomId)
@@ -1559,7 +1559,7 @@ void RollbackLobbyDialog::onRoomJoinOk(quint64 roomId)
         roomName = it.value().name;
     enterRoom(roomId,
         roomName.isEmpty()
-            ? QString("<i>You joined room #%1</i>").arg(roomId)
+            ? QStringLiteral("<i>You joined the room</i>")
             : QString("<i>You joined &quot;%1&quot;</i>").arg(roomName.toHtmlEscaped()));
 }
 
@@ -1571,6 +1571,7 @@ void RollbackLobbyDialog::onRoomJoinFailed(const QString& reason)
     else if (reason == "already_started") human = "That game has already started.";
     else if (reason == "already_in_room") human = "You're already in a room.";
     else if (reason == "room_not_found")  human = "That room no longer exists.";
+    else if (reason == "kicked_recently") human = "You were recently removed from this room. Try again in a moment.";
     QMessageBox::warning(this, "Couldn't join room", human);
 }
 
@@ -1594,6 +1595,11 @@ void RollbackLobbyDialog::enterRoom(quint64 roomId, const QString& greetingChatL
         m_chatViewRoom->setLineWrapMode(QTextEdit::WidgetWidth);
         m_chatViewRoom->setFrameShape(QFrame::NoFrame);
         m_chatTabs->addTab(m_chatViewRoom, "Room");
+    }
+    else
+    {
+        // Fresh room, fresh chat — never carry the previous room's messages in.
+        m_chatViewRoom->clear();
     }
     m_chatTabs->setCurrentWidget(m_chatViewRoom);
     switchToInRoomView();
@@ -1717,8 +1723,8 @@ void RollbackLobbyDialog::onRoomStateChanged(const QJsonObject& roomState)
     if (hostName.isEmpty() && iAmHost) hostName = m_username;
     if (hostName.isEmpty()) hostName = QStringLiteral("—");
 
-    m_roomSubtitle->setText(QString("Room #%1  ·  Hosted by %2  ·  %3 players max")
-                                .arg(roomId).arg(hostName).arg(maxPlayers));
+    m_roomSubtitle->setText(QString("Hosted by %1  ·  %2 players max")
+                                .arg(hostName).arg(maxPlayers));
 
     m_roomStateLabel->setText(stateGlyph(state));
 
