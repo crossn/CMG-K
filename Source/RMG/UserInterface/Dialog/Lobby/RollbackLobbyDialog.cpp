@@ -1360,7 +1360,9 @@ void RollbackLobbyDialog::refreshPlayerRow(QTreeWidgetItem* item, const LobbyCli
     }
 
     const QString regionLabel = UserInterface::Dialog::LobbyRegions::labelFor(u.region);
-    item->setToolTip(0, QString("Region: %1").arg(regionLabel.isEmpty() ? "unknown" : regionLabel));
+    const QString regionTip = QString("Region: %1").arg(regionLabel.isEmpty() ? "unknown" : regionLabel);
+    item->setToolTip(0, regionTip);
+    item->setToolTip(2, regionTip); // hovering the ping shows the peer's region
     item->setData(0, Qt::UserRole, QVariant::fromValue(u.id));
 }
 
