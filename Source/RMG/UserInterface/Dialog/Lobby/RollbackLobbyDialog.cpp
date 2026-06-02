@@ -529,7 +529,7 @@ QWidget* RollbackLobbyDialog::buildBrowseView()
 
     m_matchesTree = new QTreeWidget(this);
     m_matchesTree->setObjectName("MatchesTree");
-    m_matchesTree->setHeaderLabels({ "Players", "Duration", "Settings" });
+    m_matchesTree->setHeaderLabels({ "Players", "Duration", "ROM" });
     m_matchesTree->setRootIsDecorated(false);
     m_matchesTree->setAlternatingRowColors(true);
     m_matchesTree->setFrameShape(QFrame::NoFrame);
@@ -538,6 +538,13 @@ QWidget* RollbackLobbyDialog::buildBrowseView()
     m_matchesTree->header()->setSectionResizeMode(1, QHeaderView::ResizeToContents);
     m_matchesTree->header()->setSectionResizeMode(2, QHeaderView::ResizeToContents);
     lay->addWidget(m_matchesTree);
+
+    // Tick the ongoing-match durations once a second (the room list only
+    // refreshes on events, so the timer keeps the elapsed time live).
+    m_matchDurationTimer = new QTimer(this);
+    m_matchDurationTimer->setInterval(1000);
+    connect(m_matchDurationTimer, &QTimer::timeout, this, &RollbackLobbyDialog::updateMatchDurations);
+    m_matchDurationTimer->start();
 
     return page;
 }
@@ -1368,18 +1375,60 @@ QString RollbackLobbyDialog::stateGlyph(const QString& state) const
 //  Rooms list
 // ──────────────────────────────────────────────────────────────────────
 
+static QString formatMatchDuration(qint64 startedAtMs)
+{
+    if (startedAtMs <= 0)
+        return QStringLiteral("—");
+
+    const qint64 elapsedMs = QDateTime::currentMSecsSinceEpoch() - startedAtMs;
+    const qint64 totalSecs = elapsedMs > 0 ? elapsedMs / 1000 : 0;
+    const qint64 h = totalSecs / 3600;
+    const qint64 m = (totalSecs % 3600) / 60;
+    const qint64 s = totalSecs % 60;
+    if (h > 0)
+        return QString("%1:%2:%3").arg(h).arg(m, 2, 10, QChar('0')).arg(s, 2, 10, QChar('0'));
+    return QString("%1:%2").arg(m).arg(s, 2, 10, QChar('0'));
+}
+
 void RollbackLobbyDialog::onRoomListChanged()
 {
     m_roomsTree->clear();
+    m_matchesTree->clear();
     m_roomItems.clear();
     for (auto it = m_client->rooms().constBegin(); it != m_client->rooms().constEnd(); ++it)
     {
+        const LobbyClient::LobbyRoomSummary& r = it.value();
+
+        // A room that's playing is a live match — show it under Ongoing Matches
+        // and drop it from the joinable Active Rooms list.
+        if (r.state == "in_game")
+        {
+            auto* matchRow = new QTreeWidgetItem(m_matchesTree);
+            matchRow->setText(0, r.playerNames.isEmpty() ? r.name : r.playerNames.join(" vs "));
+            matchRow->setText(1, formatMatchDuration(r.startedAtMs));
+            matchRow->setText(2, r.romName);
+            matchRow->setData(0, Qt::UserRole, QVariant::fromValue(r.id));
+            matchRow->setData(1, Qt::UserRole, r.startedAtMs); // for the duration ticker
+            continue;
+        }
+
         auto* row = new QTreeWidgetItem(m_roomsTree);
-        refreshRoomRow(row, it.value());
+        refreshRoomRow(row, r);
         m_roomItems.insert(it.key(), row);
     }
     updateServerMeta();
     updateInRoomBanner();   // seat counts may have changed in our own room
+}
+
+void RollbackLobbyDialog::updateMatchDurations()
+{
+    if (!m_matchesTree)
+        return;
+    for (int i = 0; i < m_matchesTree->topLevelItemCount(); ++i)
+    {
+        QTreeWidgetItem* item = m_matchesTree->topLevelItem(i);
+        item->setText(1, formatMatchDuration(item->data(1, Qt::UserRole).toLongLong()));
+    }
 }
 
 void RollbackLobbyDialog::switchToRoomsView()
@@ -1981,6 +2030,26 @@ void RollbackLobbyDialog::onChatMessageReceived(const LobbyClient::ChatMessage& 
     const QString line = QString("[%1] <b>%2:</b> %3")
         .arg(ts, msg.fromUsername.toHtmlEscaped(), msg.message.toHtmlEscaped());
     appendChatLine(msg.channel, line);
+
+    // Mirror remote room chat into the in-game overlay. Own messages are
+    // skipped — the overlay echoes those immediately on send — so they don't
+    // show twice once the server relays them back.
+    if (msg.channel == CHANNEL_ROOM && msg.fromUsername != m_username)
+    {
+        emit roomChatReceived(msg.fromUsername, msg.message);
+    }
+}
+
+void RollbackLobbyDialog::sendRoomChat(const QString& message)
+{
+    if (!m_client)
+        return;
+
+    const QString text = message.trimmed();
+    if (text.isEmpty())
+        return;
+
+    m_client->sendChat(CHANNEL_ROOM, text);
 }
 
 void RollbackLobbyDialog::appendChatLine(const QString& channel, const QString& text)

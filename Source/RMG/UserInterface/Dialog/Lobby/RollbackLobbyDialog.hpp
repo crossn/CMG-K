@@ -59,6 +59,13 @@ public:
     void notifyEmulationStarted();
     void notifyEmulationFinished();
 
+    // Sends a room-channel chat message — used by the in-game chat overlay so
+    // typed messages reach the room while a match is running.
+    void sendRoomChat(const QString& message);
+
+    // The local user's lobby name, for the overlay's local-echo line.
+    QString localUsername() const { return m_username; }
+
 signals:
     // Fired when the server has issued MATCH_BEGIN. Each entry in remotePeers
     // is pre-formatted as "<slot>,<ip>,<port>" — matches the LOBBY| address
@@ -69,6 +76,11 @@ signals:
 
     // Fired when the user clicks "Close Game" mid-match or when a peer drops.
     void closeMatchRequested();
+
+    // Fired for every *remote* room-channel chat message (own messages are
+    // filtered out — the overlay echoes those locally). MainWindow routes this
+    // to the in-game chat overlay.
+    void roomChatReceived(QString nickname, QString message);
 
 protected:
     void showEvent(QShowEvent* event) override;
@@ -136,6 +148,8 @@ private:
 
     void refreshPlayerRow(QTreeWidgetItem* item, const LobbyClient::LobbyUser& u);
     void refreshRoomRow(QTreeWidgetItem* item, const LobbyClient::LobbyRoomSummary& r);
+    // Ticks the Ongoing Matches "Duration" cells once a second.
+    void updateMatchDurations();
 
     QString stateGlyph(const QString& state) const;
     void    appendChatLine(const QString& channel, const QString& text);
@@ -192,6 +206,7 @@ private:
     QTreeWidget* m_playersTree   = nullptr;
     QTreeWidget* m_roomsTree     = nullptr;
     QTreeWidget* m_matchesTree   = nullptr;
+    QTimer*      m_matchDurationTimer = nullptr;
     QTabWidget*  m_chatTabs      = nullptr;
     QTextEdit*   m_chatViewLobby = nullptr;
     QTextEdit*   m_chatViewRoom  = nullptr; // nullptr when not in a room

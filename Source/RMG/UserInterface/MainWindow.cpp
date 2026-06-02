@@ -4514,6 +4514,9 @@ void MainWindow::ensureRollbackLobbyDialog()
                 if (this->emulationThread && this->emulationThread->isRunning())
                     CoreStopEmulation();
             });
+    // Remote room chat → in-game chat overlay (mirrors the P2P chat overlay).
+    connect(this->rollbackLobbyDialog, &Dialog::RollbackLobbyDialog::roomChatReceived,
+            this, &MainWindow::on_Lobby_RoomChatReceived);
 }
 #endif
 
@@ -4688,6 +4691,7 @@ void MainWindow::on_Lobby_SessionRequested(QString gameName, QStringList remoteP
     }
 
     this->ui_RollbackNetplayLaunchActive = true;
+    this->ui_LobbyNetplaySession = true;
 
     if (this->ui_CheckVideoSizeTimerId != 0)
     {
@@ -4746,6 +4750,24 @@ void MainWindow::on_Kaillera_ChatReceived(QString nickname, QString message)
     }
 }
 
+void MainWindow::on_Lobby_RoomChatReceived(QString nickname, QString message)
+{
+    // Mirror the lobby's room chat into the in-game overlay. The dialog only
+    // forwards *remote* messages here (our own lines are echoed immediately on
+    // send), so there's no local-echo dedup to do.
+    if (!this->ui_LobbyNetplaySession || this->emulationThread == nullptr ||
+        !this->emulationThread->isRunning())
+    {
+        return;
+    }
+
+    nickname = nickname.trimmed();
+    message = NormalizeOsdKailleraChatMessage(message);
+
+    const std::string chatLine = "<" + nickname.toStdString() + "> " + message.toStdString();
+    OnScreenDisplaySetKailleraChatMessage(chatLine);
+}
+
 void MainWindow::on_Kaillera_PlayerDropped(QString nickname, int playerNum)
 {
     // Show notification based on who dropped
@@ -4799,8 +4821,10 @@ bool MainWindow::handleNetplayChatKeyPress(QKeyEvent *event)
         return false;
     }
 
-    if (this->kailleraSessionManager == nullptr ||
-        !this->kailleraSessionManager->isGameActive())
+    const bool lobbySession = this->ui_LobbyNetplaySession;
+    const bool kailleraSession = (this->kailleraSessionManager != nullptr &&
+                                  this->kailleraSessionManager->isGameActive());
+    if (!lobbySession && !kailleraSession)
     {
         return false;
     }
@@ -4820,31 +4844,51 @@ bool MainWindow::handleNetplayChatKeyPress(QKeyEvent *event)
             if (!message.isEmpty())
             {
                 const QString normalizedMessage = NormalizeOsdKailleraChatMessage(message);
-                this->kailleraSessionManager->sendChatMessage(normalizedMessage);
-
-                const QString localNickname = QString::fromStdString(CoreSettingsGetStringValue(SettingsID::Kaillera_Username)).trimmed();
-                const bool useImmediateLocalEcho = (n02::getActiveMode() != 1);
-                if (useImmediateLocalEcho && !localNickname.isEmpty())
+                if (lobbySession)
                 {
-                    const auto now = std::chrono::steady_clock::now();
-                    while (!this->ui_PendingLocalChatEchoes.empty())
+                    // Lobby room chat: send over the lobby socket and echo our
+                    // own line immediately. The dialog filters our own messages
+                    // out of roomChatReceived, so the server relay won't double it.
+                    if (this->rollbackLobbyDialog != nullptr)
                     {
-                        const auto age = now - this->ui_PendingLocalChatEchoes.front().time;
-                        if (age <= kLocalEchoMaxAge)
+                        this->rollbackLobbyDialog->sendRoomChat(normalizedMessage);
+
+                        const QString localNickname = this->rollbackLobbyDialog->localUsername().trimmed();
+                        if (!localNickname.isEmpty())
                         {
-                            break;
+                            const std::string chatLine = "<" + localNickname.toStdString() + "> " + normalizedMessage.toStdString();
+                            OnScreenDisplaySetKailleraChatMessageImmediate(chatLine);
                         }
-                        this->ui_PendingLocalChatEchoes.pop_front();
                     }
+                }
+                else
+                {
+                    this->kailleraSessionManager->sendChatMessage(normalizedMessage);
 
-                    this->ui_PendingLocalChatEchoes.push_back({normalizedMessage, std::chrono::steady_clock::now()});
-                    while (this->ui_PendingLocalChatEchoes.size() > kLocalEchoMaxEntries)
+                    const QString localNickname = QString::fromStdString(CoreSettingsGetStringValue(SettingsID::Kaillera_Username)).trimmed();
+                    const bool useImmediateLocalEcho = (n02::getActiveMode() != 1);
+                    if (useImmediateLocalEcho && !localNickname.isEmpty())
                     {
-                        this->ui_PendingLocalChatEchoes.pop_front();
-                    }
+                        const auto now = std::chrono::steady_clock::now();
+                        while (!this->ui_PendingLocalChatEchoes.empty())
+                        {
+                            const auto age = now - this->ui_PendingLocalChatEchoes.front().time;
+                            if (age <= kLocalEchoMaxAge)
+                            {
+                                break;
+                            }
+                            this->ui_PendingLocalChatEchoes.pop_front();
+                        }
 
-                    const std::string chatLine = "<" + localNickname.toStdString() + "> " + normalizedMessage.toStdString();
-                    OnScreenDisplaySetKailleraChatMessageImmediate(chatLine);
+                        this->ui_PendingLocalChatEchoes.push_back({normalizedMessage, std::chrono::steady_clock::now()});
+                        while (this->ui_PendingLocalChatEchoes.size() > kLocalEchoMaxEntries)
+                        {
+                            this->ui_PendingLocalChatEchoes.pop_front();
+                        }
+
+                        const std::string chatLine = "<" + localNickname.toStdString() + "> " + normalizedMessage.toStdString();
+                        OnScreenDisplaySetKailleraChatMessageImmediate(chatLine);
+                    }
                 }
             }
             this->closeNetplayChatPrompt();
@@ -5112,6 +5156,7 @@ void MainWindow::on_Emulation_Finished(bool ret, QString error)
     this->ui_RollbackLivePumpActive = false;
     this->ui_RollbackNetplayRoomActive = false;
     this->ui_RollbackNetplayLaunchActive = false;
+    this->ui_LobbyNetplaySession = false;
 
     if (this->rollbackLobbyDialog != nullptr)
     {

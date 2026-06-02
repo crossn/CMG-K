@@ -314,6 +314,9 @@ void LobbyClient::handleRoomList(const QJsonObject& data)
         r.maxPlayers  = o.value("maxPlayers").toInt();
         r.state       = o.value("state").toString();
         r.hasPassword = o.value("hasPassword").toBool();
+        r.startedAtMs = static_cast<qint64>(o.value("startedAt").toDouble());
+        for (const auto& n : o.value("playerNames").toArray())
+            r.playerNames << n.toString();
         m_rooms.insert(r.id, r);
     }
     emit roomListChanged();

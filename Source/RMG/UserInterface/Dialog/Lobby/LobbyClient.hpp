@@ -69,6 +69,8 @@ public:
         int maxPlayers = 0;
         QString state;
         bool hasPassword = false;
+        QStringList playerNames;   // seated players (for Ongoing Matches)
+        qint64 startedAtMs = 0;    // match start, unix ms (0 until in-game)
     };
 
     struct LobbyMatchPeer
