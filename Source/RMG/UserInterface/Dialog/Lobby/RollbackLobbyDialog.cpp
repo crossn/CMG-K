@@ -60,6 +60,8 @@
 #include <QTimer>
 #include <QFont>
 #include <QUrl>
+#include <QDebug>
+#include <QVariant>
 #include <cstdio>
 
 using namespace UserInterface::Dialog;
@@ -467,7 +469,7 @@ QWidget* RollbackLobbyDialog::buildBrowseView()
     m_quickMatchBtn->setMinimumHeight(HERO_BUTTON_HEIGHT);
     m_quickMatchBtn->setCursor(Qt::PointingHandCursor);
     m_quickMatchBtn->setToolTip(
-        "Auto-match with another player searching right now.\n"
+        "Auto-match with another player searching for the selected game.\n"
         "Defaults to delay 2 / prediction 7.");
 
     m_createRoomBtn = new QPushButton("Create Room…", this);
@@ -484,8 +486,8 @@ QWidget* RollbackLobbyDialog::buildBrowseView()
     heroRow->addWidget(m_createRoomBtn, 0);
     lay->addLayout(heroRow);
 
-    // ── Game picker — pulls from the RMG-K library; Create Room opens on it.
-    //    (Quick Match is game-agnostic, so it isn't affected.) ──
+    // ── Game picker — pulls from the RMG-K library. Both Create Room and
+    //    Quick Match key off the selected game's MD5. ──
     auto* gameRow = new QHBoxLayout;
     gameRow->setSpacing(SPACING_DEFAULT);
     auto* gameLbl = new QLabel("Game:", this);
@@ -986,7 +988,13 @@ void RollbackLobbyDialog::populateBrowseRoms()
         const QString file = it.value();
         const QString display = CreateRoomDialog::displayGameName(
             QString::fromStdString(m_roms.value(file).GoodName), file);
-        m_browseRomCombo->addItem(display);
+        // Store the ROM's name + MD5 as item data so Quick Match can scope the
+        // search to the selected game (matches the shape Create Room sends).
+        QVariantMap romData;
+        romData["name"] = display;
+        romData["md5"]  = QString::fromStdString(m_roms.value(file).MD5);
+        romData["file"] = file;
+        m_browseRomCombo->addItem(display, romData);
     }
 
     // Restore the last-used selection (shared with Create Room via QSettings).
@@ -2010,7 +2018,19 @@ void RollbackLobbyDialog::onQuickMatchClicked()
                 "Leave your current room before searching for a match.");
             return;
         }
-        m_client->quickMatchJoin();
+
+        const QVariantMap romData = m_browseRomCombo ? m_browseRomCombo->currentData().toMap() : QVariantMap();
+        const QString romName = romData.value("name").toString();
+        const QString romMd5  = romData.value("md5").toString();
+        if (romMd5.isEmpty())
+        {
+            QMessageBox::information(this, "Select a game",
+                "Pick a game from the dropdown before searching — Quick Match "
+                "only pairs you with players searching for that same ROM.");
+            return;
+        }
+        qInfo() << "lobby: quick match search" << "game" << romName << "md5" << romMd5;
+        m_client->quickMatchJoin(romName, romMd5);
     }
 }
 

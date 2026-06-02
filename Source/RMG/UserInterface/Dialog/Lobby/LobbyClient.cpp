@@ -753,9 +753,13 @@ void LobbyClient::reportMatchFinished(quint64 matchId)
     sendEnvelope("MATCH_FINISHED", d);
 }
 
-void LobbyClient::quickMatchJoin()
+void LobbyClient::quickMatchJoin(const QString& romName, const QString& romMd5)
 {
-    sendEnvelope("QUICK_MATCH_JOIN");
+    QJsonObject rom;
+    rom["name"]   = romName;
+    rom["md5"]    = romMd5;
+    rom["region"] = QString();
+    sendEnvelope("QUICK_MATCH_JOIN", { {"rom", rom} });
 }
 
 void LobbyClient::quickMatchCancel()

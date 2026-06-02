@@ -131,8 +131,10 @@ public:
     // we sent comes back.
     int measuredPingMs(quint64 userId) const;
 
-    // Quick match queue
-    void quickMatchJoin();
+    // Quick match queue. The ROM (name + md5) scopes the search so the server
+    // only pairs players queued for the same game; the name lets the matched
+    // room resolve to a local ROM by name on both clients.
+    void quickMatchJoin(const QString& romName, const QString& romMd5);
     void quickMatchCancel();
 
     // Match lifecycle reports back to server (called from emulation hookup).
