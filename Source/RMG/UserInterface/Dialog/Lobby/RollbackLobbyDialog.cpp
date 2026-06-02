@@ -2031,10 +2031,11 @@ void RollbackLobbyDialog::onChatMessageReceived(const LobbyClient::ChatMessage& 
         .arg(ts, msg.fromUsername.toHtmlEscaped(), msg.message.toHtmlEscaped());
     appendChatLine(msg.channel, line);
 
-    // Mirror remote room chat into the in-game overlay. Own messages are
-    // skipped — the overlay echoes those immediately on send — so they don't
-    // show twice once the server relays them back.
-    if (msg.channel == CHANNEL_ROOM && msg.fromUsername != m_username)
+    // Mirror room chat into the in-game overlay. The server relays room chat to
+    // every member (including the sender), so forwarding all room messages —
+    // own and remote — makes both show on the OSD whether they were typed in
+    // the dialog or via the in-game chat key.
+    if (msg.channel == CHANNEL_ROOM)
     {
         emit roomChatReceived(msg.fromUsername, msg.message);
     }

@@ -63,9 +63,6 @@ public:
     // typed messages reach the room while a match is running.
     void sendRoomChat(const QString& message);
 
-    // The local user's lobby name, for the overlay's local-echo line.
-    QString localUsername() const { return m_username; }
-
 signals:
     // Fired when the server has issued MATCH_BEGIN. Each entry in remotePeers
     // is pre-formatted as "<slot>,<ip>,<port>" — matches the LOBBY| address

@@ -4752,11 +4752,11 @@ void MainWindow::on_Kaillera_ChatReceived(QString nickname, QString message)
 
 void MainWindow::on_Lobby_RoomChatReceived(QString nickname, QString message)
 {
-    // Mirror the lobby's room chat into the in-game overlay. The dialog only
-    // forwards *remote* messages here (our own lines are echoed immediately on
-    // send), so there's no local-echo dedup to do.
-    if (!this->ui_LobbyNetplaySession || this->emulationThread == nullptr ||
-        !this->emulationThread->isRunning())
+    // Mirror the lobby's room chat into the in-game overlay. roomChatReceived
+    // only fires while we're in a lobby room, so a running game here is the
+    // lobby match — gate on emulation alone (the lobby-session flag can briefly
+    // race during a rematch relaunch).
+    if (this->emulationThread == nullptr || !this->emulationThread->isRunning())
     {
         return;
     }
@@ -4846,19 +4846,13 @@ bool MainWindow::handleNetplayChatKeyPress(QKeyEvent *event)
                 const QString normalizedMessage = NormalizeOsdKailleraChatMessage(message);
                 if (lobbySession)
                 {
-                    // Lobby room chat: send over the lobby socket and echo our
-                    // own line immediately. The dialog filters our own messages
-                    // out of roomChatReceived, so the server relay won't double it.
+                    // Lobby room chat: just send over the lobby socket. The
+                    // server relays room chat back to every member (including
+                    // us), so our own line reaches the overlay via the normal
+                    // receive path — no local echo needed (and it would double).
                     if (this->rollbackLobbyDialog != nullptr)
                     {
                         this->rollbackLobbyDialog->sendRoomChat(normalizedMessage);
-
-                        const QString localNickname = this->rollbackLobbyDialog->localUsername().trimmed();
-                        if (!localNickname.isEmpty())
-                        {
-                            const std::string chatLine = "<" + localNickname.toStdString() + "> " + normalizedMessage.toStdString();
-                            OnScreenDisplaySetKailleraChatMessageImmediate(chatLine);
-                        }
                     }
                 }
                 else
