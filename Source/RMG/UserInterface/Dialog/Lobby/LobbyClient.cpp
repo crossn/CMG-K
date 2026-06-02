@@ -753,9 +753,9 @@ void LobbyClient::reportMatchFinished(quint64 matchId)
     sendEnvelope("MATCH_FINISHED", d);
 }
 
-void LobbyClient::quickMatchJoin()
+void LobbyClient::quickMatchJoin(const QString& romMd5)
 {
-    sendEnvelope("QUICK_MATCH_JOIN");
+    sendEnvelope("QUICK_MATCH_JOIN", { {"romMd5", romMd5} });
 }
 
 void LobbyClient::quickMatchCancel()
