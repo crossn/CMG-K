@@ -334,8 +334,7 @@ void LobbyClient::handleRoomCreateFail(const QJsonObject& data)
 
 void LobbyClient::handleRoomLeft(const QJsonObject& data)
 {
-    Q_UNUSED(data);
-    emit roomLeft();
+    emit roomLeft(data.value("reason").toString());
 }
 
 void LobbyClient::handleRoomState(const QJsonObject& data)

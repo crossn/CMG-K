@@ -102,7 +102,7 @@ private slots:
     void onRoomCreateFailed(const QString& reason);
     void onRoomJoinOk(quint64 roomId);
     void onRoomJoinFailed(const QString& reason);
-    void onRoomLeft();
+    void onRoomLeft(const QString& reason);
     void onRoomStateChanged(const QJsonObject& roomState);
 
     void onQuickMatchClicked();
@@ -174,13 +174,14 @@ private:
         QLabel*  slotLabel = nullptr;     // "P1"
         QLabel*  nameLabel = nullptr;     // username or "Waiting…"
         QLabel*  metaLabel = nullptr;     // "host · 12ms" — right-aligned
+        QPushButton* kickButton = nullptr; // ✕ — host-only, removes the seated player
         bool     isHost    = false;
         quint64  userId    = 0;           // seated user, 0 when empty
     };
     void buildSeatRow(SeatRow& row, int slotIdx, QWidget* parent);
     void renderSeatEmpty(SeatRow& row);
     void renderSeatFilled(SeatRow& row, const QString& username, bool isHost,
-                          bool isSelf, int pingMs);
+                          bool isSelf, int pingMs, bool canKick);
 
     LobbyClient* m_client = nullptr;
 

@@ -172,7 +172,7 @@ signals:
     void roomCreateFailed(const QString& reason);
     void roomJoinOk(quint64 roomId);
     void roomJoinFailed(const QString& reason);
-    void roomLeft();
+    void roomLeft(QString reason);
     void roomStateChanged(const QJsonObject& roomState);
 
     void chatMessageReceived(const LobbyClient::ChatMessage& msg);

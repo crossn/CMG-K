@@ -765,6 +765,27 @@ void RollbackLobbyDialog::buildSeatRow(SeatRow& s, int slotIdx, QWidget* parent)
     s.metaLabel = new QLabel(QString(), s.row);
     s.metaLabel->setForegroundRole(QPalette::PlaceholderText);
     lay->addWidget(s.metaLabel);
+
+    // Host-only kick button. Hidden by default; shown on non-host seats only
+    // when the local user is the host (set in renderSeatFilled).
+    s.kickButton = new QPushButton(QStringLiteral("✕"), s.row);
+    s.kickButton->setObjectName("SeatKickButton");
+    s.kickButton->setFixedSize(20, 20);
+    s.kickButton->setCursor(Qt::PointingHandCursor);
+    s.kickButton->setFocusPolicy(Qt::NoFocus);
+    s.kickButton->setToolTip(QStringLiteral("Remove this player from the match"));
+    s.kickButton->setVisible(false);
+    connect(s.kickButton, &QPushButton::clicked, this, [this, &s]() {
+        if (!m_client || s.userId == 0)
+            return;
+        const QString name = s.nameLabel ? s.nameLabel->text() : QString();
+        if (QMessageBox::question(this, "Remove player",
+                QString("Remove %1 from the match?").arg(name.isEmpty() ? QStringLiteral("this player") : name),
+                QMessageBox::Yes | QMessageBox::No, QMessageBox::No) != QMessageBox::Yes)
+            return;
+        m_client->kickFromRoom(s.userId);
+    });
+    lay->addWidget(s.kickButton);
 }
 
 void RollbackLobbyDialog::renderSeatEmpty(SeatRow& s)
@@ -784,12 +805,14 @@ void RollbackLobbyDialog::renderSeatEmpty(SeatRow& s)
         s.nameLabel->setForegroundRole(QPalette::PlaceholderText);
     }
     if (s.metaLabel) s.metaLabel->setText(QString());
+    if (s.kickButton) s.kickButton->setVisible(false);
 }
 
 void RollbackLobbyDialog::renderSeatFilled(SeatRow& s, const QString& username, bool isHost,
-                                           bool isSelf, int pingMs)
+                                           bool isSelf, int pingMs, bool canKick)
 {
     s.isHost = isHost;
+    if (s.kickButton) s.kickButton->setVisible(canKick);
     if (s.dotLabel)
     {
         s.dotLabel->setText(QStringLiteral("●"));
@@ -1767,8 +1790,10 @@ void RollbackLobbyDialog::onRoomStateChanged(const QJsonObject& roomState)
         const bool slotIsHost = (uid == hostId);
         const bool slotIsSelf = (uid == m_client->selfUserId());
         const int pingMs = slotIsSelf ? -1 : m_client->measuredPingMs(uid);
+        // The host can remove any seated player except themselves (the host seat).
+        const bool canKick = iAmHost && !slotIsHost;
         m_seats[slot - 1].userId = uid;
-        renderSeatFilled(m_seats[slot - 1], user, slotIsHost, slotIsSelf, pingMs);
+        renderSeatFilled(m_seats[slot - 1], user, slotIsHost, slotIsSelf, pingMs, canKick);
         filled[slot - 1] = true;
     }
     for (int i = 0; i < 4; ++i)
@@ -1972,7 +1997,7 @@ void RollbackLobbyDialog::applyHostRoomSettings(bool force)
     s.endGroup();
 }
 
-void RollbackLobbyDialog::onRoomLeft()
+void RollbackLobbyDialog::onRoomLeft(const QString& reason)
 {
     if (m_emulationActive || m_awaitingEmulationStart)
         emit closeMatchRequested();
@@ -2013,6 +2038,14 @@ void RollbackLobbyDialog::onRoomLeft()
 
     updateInRoomBanner();
     onRoomListChanged();
+
+    // Tell the user why they left, if it wasn't their own doing.
+    if (reason == QLatin1String("kicked"))
+        QMessageBox::information(this, "Removed from match",
+            "You were removed from the lobby by the host.");
+    else if (reason == QLatin1String("host_left"))
+        QMessageBox::information(this, "Room closed",
+            "The host closed the room.");
 }
 
 // ──────────────────────────────────────────────────────────────────────
