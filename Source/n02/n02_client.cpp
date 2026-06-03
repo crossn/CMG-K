@@ -179,11 +179,11 @@ static void close_recording() {
     }
 }
 
-static int gameCallbackWrapper(char *game, int player, int numplayers_arg) {
-    close_recording();
-
-    if (active_mod.RecordingEnabled && active_mod.RecordingEnabled()) {
-        n02_TRACE();
+// Open a fresh .krec recording and write its KRC1 header. The caller fills the
+// recording_player_names global first (used for both the filename and header).
+// Shared by the n02 game-start path (gameCallbackWrapper) and the rollback
+// lobby path (n02::recordingOpen) so every transport writes an identical layout.
+static void openRecordingFile(const char* appName, const char* game, int player, int numplayers_arg) {
         RecordingBuffer.reset();
 
         // Create records directory
@@ -290,7 +290,7 @@ static int gameCallbackWrapper(char *game, int player, int numplayers_arg) {
             GameName[sizeof(GameName) - 1] = 0;
 
             recording_file.write("KRC1", 4);
-            recording_file.write(infos_copy.appName ? infos_copy.appName : "", 128);
+            recording_file.write(appName ? appName : "", 128);
             recording_file.write(GameName, 128);
             time_t mytime = time(NULL);
             recording_file.write((char*)&mytime, 4);
@@ -298,6 +298,14 @@ static int gameCallbackWrapper(char *game, int player, int numplayers_arg) {
             recording_file.write((char*)&numplayers_arg, 4);
             recording_file.write((char*)recording_player_names, 128);
         }
+}
+
+static int gameCallbackWrapper(char *game, int player, int numplayers_arg) {
+    close_recording();
+
+    if (active_mod.RecordingEnabled && active_mod.RecordingEnabled()) {
+        n02_TRACE();
+        openRecordingFile(infos_copy.appName, game, player, numplayers_arg);
         n02_TRACE();
     }
 
@@ -790,6 +798,22 @@ void recordingWriteInputs(const void* values, int size) {
     RecordingBuffer.put_short(siz);
     RecordingBuffer.put_bytes((char*)values, siz);
     RecordingBuffer.write();
+}
+
+void recordingOpen(const char* appName, const char* gameName, int localPlayer, int numPlayers) {
+    // Close any recording left open from a previous match, then start a fresh
+    // one only when recording is enabled. Mirrors gameCallbackWrapper's gate for
+    // the GekkoNet rollback path, which syncs input via GekkoNet and so never
+    // reaches that callback. The caller fills recording_player_names first.
+    close_recording();
+    if (!n02_kaillera_recording_enabled) {
+        return;
+    }
+    openRecordingFile(appName, gameName, localPlayer, numPlayers);
+}
+
+void recordingClose() {
+    close_recording();
 }
 
 void chatSend(char *text) {

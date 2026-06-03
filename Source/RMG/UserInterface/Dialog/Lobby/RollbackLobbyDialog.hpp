@@ -29,6 +29,7 @@ class QSplitter;
 class QTabWidget;
 class QStackedWidget;
 class QComboBox;
+class QCheckBox;
 
 namespace UserInterface
 {
@@ -231,6 +232,11 @@ private:
     QComboBox* m_delayCombo      = nullptr;
     QComboBox* m_predictionCombo = nullptr;
     bool       m_suppressSettingsSignal = false;  // guard against ROOM_STATE → setCurrentIndex echo
+
+    // Per-player local toggle: when checked, this client writes a .krec of the
+    // match (the player who checks it records, same as the p2p/kaillera lobbies).
+    // Drives the shared n02_kaillera_recording_enabled flag; not synced to the room.
+    QCheckBox* m_recordCheck     = nullptr;
 
     // Seat rows (always 4 — slots beyond maxPlayers are hidden)
     SeatRow    m_seats[4];

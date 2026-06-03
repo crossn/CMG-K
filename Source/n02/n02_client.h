@@ -42,6 +42,16 @@ int modifyPlayValues(void *values, int size);
 // No-op if no recording is open.
 void recordingWriteInputs(const void* values, int size);
 
+// Open a new .krec recording for a session that bypasses n02's game-start
+// callback (the GekkoNet rollback lobby path). Closes any open recording first,
+// then writes a KRC1 header — but only when n02_kaillera_recording_enabled is
+// set. The caller must populate recording_player_names beforehand. appName /
+// gameName populate the header; localPlayer is this client's 1-based slot.
+void recordingOpen(const char* appName, const char* gameName, int localPlayer, int numPlayers);
+
+// Flush and close the recording opened by recordingOpen(). No-op if none open.
+void recordingClose();
+
 // Send chat message to other players
 void chatSend(char *text);
 

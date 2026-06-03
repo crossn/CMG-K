@@ -31,6 +31,7 @@
 
 #include <RMG-Core/Callback.hpp>
 #include <RMG-Core/Settings.hpp>
+#include <RMG-Core/Kaillera.hpp>
 
 #include <QRegularExpression>
 #include <QRegularExpressionValidator>
@@ -51,6 +52,7 @@
 #include <QLabel>
 #include <QFrame>
 #include <QComboBox>
+#include <QCheckBox>
 #include <QSettings>
 #include <QMessageBox>
 #include <QInputDialog>
@@ -63,8 +65,16 @@
 #include <QDebug>
 #include <QVariant>
 #include <cstdio>
+#include <cstring>
 
 using namespace UserInterface::Dialog;
+
+// Recording globals live in the n02 static library (exported from RMG-Core).
+// Declared at global scope on purpose: a block-scope `extern` inside a
+// RollbackLobbyDialog member binds to a phantom UserInterface::Dialog::<name>
+// and fails to link, so these mirror p2p_core.cpp's file-scope declarations.
+extern bool n02_kaillera_recording_enabled;
+extern char recording_player_names[4][32];
 
 namespace {
 // Auto input-delay buckets by ping, migrated from the P2P rollback tab.
@@ -651,6 +661,23 @@ QWidget* RollbackLobbyDialog::buildInRoomView()
     settingsRow->addWidget(m_predictionCombo);
 
     settingsRow->addStretch(1);
+
+    // Per-player local recording toggle. Sits on the (otherwise host-only)
+    // settings row but stays enabled for everyone — each player decides whether
+    // to save their own .krec. Initialized from the cap-aware default and kept
+    // in the shared n02 recording flag, exactly like the p2p / kaillera lobbies.
+    m_recordCheck = new QCheckBox("Record game", this);
+    m_recordCheck->setToolTip(
+        "Record this match to a .krec file on your PC.\n"
+        "Local setting — each player records their own copy.");
+    const bool recordingDefault = CoreGetKailleraEffectiveRecordingDefault();
+    n02_kaillera_recording_enabled = recordingDefault;
+    m_recordCheck->setChecked(recordingDefault);
+    connect(m_recordCheck, &QCheckBox::toggled, this, [](bool checked) {
+        n02_kaillera_recording_enabled = checked;
+    });
+    settingsRow->addWidget(m_recordCheck);
+
     lay->addLayout(settingsRow);
 
     // Both combos share the same change handler. Skip emits while we're
@@ -2208,6 +2235,30 @@ void RollbackLobbyDialog::onMatchBegin(quint64 matchId, const QList<LobbyClient:
     {
         appendChatSystemLine(CHANNEL_ROOM, "MATCH_BEGIN missing local or remote peer — aborting");
         return;
+    }
+
+    // Make this room's "Record game" checkbox authoritative for the match, in
+    // case another netplay dialog touched the shared flag since the box was built.
+    if (m_recordCheck)
+    {
+        n02_kaillera_recording_enabled = m_recordCheck->isChecked();
+    }
+
+    // Capture seated player names (slot-indexed) for the .krec header, the same
+    // way the p2p / kaillera paths fill recording_player_names before a recording
+    // opens. MainWindow opens the file when it launches the match; this is
+    // harmless when "Record game" is off (the open self-gates on the flag).
+    {
+        std::memset(recording_player_names, 0, sizeof(recording_player_names));
+        for (const auto& p : peers)
+        {
+            if (p.slot >= 1 && p.slot <= 4)
+            {
+                const QByteArray nameBytes = p.username.toUtf8();
+                std::strncpy(recording_player_names[p.slot - 1], nameBytes.constData(), 31);
+                recording_player_names[p.slot - 1][31] = '\0';
+            }
+        }
     }
 
     const quint16 localPort = m_client->localUdpPort();

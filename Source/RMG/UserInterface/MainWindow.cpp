@@ -4701,6 +4701,19 @@ void MainWindow::on_Lobby_SessionRequested(QString gameName, QStringList remoteP
 
     CoreAddCallbackMessage(CoreDebugMessageType::Info,
         "Lobby→LobbySession: launching emulation thread (lobby UDP transport)");
+
+    // Open a .krec for this match if the player ticked "Record game" in the lobby
+    // room. recordingOpen self-gates on the shared recording flag and writes the
+    // same KRC1 header the p2p / kaillera paths do; the seated player names were
+    // captured in the lobby's onMatchBegin. Point n02 at the configured records
+    // dir + app id first, since the lobby path never runs CoreInitKaillera.
+    n02::setRecordsDirectory(CoreGetKailleraRecordsDirectory());
+    {
+        const std::string recAppName = "RMG-K " + CoreGetVersion();
+        n02::recordingOpen(recAppName.c_str(), gameName.toStdString().c_str(),
+                           localPlayer, int(remotePeers.size()) + 1);
+    }
+
     this->emulationThread->SetLobbyNetplay(remotePeers, localPort, localPlayer, frameDelay, predictionWindow);
     this->launchEmulationThread(romFile, "", false, -1, true);
 }
@@ -5150,6 +5163,14 @@ void MainWindow::on_Emulation_Finished(bool ret, QString error)
     this->ui_RollbackLivePumpActive = false;
     this->ui_RollbackNetplayRoomActive = false;
     this->ui_RollbackNetplayLaunchActive = false;
+
+    if (this->ui_LobbyNetplaySession)
+    {
+        // The GekkoNet lobby path appends inputs straight to the .krec via
+        // n02::recordingWriteInputs and never reaches n02's game-end close, so
+        // finalize the recording here (no-op when nothing was recorded).
+        n02::recordingClose();
+    }
     this->ui_LobbyNetplaySession = false;
 
     if (this->rollbackLobbyDialog != nullptr)
