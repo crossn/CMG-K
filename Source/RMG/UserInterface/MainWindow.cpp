@@ -3453,16 +3453,34 @@ void MainWindow::timerEvent(QTimerEvent *event)
                 return;
             }
             // Fast-forward toward the live edge, then settle at realtime so the
-            // spectator sits a small fixed distance behind the broadcaster.
-            int behind = n02::playbackGetTotalFrames() - n02::playbackGetCurrentFrame();
+            // spectator sits ~1.5 s behind the broadcaster.
+            //
+            // Target = the broadcaster-stamped live frame (authoritative). Until
+            // the first stamp arrives, fall back to the local received edge.
+            const int liveFrame = this->ui_SpectateLiveFrame > 0
+                ? this->ui_SpectateLiveFrame
+                : n02::playbackGetTotalFrames();
             const int target = 90; // ~1.5 s behind live
-            int speed;
-            if      (behind > target + 120) speed = 500; // far behind: catch up hard
-            else if (behind > target + 30)  speed = 200;
-            else if (behind > target)       speed = 130;
-            else                            speed = 100; // at the live edge
-            if (CoreGetSpeedFactor() != speed)
-                CoreSetSpeedFactor(speed);
+            const int behind = liveFrame - n02::playbackGetCurrentFrame();
+
+            if (behind > target)
+            {
+                // Catch up headless: drop video/audio/pacing so the emulator
+                // runs uncapped (the krec still feeds via the PIF sync callback).
+                // Drains the backlog in ~1-2 s instead of crawling at rendered 5x.
+                if (!this->ui_SpectateFastForward)
+                {
+                    CoreSetFrameOutput(CoreFrameOutput_Input);
+                    this->ui_SpectateFastForward = true;
+                }
+            }
+            else if (this->ui_SpectateFastForward)
+            {
+                // Reached the live edge — resume rendering at realtime.
+                CoreSetFrameOutput(CoreFrameOutput_All);
+                CoreSetSpeedFactor(100);
+                this->ui_SpectateFastForward = false;
+            }
         }
     }
 #endif // NETPLAY
@@ -4171,8 +4189,9 @@ void MainWindow::on_Lobby_SpectateLaunch(quint64 matchId, QString gameName)
     n02::activateMode(2);
     n02::playbackBeginStream();
 
-    this->ui_SpectateActive  = true;
-    this->ui_SpectateMatchId = matchId;
+    this->ui_SpectateActive    = true;
+    this->ui_SpectateMatchId   = matchId;
+    this->ui_SpectateLiveFrame = 0; // updated from broadcaster-stamped SPECTATE_DATA
 
     // ~60 Hz: drive the playback state machine + fast-forward.
     if (this->ui_SpectateTimerId == 0)
@@ -4181,12 +4200,15 @@ void MainWindow::on_Lobby_SpectateLaunch(quint64 matchId, QString gameName)
     OnScreenDisplaySetMessage(("Spectating: " + gameName.toStdString()).c_str());
 }
 
-void MainWindow::on_Lobby_SpectateData(QByteArray bytes)
+void MainWindow::on_Lobby_SpectateData(QByteArray bytes, int liveFrame)
 {
     if (!this->ui_SpectateActive || bytes.isEmpty())
     {
         return;
     }
+    // Track the broadcaster's live edge (monotonic) — the fast-forward target.
+    if (liveFrame > this->ui_SpectateLiveFrame)
+        this->ui_SpectateLiveFrame = liveFrame;
     n02::playbackAppendBytes(bytes.constData(), static_cast<int>(bytes.size()));
 }
 
@@ -4210,6 +4232,7 @@ void MainWindow::stopLobbySpectate()
         this->ui_SpectateTimerId = 0;
     }
     CoreSetSpeedFactor(100);
+    CoreSetFrameOutput(CoreFrameOutput_All); // undo any headless catch-up state
     n02::playbackStopStream();
     if (this->emulationThread->isRunning())
     {

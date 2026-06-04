@@ -1914,6 +1914,17 @@ void RollbackLobbyDialog::onRoomStateChanged(const QJsonObject& roomState)
         m_suppressSettingsSignal = false;
     }
 
+    // Broadcasting is host-only — one authoritative stream per match. Hide the
+    // option for non-hosts (and clear any stale check) so only the host can arm
+    // it; the server enforces the same rule on BROADCAST_BEGIN. "Record game"
+    // stays available to everyone (each player saves their own local .krec).
+    if (m_broadcastCheck)
+    {
+        m_broadcastCheck->setVisible(iAmHost);
+        if (!iAmHost && m_broadcastCheck->isChecked())
+            m_broadcastCheck->setChecked(false);
+    }
+
     // ── Seats ──
     QVector<bool> filled(4, false);
     for (const auto& v : players)
@@ -2414,7 +2425,12 @@ void RollbackLobbyDialog::onBroadcastDrainTick()
         m_broadcastBuf.clear();   // detaches m_broadcastBuf, leaving chunk intact
     }
     if (m_broadcastMatchId != 0)
-        m_client->sendBroadcastData(m_broadcastMatchId, chunk);
+    {
+        // Stamp the broadcaster's live krec frame so spectators know the live
+        // edge and can fast-forward to it. The drained chunk carries records up
+        // to ~this frame, so it's the right "after this chunk" live position.
+        m_client->sendBroadcastData(m_broadcastMatchId, chunk, n02::recordingFrameCount());
+    }
 }
 
 // ── Spectator ─────────────────────────────────────────────────────────
@@ -2441,10 +2457,10 @@ void RollbackLobbyDialog::onSpectateBegan(quint64 matchId)
     appendChatSystemLine(CHANNEL_LOBBY, "Spectating — buffering the match…");
 }
 
-void RollbackLobbyDialog::onSpectateData(quint64 matchId, const QByteArray& bytes)
+void RollbackLobbyDialog::onSpectateData(quint64 matchId, const QByteArray& bytes, int liveFrame)
 {
     if (matchId != m_spectatingMatchId) return;
-    emit spectateStreamData(bytes);
+    emit spectateStreamData(bytes, liveFrame);
 }
 
 void RollbackLobbyDialog::onSpectateEnded(quint64 matchId, const QString& reason)
@@ -2535,8 +2551,12 @@ void RollbackLobbyDialog::onMatchBegin(quint64 matchId, const QList<LobbyClient:
     }
 
     // If broadcasting, arm the krec tee and announce to the server now — before
-    // MainWindow calls recordingOpen, so the .krec header is captured too.
-    if (m_broadcastCheck && m_broadcastCheck->isChecked())
+    // MainWindow calls recordingOpen, so the .krec header is captured too. Host-
+    // only: the broadcast checkbox is hidden for non-hosts, and the server also
+    // rejects a non-host BROADCAST_BEGIN — this is the matching client guard.
+    const bool iAmHostForBroadcast =
+        (m_client && m_currentRoomHostId == m_client->selfUserId());
+    if (iAmHostForBroadcast && m_broadcastCheck && m_broadcastCheck->isChecked())
     {
         n02_kaillera_recording_enabled = true; // broadcasting requires the krec
         startBroadcast(matchId);

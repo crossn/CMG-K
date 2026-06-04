@@ -20,6 +20,7 @@
 #include <cstdlib>
 #include <climits>
 #include <cstdint>
+#include <atomic>
 #include <fstream>
 #include <filesystem>
 #include <vector>
@@ -112,6 +113,12 @@ static std::filesystem::path recording_directory_path = std::filesystem::path("r
 // broadcasting (the common case), so it costs a single null-check per flush.
 static std::function<void(const void*, int)> recording_stream_sink;
 
+// Count of input (0x12) records written so far for the current recording — i.e.
+// the broadcaster's live frame in the same units a spectator's playback counts.
+// Bumped on the emulation thread per record, read on the UI thread by the
+// broadcast drain to stamp BROADCAST_DATA so spectators know the live edge.
+static std::atomic<int> recording_frame_count{0};
+
 static std::filesystem::path pathFromUtf8String(const std::string& utf8) {
 #if defined(__cpp_char8_t)
     std::u8string converted;
@@ -196,6 +203,7 @@ static void close_recording() {
 // lobby path (n02::recordingOpen) so every transport writes an identical layout.
 static void openRecordingFile(const char* appName, const char* game, int player, int numplayers_arg) {
         RecordingBuffer.reset();
+        recording_frame_count.store(0, std::memory_order_relaxed);
 
         // Create records directory
         std::filesystem::create_directories(recording_directory_path);
@@ -903,6 +911,7 @@ int modifyPlayValues(void *values, int size) {
             RecordingBuffer.put_short(siz);
             RecordingBuffer.put_bytes((char*)values, siz);
             RecordingBuffer.write();
+            recording_frame_count.fetch_add(1, std::memory_order_relaxed);
         }
         return siz;
     }
@@ -918,6 +927,11 @@ void recordingWriteInputs(const void* values, int size) {
     RecordingBuffer.put_short(siz);
     RecordingBuffer.put_bytes((char*)values, siz);
     RecordingBuffer.write();
+    recording_frame_count.fetch_add(1, std::memory_order_relaxed);
+}
+
+int recordingFrameCount() {
+    return recording_frame_count.load(std::memory_order_relaxed);
 }
 
 void recordingOpen(const char* appName, const char* gameName, int localPlayer, int numPlayers) {

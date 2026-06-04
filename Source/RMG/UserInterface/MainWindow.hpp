@@ -161,6 +161,8 @@ class MainWindow : public QMainWindow, private Ui::MainWindow
     bool    ui_SpectateActive  = false;
     quint64 ui_SpectateMatchId = 0;
     int     ui_SpectateTimerId = 0;
+    int     ui_SpectateLiveFrame   = 0;     // broadcaster's live krec frame (fast-forward target)
+    bool    ui_SpectateFastForward = false; // true while headless-catching-up to the live edge
     // Lazily creates rollbackLobbyDialog and wires its signals (once).
     void ensureRollbackLobbyDialog();
     // Creates the KailleraSessionManager + callback wiring if absent. Shared by
@@ -317,7 +319,7 @@ class MainWindow : public QMainWindow, private Ui::MainWindow
     void on_Rollback_SessionRequested(QString gameName, QString remoteAddress, int localPort, int remotePort, int localPlayer, int frameDelay, int predictionWindow);
     void on_Lobby_SessionRequested(QString gameName, QStringList remotePeers, int localPort, int localPlayer, int frameDelay, int predictionWindow);
     void on_Lobby_SpectateLaunch(quint64 matchId, QString gameName);
-    void on_Lobby_SpectateData(QByteArray bytes);
+    void on_Lobby_SpectateData(QByteArray bytes, int liveFrame);
     void on_Lobby_SpectateClosed(QString reason);
     void on_RomBrowser_RomListRefreshFinished(bool canceled);
 #endif

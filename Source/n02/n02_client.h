@@ -42,6 +42,12 @@ int modifyPlayValues(void *values, int size);
 // No-op if no recording is open.
 void recordingWriteInputs(const void* values, int size);
 
+// Number of input (0x12) records written so far for the open recording — the
+// broadcaster's live frame, in the same units a spectator's playback counts.
+// Thread-safe; returns 0 when no recording is open. Used to stamp the live edge
+// onto the broadcast stream so spectators can fast-forward to it.
+int recordingFrameCount();
+
 // Open a new .krec recording for a session that bypasses n02's game-start
 // callback (the GekkoNet rollback lobby path). Closes any open recording first,
 // then writes a KRC1 header — but only when n02_kaillera_recording_enabled is

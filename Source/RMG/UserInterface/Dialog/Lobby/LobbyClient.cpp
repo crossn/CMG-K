@@ -470,8 +470,9 @@ void LobbyClient::handleSpectateData(const QJsonObject& data)
 {
     const quint64 matchId = static_cast<quint64>(data.value("matchId").toDouble());
     const QByteArray raw = QByteArray::fromBase64(data.value("data").toString().toLatin1());
+    const int liveFrame = data.value("frame").toInt();
     if (!raw.isEmpty())
-        emit spectateData(matchId, raw);
+        emit spectateData(matchId, raw, liveFrame);
 }
 
 void LobbyClient::handleSpectateEnd(const QJsonObject& data)
@@ -790,13 +791,14 @@ void LobbyClient::sendBroadcastBegin(quint64 matchId)
     sendEnvelope("BROADCAST_BEGIN", d);
 }
 
-void LobbyClient::sendBroadcastData(quint64 matchId, const QByteArray& chunk)
+void LobbyClient::sendBroadcastData(quint64 matchId, const QByteArray& chunk, int liveFrame)
 {
     if (chunk.isEmpty())
         return;
     QJsonObject d;
     d["matchId"] = QJsonValue(qint64(matchId));
     d["data"]    = QString::fromLatin1(chunk.toBase64());
+    d["frame"]   = liveFrame; // broadcaster's live krec frame after this chunk
     sendEnvelope("BROADCAST_DATA", d);
 }
 

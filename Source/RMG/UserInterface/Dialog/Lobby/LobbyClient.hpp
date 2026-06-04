@@ -151,7 +151,7 @@ public:
 
     // Broadcast (one player streams the live match's .krec up to the server).
     void sendBroadcastBegin(quint64 matchId);
-    void sendBroadcastData(quint64 matchId, const QByteArray& chunk); // raw krec bytes; base64'd on the wire
+    void sendBroadcastData(quint64 matchId, const QByteArray& chunk, int liveFrame); // raw krec bytes (base64'd) + broadcaster's live frame
     void sendBroadcastEnd(quint64 matchId);
 
     // Spectate (pull a broadcast match's krec stream back down).
@@ -201,7 +201,7 @@ signals:
 
     // Spectate stream (server → spectator). data carries decoded krec bytes.
     void spectateBegan(quint64 matchId);
-    void spectateData(quint64 matchId, const QByteArray& data);
+    void spectateData(quint64 matchId, const QByteArray& data, int liveFrame);
     void spectateEnded(quint64 matchId, const QString& reason);
     void spectateFailed(quint64 matchId, const QString& reason);
 

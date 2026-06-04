@@ -90,7 +90,7 @@ signals:
     // Spectating: ask MainWindow to launch a streaming-playback session for a
     // broadcast match, feed it krec bytes as they arrive, and tear it down.
     void spectateLaunch(quint64 matchId, QString gameName);
-    void spectateStreamData(QByteArray bytes);
+    void spectateStreamData(QByteArray bytes, int liveFrame);
     void spectateStreamClosed(QString reason);
 
 protected:
@@ -134,7 +134,7 @@ private slots:
 
     // Spectator: server stream callbacks.
     void onSpectateBegan(quint64 matchId);
-    void onSpectateData(quint64 matchId, const QByteArray& bytes);
+    void onSpectateData(quint64 matchId, const QByteArray& bytes, int liveFrame);
     void onSpectateEnded(quint64 matchId, const QString& reason);
     void onSpectateFailed(quint64 matchId, const QString& reason);
 
