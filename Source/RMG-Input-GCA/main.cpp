@@ -35,8 +35,6 @@
 //
 
 #define NUM_CONTROLLERS    4
-#define N64_AXIS_PEAK      85
-
 #define GCA_VENDOR_ID  0x057e
 #define GCA_PRODUCT_ID 0x0337
 
@@ -276,7 +274,7 @@ static void gca_poll_thread(void)
 static void load_settings(void)
 {
     l_Settings.DeadzoneValue = static_cast<double>(CoreSettingsGetIntValue(SettingsID::GCAInput_Deadzone)) / 100.0;
-    l_Settings.SensitivityValue = static_cast<double>(CoreSettingsGetIntValue(SettingsID::GCAInput_Sensitivity)) / 100.0;
+    l_Settings.SensitivityValue = GCASensitivityPercentToScale(CoreSettingsGetIntValue(SettingsID::GCAInput_Sensitivity));
     l_Settings.CButtonTreshold = static_cast<double>(CoreSettingsGetIntValue(SettingsID::GCAInput_CButtonTreshold)) / 100.0;
     l_Settings.TriggerTreshold = static_cast<double>(CoreSettingsGetIntValue(SettingsID::GCAInput_TriggerTreshold)) / 100.0;
     l_Settings.PortEnabled[0] = CoreSettingsGetBoolValue(SettingsID::GCAInput_Port1Enabled);
@@ -313,7 +311,8 @@ static int scale_axis(const double input, const double deadzone, const double n6
     const double deadzoneRelation = 1.0 / (1.0 - deadzone);
     const double scaled = (inputAbs - deadzone) * deadzoneRelation * n64Max;
 
-    const int result = static_cast<int>(std::min(scaled, n64Max));
+    const double axisMax = std::min(n64Max, static_cast<double>(INT8_MAX));
+    const int result = static_cast<int>(std::min(scaled, axisMax));
     return (input >= 0) ? result : -result;
 }
 
@@ -513,7 +512,7 @@ EXPORT void CALL GetKeys(int Control, BUTTONS* Keys)
 
     const double inputX = static_cast<double>(x) / static_cast<double>(INT8_MAX);
     const double inputY = static_cast<double>(y) / static_cast<double>(INT8_MAX);
-    const double n64Max = N64_AXIS_PEAK * l_Settings.SensitivityValue;
+    const double n64Max = GCA_N64_AXIS_PEAK * l_Settings.SensitivityValue;
 
     Keys->X_AXIS = scale_axis(inputX, l_Settings.DeadzoneValue, n64Max);
     Keys->Y_AXIS = scale_axis(inputY, l_Settings.DeadzoneValue, n64Max);
