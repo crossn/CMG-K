@@ -14,6 +14,7 @@
 #include <QDialog>
 #include <QHash>
 #include <QMap>
+#include <QSet>
 #include <QStringList>
 #include <QByteArray>
 #include <QMutex>
@@ -174,6 +175,11 @@ private:
     QString stateGlyph(const QString& state) const;
     void    appendChatLine(const QString& channel, const QString& text);
     void    appendChatSystemLine(const QString& channel, const QString& text);
+
+    // Flash the taskbar entry + play the system notification sound — called when
+    // a new player takes a seat while we're in the room. No-ops the flash if the
+    // lobby is already the active window (Qt handles that).
+    void    notifyPlayerJoined();
     void    switchToRoomsView();
     void    switchToInRoomView();
     void    enterRoom(quint64 roomId, const QString& greetingChatLine);
@@ -320,7 +326,14 @@ private:
     QString m_currentRoomState;
     int     m_currentRoomDelay      = 2;
     int     m_currentRoomPrediction = 7;
+    quint64 m_currentRoomHostId     = 0;   // seated host's user id (0 when none)
     quint64 m_currentMatchId        = 0;
+
+    // Seated user ids as of the last ROOM_STATE, used to detect when a *new*
+    // player joins (so we can flash/chime). m_roomSeatsSeen suppresses the chime
+    // on the first ROOM_STATE after entering a room (those seats aren't "joins").
+    QSet<quint64> m_knownSeatedUsers;
+    bool          m_roomSeatsSeen = false;
 
     // Host-only "Auto" selections for the in-room dropdowns. Delay-auto is
     // ping-based; prediction-auto is a fixed 7. Default on so a fresh host

@@ -32,6 +32,7 @@
 #include <RMG-Core/Callback.hpp>
 #include <RMG-Core/Settings.hpp>
 #include <RMG-Core/Kaillera.hpp>
+#include <RMG-Core/rmgk_gekko.hpp> // request_disconnect_player (instant peer drop)
 
 #include "n02_client.h" // setRecordingStreamSink (broadcast tee)
 
@@ -1662,6 +1663,18 @@ void RollbackLobbyDialog::enterRoom(quint64 roomId, const QString& greetingChatL
     m_quickMatchActive = false;
     if (m_quickMatchBtn) m_quickMatchBtn->setText("⚡  Quick Match");
 
+    // Every freshly-entered room starts in Auto delay/prediction (the in-room
+    // combos default to "Auto", and Create Room no longer surfaces these). This
+    // is what makes a Quick Match host resolve delay from the measured peer ping
+    // during the warmup; the host can still switch to a manual value in-room.
+    m_delayAuto      = true;
+    m_predictionAuto = true;
+
+    // Fresh room — don't chime for the seats already present in the first
+    // ROOM_STATE; only for players who join after we've settled in.
+    m_knownSeatedUsers.clear();
+    m_roomSeatsSeen = false;
+
     if (!m_chatViewRoom)
     {
         m_chatViewRoom = new QTextEdit(this);
@@ -1691,6 +1704,13 @@ void RollbackLobbyDialog::enterRoom(quint64 roomId, const QString& greetingChatL
     // 5 s after entry which gives that state plenty of time to arrive.
     if (m_pingProbeTimer && !m_pingProbeTimer->isActive())
         m_pingProbeTimer->start();
+
+    // The regular cadence is 5 s, but a Quick Match auto-starts after a short
+    // warmup — too soon for that first tick. Kick one early probe (~1.2 s, once
+    // ROOM_STATE has populated the seats) so ping shows promptly and the host's
+    // Auto delay resolves before the match begins. Harmless in an empty room:
+    // onPingProbeTick skips self / unseated slots.
+    QTimer::singleShot(1200, this, &RollbackLobbyDialog::onPingProbeTick);
 }
 
 void RollbackLobbyDialog::onRoomDoubleClicked(QTreeWidgetItem* item, int /*column*/)
@@ -1774,6 +1794,10 @@ void RollbackLobbyDialog::onRoomStateChanged(const QJsonObject& roomState)
     const QString romRegion = rom.value("region").toString();
     const int delay = roomState.value("delay").toInt();
     const int prediction = roomState.value("prediction").toInt();
+    // Whether the host left each value on "Auto" — lets non-hosts mirror the
+    // host's "Auto (N f)" / "Default" labels instead of a bare number.
+    const bool roomDelayAuto = roomState.value("delayAuto").toBool();
+    const bool roomPredictionAuto = roomState.value("predictionAuto").toBool();
     const int maxPlayers = roomState.value("maxPlayers").toInt();
     const QString state = roomState.value("state").toString();
     const quint64 hostId = static_cast<quint64>(roomState.value("hostId").toDouble());
@@ -1783,6 +1807,7 @@ void RollbackLobbyDialog::onRoomStateChanged(const QJsonObject& roomState)
     m_currentRoomRegion     = romRegion;
     m_currentRoomDelay      = delay;
     m_currentRoomPrediction = prediction;
+    m_currentRoomHostId     = hostId;
 
     // Auto-stop emulation if the room transitioned out of in_game while we
     // still had a live local match (host dropped it for everyone).
@@ -1857,14 +1882,18 @@ void RollbackLobbyDialog::onRoomStateChanged(const QJsonObject& roomState)
             const int idx = combo->findData(value);
             return idx >= 0 ? idx : 0;
         };
-        // For the host of a waiting room, keep the combo on "Auto" when that's
-        // the chosen mode — otherwise the server's echo of the resolved number
-        // would knock it off Auto. Everyone else shows the concrete value.
-        if (editable && m_delayAuto)
+        // Show the "Auto"/"Default" entry whenever the value is auto-driven, so
+        // every seat displays the same thing. The host trusts their own local
+        // m_*Auto (the server echo of the resolved number must not knock their
+        // combo off Auto); non-hosts trust the room's auto flags. When not auto,
+        // everyone shows the concrete resolved value.
+        const bool showDelayAuto = editable ? m_delayAuto : roomDelayAuto;
+        const bool showPredAuto  = editable ? m_predictionAuto : roomPredictionAuto;
+        if (showDelayAuto)
             m_delayCombo->setCurrentIndex(m_delayCombo->findData(0));
         else
             m_delayCombo->setCurrentIndex(pickIndex(m_delayCombo, delay));
-        if (editable && m_predictionAuto)
+        if (showPredAuto)
             m_predictionCombo->setCurrentIndex(m_predictionCombo->findData(0));
         else
             m_predictionCombo->setCurrentIndex(pickIndex(m_predictionCombo, prediction));
@@ -1917,6 +1946,33 @@ void RollbackLobbyDialog::onRoomStateChanged(const QJsonObject& roomState)
         }
     }
 
+    // Flash + chime when a *new* player takes a seat. Compare this ROOM_STATE's
+    // seated set against the last one; any id that's newly present (and isn't us)
+    // is a join. The first ROOM_STATE after entering a room just seeds the set —
+    // its occupants were already there, so they don't count as joins.
+    {
+        QSet<quint64> currentSeated;
+        for (const auto& v : players)
+        {
+            const quint64 uid = static_cast<quint64>(v.toObject().value("userId").toDouble());
+            if (uid != 0) currentSeated.insert(uid);
+        }
+        if (m_roomSeatsSeen)
+        {
+            const quint64 selfId = m_client->selfUserId();
+            for (const quint64 uid : currentSeated)
+            {
+                if (uid != selfId && !m_knownSeatedUsers.contains(uid))
+                {
+                    notifyPlayerJoined();
+                    break; // one alert covers a batch of simultaneous joins
+                }
+            }
+        }
+        m_knownSeatedUsers = currentSeated;
+        m_roomSeatsSeen = true;
+    }
+
     // Host can start whenever there are at least 2 seated players — no ready
     // gate. Disabled mid-match (state != waiting) so the host can't start a
     // second match on top of a live one.
@@ -1934,10 +1990,12 @@ void RollbackLobbyDialog::onDropGameClicked()
     if (m_currentRoomState != "in_game")
         return;
 
+    // No local "you dropped" line — the server announces the drop as a chat from
+    // this player (see broadcastMatchPeerLeft) and echoes it back to us, so every
+    // seat (including ours) shows the same "<name>: I dropped from the game." line.
     emit closeMatchRequested();
     if (m_currentMatchId != 0)
         m_client->reportMatchFinished(m_currentMatchId);
-    appendChatSystemLine(CHANNEL_ROOM, "You dropped from the game.");
 }
 
 void RollbackLobbyDialog::onLeaveRoomClicked()
@@ -2001,6 +2059,15 @@ void RollbackLobbyDialog::notifyEmulationFinished()
 void RollbackLobbyDialog::onMatchPeerLeft(quint64 matchId, quint64 userId, int slot, const QString& reason)
 {
     Q_UNUSED(matchId);
+
+    // The lobby server already knows this peer is gone, so tell the rollback
+    // engine to drop their actor immediately. Without this, GekkoNet only sees
+    // the peer stop sending UDP input and stalls the match ~5 s waiting out its
+    // disconnect timeout before substituting idle input. The request is queued
+    // and applied on the emulation thread at the next frame.
+    if (slot > 0)
+        rmgk_gekko::request_disconnect_player(slot);
+
     QString who = QString::number(userId);
     if (m_client)
     {
@@ -2097,7 +2164,7 @@ void RollbackLobbyDialog::applyHostRoomSettings(bool force)
     if (!force && effDelay == m_currentRoomDelay && effPred == m_currentRoomPrediction)
         return;
 
-    m_client->updateRoomSettings(effDelay, effPred);
+    m_client->updateRoomSettings(effDelay, effPred, m_delayAuto, m_predictionAuto);
 
     // Persist the concrete resolved values (never the Auto sentinel 0) so
     // CreateRoomDialog seeds a valid delay/prediction for the next room.
@@ -2123,9 +2190,12 @@ void RollbackLobbyDialog::onRoomLeft(const QString& reason)
     m_currentRoomState.clear();
     m_currentRoomDelay = 2;
     m_currentRoomPrediction = 7;
+    m_currentRoomHostId = 0;
     m_currentMatchId = 0;
     m_awaitingEmulationStart = false;
     m_emulationActive = false;
+    m_knownSeatedUsers.clear();
+    m_roomSeatsSeen = false;
 
     if (m_client) m_client->reopenUdpAnchor();
 
@@ -2217,6 +2287,18 @@ void RollbackLobbyDialog::appendChatSystemLine(const QString& channel, const QSt
 {
     const auto ts = QDateTime::currentDateTime().toString("hh:mm");
     appendChatLine(channel, QString("[%1] <i>%2</i>").arg(ts, text));
+}
+
+void RollbackLobbyDialog::notifyPlayerJoined()
+{
+    // Always chime on a join — including when the lobby is in the background —
+    // so the user hears it while doing something else. The taskbar flash
+    // self-gates: QApplication::alert only flashes when we're not the active
+    // window (on Windows it's FlashWindowEx; a no-op where there's no taskbar).
+    QApplication::alert(this);
+    // System notification sound — MessageBeep(MB_OK) on Windows (the "bing"),
+    // the platform bell elsewhere. Plays regardless of focus.
+    QApplication::beep();
 }
 
 // ──────────────────────────────────────────────────────────────────────
@@ -2389,6 +2471,30 @@ void RollbackLobbyDialog::onMatchBegin(quint64 matchId, const QList<LobbyClient:
     const QString line = QString("Match #%1 starting with %2 player(s)").arg(matchId).arg(peers.size());
     appendChatSystemLine(CHANNEL_LOBBY, line);
     appendChatSystemLine(CHANNEL_ROOM,  line);
+
+    // The host announces the rollback delay the room is about to play on, so
+    // everyone sees it in chat (and on the in-game overlay) — especially useful
+    // when Auto resolved it from ping. One authoritative message, gated to the
+    // host so a 4-player match doesn't print it four times.
+    if (m_client && m_currentRoomHostId == m_client->selfUserId())
+    {
+        QString delayMsg;
+        if (m_delayAuto)
+        {
+            const int worst = worstSeatPingMs();
+            delayMsg = worst >= 0
+                ? QStringLiteral("Frame delay: %1 (auto, from %2 ms ping) · prediction %3")
+                      .arg(m_currentRoomDelay).arg(worst).arg(m_currentRoomPrediction)
+                : QStringLiteral("Frame delay: %1 (auto) · prediction %2")
+                      .arg(m_currentRoomDelay).arg(m_currentRoomPrediction);
+        }
+        else
+        {
+            delayMsg = QStringLiteral("Frame delay: %1 · prediction %2")
+                           .arg(m_currentRoomDelay).arg(m_currentRoomPrediction);
+        }
+        m_client->sendChat(CHANNEL_ROOM, delayMsg);
+    }
 
     m_currentMatchId = matchId;
     m_awaitingEmulationStart = true;

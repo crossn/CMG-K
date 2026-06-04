@@ -124,9 +124,11 @@ public:
     void startRoom();
     void kickFromRoom(quint64 userId);
 
-    // Host-only: change the room's rollback delay / prediction. Server must
-    // ack with a fresh ROOM_STATE so all seated peers stay in sync.
-    void updateRoomSettings(int delay, int prediction);
+    // Host-only: change the room's rollback delay / prediction. The *Auto flags
+    // tell the server whether each value is host-Auto-driven so non-hosts can
+    // mirror the host's label. Server must ack with a fresh ROOM_STATE so all
+    // seated peers stay in sync.
+    void updateRoomSettings(int delay, int prediction, bool delayAuto, bool predictionAuto);
 
     // Ping probe — server replies with target's UDP endpoint; client probes directly.
     void requestPingProbe(quint64 targetUserId);

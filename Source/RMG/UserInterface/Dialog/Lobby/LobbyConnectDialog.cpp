@@ -31,6 +31,12 @@ namespace
 
 QString LobbyConnectDialog::defaultServerUrl()
 {
+    // Allow overriding the lobby server without a rebuild — handy for local
+    // testing. e.g. set RMGK_LOBBY_URL=ws://127.0.0.1:8080/ws to point at a
+    // server running on this machine. Falls back to the production server.
+    const QString override = qEnvironmentVariable("RMGK_LOBBY_URL");
+    if (!override.trimmed().isEmpty())
+        return override.trimmed();
     return QString::fromUtf8(kDefaultLobbyUrl);
 }
 

@@ -204,6 +204,14 @@ GEKKONET_API void gekko_network_stats(GekkoSession* session, int player, GekkoNe
 
 GEKKONET_API void gekko_network_poll(GekkoSession* session);
 
+// Force a remote actor into the Disconnected state immediately, instead of
+// waiting out the NetStats::DISCONNECT_TIMEOUT silence window. `handle` is the
+// value returned by gekko_add_actor for the remote player. Used when an
+// out-of-band channel (e.g. a lobby server) already knows the peer is gone, so
+// the session stops stalling on their input right away. No-op if the handle is
+// not a connected remote.
+GEKKONET_API void gekko_disconnect_player(GekkoSession* session, int handle);
+
 #ifndef GEKKONET_NO_ASIO
 
 GEKKONET_API GekkoNetAdapter* gekko_default_adapter(unsigned short port);

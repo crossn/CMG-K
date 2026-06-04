@@ -46,6 +46,13 @@ class rmgk_gekko
     static bool start_local_session(const char* gameName, int players, int inputSize, int localDelay);
     static void close_session();
     static void request_stop();
+    // Thread-safe: queue a remote slot (1-indexed N64 controller) to be force-
+    // disconnected from the rollback session. The request is drained on the
+    // emulation thread at the start of the next frame, so GekkoNet drops the
+    // actor immediately instead of waiting out its 5 s silence timeout. Safe to
+    // call from any thread (e.g. the lobby UI when the server reports a drop);
+    // a no-op if there's no active session or the slot isn't a remote.
+    static void request_disconnect_player(int slot);
     static bool is_netplay_session_active();
     static bool execute();
     static bool set_deterministic(bool enabled);

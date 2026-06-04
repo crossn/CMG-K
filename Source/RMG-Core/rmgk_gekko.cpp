@@ -117,6 +117,13 @@ constexpr int kGekkoRecordingRollbackHorizon = 32;
 std::atomic_bool g_GekkoExecuting{false};
 std::atomic_bool g_GekkoStopRequested{false};
 std::vector<PendingGekkoSave> g_GekkoPendingSaves;
+
+// Slots (1-indexed) queued by request_disconnect_player() on another thread,
+// drained on the emulation thread before each frame's update_session. Guarded
+// by its own mutex so the lobby/UI thread can push without touching the
+// GekkoNet session (which is single-threaded on the emulation thread).
+std::mutex g_GekkoDisconnectMutex;
+std::vector<int> g_GekkoPendingDisconnectSlots;
 std::mutex g_GekkoLogMutex;
 std::filesystem::path g_GekkoLogDirectory;
 std::string g_GekkoLogPrefix;
@@ -823,6 +830,40 @@ void apply_gekko_frame_pacing()
     }
 }
 
+// Drain slots queued by request_disconnect_player() and force GekkoNet to drop
+// those actors now. Runs on the emulation thread (inside the frame pump), so it
+// touches the GekkoNet session safely; the cross-thread hand-off is just the
+// mutex-guarded slot list. (Already inside the file's RMGK_HAVE_GEKKONET block.)
+void process_pending_disconnects()
+{
+    std::vector<int> slots;
+    {
+        std::lock_guard<std::mutex> lock(g_GekkoDisconnectMutex);
+        if (g_GekkoPendingDisconnectSlots.empty())
+        {
+            return;
+        }
+        slots.swap(g_GekkoPendingDisconnectSlots);
+    }
+    for (int slot : slots)
+    {
+        if (slot < 1 || slot > g_GekkoPlayers || slot == g_GekkoLocalPlayer)
+        {
+            continue;
+        }
+        const int handle = g_GekkoPlayerHandles[static_cast<size_t>(slot - 1)];
+        if (handle < 0)
+        {
+            continue;
+        }
+        gekko_disconnect_player(g_GekkoSession, handle);
+        std::ostringstream stream;
+        stream << "force_disconnect slot=" << slot << " handle=" << handle
+               << " reason=lobby_peer_left";
+        write_gekko_log(stream.str());
+    }
+}
+
 int rollback_execute_begin_frame(void* userData)
 {
     (void)userData;
@@ -871,6 +912,10 @@ int rollback_execute_begin_frame(void* userData)
 
     const auto networkPollTime = std::chrono::steady_clock::now();
     gekko_network_poll(g_GekkoSession);
+    // Apply any lobby-driven force-disconnects before update_session, so a known
+    // peer drop substitutes idle input this very frame instead of stalling out
+    // GekkoNet's 5 s silence timeout.
+    process_pending_disconnects();
     summaryNetworkPollUs =
         std::chrono::duration_cast<std::chrono::microseconds>(
             std::chrono::steady_clock::now() - networkPollTime).count();
@@ -1738,6 +1783,10 @@ CORE_EXPORT void rmgk_gekko::close_session()
     g_GekkoRemoteHandle = -1;
     g_GekkoPlayerHandles.clear();
     g_GekkoLocalHandles.clear();
+    {
+        std::lock_guard<std::mutex> lock(g_GekkoDisconnectMutex);
+        g_GekkoPendingDisconnectSlots.clear();
+    }
     g_GekkoLatchedInput.clear();
     g_GekkoHasLatchedInput = false;
     g_GekkoLatchedFrame = -1;
@@ -1781,6 +1830,27 @@ CORE_EXPORT void rmgk_gekko::request_stop()
     {
         g_GekkoStopRequested.store(true, std::memory_order_relaxed);
     }
+#endif
+}
+
+CORE_EXPORT void rmgk_gekko::request_disconnect_player(int slot)
+{
+#ifdef RMGK_HAVE_GEKKONET
+    if (slot < 1 || slot > 4)
+    {
+        return;
+    }
+    std::lock_guard<std::mutex> lock(g_GekkoDisconnectMutex);
+    for (int queued : g_GekkoPendingDisconnectSlots)
+    {
+        if (queued == slot)
+        {
+            return; // already queued — de-dup
+        }
+    }
+    g_GekkoPendingDisconnectSlots.push_back(slot);
+#else
+    (void)slot;
 #endif
 }
 

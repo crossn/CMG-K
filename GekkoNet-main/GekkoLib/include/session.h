@@ -24,6 +24,7 @@ struct GekkoSession {
     virtual f32 FramesAhead() = 0;
     virtual void NetworkStats(i32 player, GekkoNetworkStats* stats) = 0;
     virtual void NetworkPoll() = 0;
+    virtual void DisconnectPlayer(i32 handle) = 0;
     virtual ~GekkoSession() = default;
 };
 
@@ -54,6 +55,8 @@ namespace Gekko {
         void NetworkStats(i32 player, GekkoNetworkStats* stats) override;
 
         void NetworkPoll() override;
+
+        void DisconnectPlayer(i32 handle) override;
 
 	private:
 		void Poll();
@@ -140,6 +143,9 @@ namespace Gekko {
 
         void NetworkPoll() override;
 
+        // Spectators don't drive player connectivity; nothing to force-drop.
+        void DisconnectPlayer(i32 handle) override { (void)handle; }
+
 	private:
 		void Poll();
 
@@ -192,6 +198,9 @@ namespace Gekko {
         void NetworkStats(i32 player, GekkoNetworkStats* stats) override;
 
         void NetworkPoll() override;
+
+        // No network actors in a stress session.
+        void DisconnectPlayer(i32 handle) override { (void)handle; }
 
     private:
         void HandleRollback();
