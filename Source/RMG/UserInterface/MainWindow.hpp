@@ -156,8 +156,18 @@ class MainWindow : public QMainWindow, private Ui::MainWindow
     bool ui_RollbackLivePumpActive = false;
     bool ui_RollbackNetplayRoomActive = false;
     bool ui_RollbackNetplayLaunchActive = false;
+    // Spectating a broadcast match via streaming krec playback (distinct from the
+    // lobby *match* flow above — the spectator runs playback, not GekkoNet).
+    bool    ui_SpectateActive  = false;
+    quint64 ui_SpectateMatchId = 0;
+    int     ui_SpectateTimerId = 0;
     // Lazily creates rollbackLobbyDialog and wires its signals (once).
     void ensureRollbackLobbyDialog();
+    // Creates the KailleraSessionManager + callback wiring if absent. Shared by
+    // the playback dialog and the lobby spectate path (both drive n02 mode 2).
+    void ensureKailleraSessionManager();
+    // Lobby spectate lifecycle.
+    void stopLobbySpectate();
     struct PendingLocalChatEcho
     {
         QString message;
@@ -306,6 +316,9 @@ class MainWindow : public QMainWindow, private Ui::MainWindow
     void on_Kaillera_RecordingFileClosed(void);
     void on_Rollback_SessionRequested(QString gameName, QString remoteAddress, int localPort, int remotePort, int localPlayer, int frameDelay, int predictionWindow);
     void on_Lobby_SessionRequested(QString gameName, QStringList remotePeers, int localPort, int localPlayer, int frameDelay, int predictionWindow);
+    void on_Lobby_SpectateLaunch(quint64 matchId, QString gameName);
+    void on_Lobby_SpectateData(QByteArray bytes);
+    void on_Lobby_SpectateClosed(QString reason);
     void on_RomBrowser_RomListRefreshFinished(bool canceled);
 #endif
 

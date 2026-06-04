@@ -52,6 +52,12 @@ void recordingOpen(const char* appName, const char* gameName, int localPlayer, i
 // Flush and close the recording opened by recordingOpen(). No-op if none open.
 void recordingClose();
 
+// Register a sink that receives the exact bytes written to the open .krec
+// (header + every flushed record) — used to stream a live match up to the
+// lobby for spectators. Pass nullptr to clear. Set/clear only while emulation
+// is stopped; the sink is invoked on the emulation thread during play.
+void setRecordingStreamSink(std::function<void(const void*, int)> sink);
+
 // Send chat message to other players
 void chatSend(char *text);
 
@@ -142,6 +148,15 @@ UICallbacks& getUICallbacks();
 // Load and play a .krec recording file
 // Returns true on success
 bool playbackLoad(const char* filename);
+
+// Live spectate: play a .krec that is still being received over the network.
+// playbackBeginStream() arms an empty growing buffer; playbackAppendBytes()
+// feeds krec bytes as they arrive (the game auto-starts once the header is in);
+// playbackStopStream() ends it. Playback waits at the live edge (returns delay
+// frames) instead of ending when it catches up to the latest received bytes.
+bool playbackBeginStream();
+void playbackAppendBytes(const void* data, int len);
+void playbackStopStream();
 
 // Check if playback is currently active
 bool isPlaybackActive();

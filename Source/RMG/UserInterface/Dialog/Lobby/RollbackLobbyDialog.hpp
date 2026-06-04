@@ -15,6 +15,8 @@
 #include <QHash>
 #include <QMap>
 #include <QStringList>
+#include <QByteArray>
+#include <QMutex>
 
 #include <RMG-Core/RomSettings.hpp>
 
@@ -64,6 +66,10 @@ public:
     // typed messages reach the room while a match is running.
     void sendRoomChat(const QString& message);
 
+    // MainWindow calls this when a spectate playback session ends (emulation
+    // stopped) so the server can drop us from the broadcast. Idempotent.
+    void stopSpectating();
+
 signals:
     // Fired when the server has issued MATCH_BEGIN. Each entry in remotePeers
     // is pre-formatted as "<slot>,<ip>,<port>" — matches the LOBBY| address
@@ -79,6 +85,12 @@ signals:
     // filtered out — the overlay echoes those locally). MainWindow routes this
     // to the in-game chat overlay.
     void roomChatReceived(QString nickname, QString message);
+
+    // Spectating: ask MainWindow to launch a streaming-playback session for a
+    // broadcast match, feed it krec bytes as they arrive, and tear it down.
+    void spectateLaunch(quint64 matchId, QString gameName);
+    void spectateStreamData(QByteArray bytes);
+    void spectateStreamClosed(QString reason);
 
 protected:
     void showEvent(QShowEvent* event) override;
@@ -98,6 +110,7 @@ private slots:
     void onRoomListChanged();
     void onCreateRoomClicked();
     void onRoomDoubleClicked(QTreeWidgetItem* item, int column);
+    void onMatchDoubleClicked(QTreeWidgetItem* item, int column); // spectate a broadcast match
     void onRoomCreateRequested();
     void onRoomCreated(quint64 roomId);
     void onRoomCreateFailed(const QString& reason);
@@ -114,6 +127,15 @@ private slots:
     void onStartGameClicked();
 
     void onMatchPeerLeft(quint64 matchId, quint64 userId, int slot, const QString& reason);
+
+    // Broadcaster: drain staged krec bytes to the WebSocket.
+    void onBroadcastDrainTick();
+
+    // Spectator: server stream callbacks.
+    void onSpectateBegan(quint64 matchId);
+    void onSpectateData(quint64 matchId, const QByteArray& bytes);
+    void onSpectateEnded(quint64 matchId, const QString& reason);
+    void onSpectateFailed(quint64 matchId, const QString& reason);
 
     void onChatSendClicked();
     void onChatMessageReceived(const LobbyClient::ChatMessage& msg);
@@ -164,6 +186,17 @@ private:
     // Auto selections and pushes the concrete values via the lobby client.
     int     worstSeatPingMs() const;
     void    applyHostRoomSettings(bool force);
+
+    // Broadcaster lifecycle. startBroadcast arms the n02 recording sink + drain
+    // timer and sends BROADCAST_BEGIN; stopBroadcast flushes and sends
+    // BROADCAST_END. feedBroadcastBytes is the sink target (emulation thread).
+    void startBroadcast(quint64 matchId);
+    void stopBroadcast();
+    void feedBroadcastBytes(const void* data, int len);
+
+    // Begin spectating a broadcast match: tell the server and ask MainWindow to
+    // launch a streaming-playback session.
+    void beginSpectate(quint64 matchId, const QString& gameName);
 
     // Seat row API — 4 fixed slots rendered as a vertical player list.
     // Empty rows show a ○ dot + "Waiting…"; filled rows show ● + name + meta.
@@ -237,6 +270,23 @@ private:
     // match (the player who checks it records, same as the p2p/kaillera lobbies).
     // Drives the shared n02_kaillera_recording_enabled flag; not synced to the room.
     QCheckBox* m_recordCheck     = nullptr;
+
+    // When checked, this client also streams the match's .krec up to the server
+    // so others can spectate. Broadcasting implies recording (the stream is the
+    // krec bytes). Only one player per match becomes the broadcaster (server
+    // picks the first). The krec is written on the emulation thread, so bytes
+    // are staged into m_broadcastBuf (under m_broadcastMutex) by the n02 sink
+    // and drained to the WebSocket by m_broadcastDrainTimer on the UI thread.
+    QCheckBox* m_broadcastCheck       = nullptr;
+    QTimer*    m_broadcastDrainTimer  = nullptr;
+    QMutex     m_broadcastMutex;
+    QByteArray m_broadcastBuf;
+    bool       m_broadcasting   = false;
+    quint64    m_broadcastMatchId = 0;
+
+    // Non-zero while this client is spectating a broadcast match (the match id
+    // we asked the server to stream). Cleared when the spectate session ends.
+    quint64    m_spectatingMatchId = 0;
 
     // Seat rows (always 4 — slots beyond maxPlayers are hidden)
     SeatRow    m_seats[4];

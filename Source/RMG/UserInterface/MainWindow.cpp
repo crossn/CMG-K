@@ -3432,6 +3432,39 @@ void MainWindow::timerEvent(QTimerEvent *event)
         this->killTimer(timerId);
         this->ui_RollbackLivePumpTimerId = 0;
     }
+    else if (timerId == this->ui_SpectateTimerId)
+    {
+        if (!this->ui_SpectateActive)
+        {
+            this->killTimer(timerId);
+            this->ui_SpectateTimerId = 0;
+            return;
+        }
+        // Drive the playback state machine (fires the game-start callback that
+        // launches emulation once the krec header has been received).
+        n02::processStateMachineStep();
+
+        if (this->emulationThread->isRunning())
+        {
+            if (!n02::isPlaybackActive())
+            {
+                // Stream ended (broadcaster stopped, or a drop record arrived).
+                this->stopLobbySpectate();
+                return;
+            }
+            // Fast-forward toward the live edge, then settle at realtime so the
+            // spectator sits a small fixed distance behind the broadcaster.
+            int behind = n02::playbackGetTotalFrames() - n02::playbackGetCurrentFrame();
+            const int target = 90; // ~1.5 s behind live
+            int speed;
+            if      (behind > target + 120) speed = 500; // far behind: catch up hard
+            else if (behind > target + 30)  speed = 200;
+            else if (behind > target)       speed = 130;
+            else                            speed = 100; // at the live edge
+            if (CoreGetSpeedFactor() != speed)
+                CoreSetSpeedFactor(speed);
+        }
+    }
 #endif // NETPLAY
 }
 
@@ -4085,6 +4118,111 @@ void MainWindow::on_Action_Settings_Input(void)
     }
 }
 
+#ifdef NETPLAY
+void MainWindow::ensureKailleraSessionManager()
+{
+    if (this->kailleraSessionManager != nullptr)
+    {
+        return;
+    }
+    this->kailleraSessionManager = new KailleraSessionManager(this);
+    connect(this->kailleraSessionManager, &KailleraSessionManager::gameStarted,
+            this, &MainWindow::on_Kaillera_GameStarted);
+    connect(this->kailleraSessionManager, &KailleraSessionManager::chatReceived,
+            this, &MainWindow::on_Kaillera_ChatReceived);
+    connect(&KailleraUIBridge::instance(), &KailleraUIBridge::kailleraGameChatReceived,
+            this, &MainWindow::on_Kaillera_ChatReceived);
+    connect(&KailleraUIBridge::instance(), &KailleraUIBridge::p2pChatReceived,
+            this, &MainWindow::on_Kaillera_ChatReceived);
+    connect(&KailleraUIBridge::instance(), &KailleraUIBridge::recordingFileClosed,
+            this, &MainWindow::on_Kaillera_RecordingFileClosed);
+    connect(this->kailleraSessionManager, &KailleraSessionManager::playerDropped,
+            this, &MainWindow::on_Kaillera_PlayerDropped);
+    connect(this->kailleraSessionManager, &KailleraSessionManager::gameEnded,
+            this, &MainWindow::on_Kaillera_GameEnded);
+}
+
+// Lobby spectate: launch a streaming-playback session for a broadcast match.
+// Reuses the playback path (n02 mode 2 → gameCallback → on_Kaillera_GameStarted
+// launches emulation once the krec header arrives); a timer drives the state
+// machine and fast-forwards toward the live edge.
+void MainWindow::on_Lobby_SpectateLaunch(quint64 matchId, QString gameName)
+{
+    if (this->ui_SpectateActive)
+    {
+        return; // already spectating
+    }
+    if (this->emulationThread->isRunning())
+    {
+        this->showErrorMessage("Busy", "Stop the current game before spectating.");
+        if (this->rollbackLobbyDialog != nullptr)
+            this->rollbackLobbyDialog->stopSpectating();
+        return;
+    }
+    if (!CoreInitKaillera())
+    {
+        this->showErrorMessage("Spectate Error", QString::fromStdString(CoreGetError()));
+        if (this->rollbackLobbyDialog != nullptr)
+            this->rollbackLobbyDialog->stopSpectating();
+        return;
+    }
+    this->ensureKailleraSessionManager();
+
+    n02::activateMode(2);
+    n02::playbackBeginStream();
+
+    this->ui_SpectateActive  = true;
+    this->ui_SpectateMatchId = matchId;
+
+    // ~60 Hz: drive the playback state machine + fast-forward.
+    if (this->ui_SpectateTimerId == 0)
+        this->ui_SpectateTimerId = this->startTimer(16);
+
+    OnScreenDisplaySetMessage(("Spectating: " + gameName.toStdString()).c_str());
+}
+
+void MainWindow::on_Lobby_SpectateData(QByteArray bytes)
+{
+    if (!this->ui_SpectateActive || bytes.isEmpty())
+    {
+        return;
+    }
+    n02::playbackAppendBytes(bytes.constData(), static_cast<int>(bytes.size()));
+}
+
+void MainWindow::on_Lobby_SpectateClosed(QString reason)
+{
+    (void)reason;
+    this->stopLobbySpectate();
+}
+
+void MainWindow::stopLobbySpectate()
+{
+    if (!this->ui_SpectateActive)
+    {
+        return;
+    }
+    this->ui_SpectateActive  = false; // set first so re-entry (via stop→finish) bails
+    this->ui_SpectateMatchId = 0;
+    if (this->ui_SpectateTimerId != 0)
+    {
+        this->killTimer(this->ui_SpectateTimerId);
+        this->ui_SpectateTimerId = 0;
+    }
+    CoreSetSpeedFactor(100);
+    n02::playbackStopStream();
+    if (this->emulationThread->isRunning())
+    {
+        CoreStopEmulation();
+    }
+    // Tell the lobby to drop us from the broadcast (idempotent if already done).
+    if (this->rollbackLobbyDialog != nullptr)
+    {
+        this->rollbackLobbyDialog->stopSpectating();
+    }
+}
+#endif // NETPLAY
+
 void MainWindow::on_Action_Playback(void)
 {
 #ifdef NETPLAY
@@ -4107,24 +4245,7 @@ void MainWindow::on_Action_Playback(void)
     // Ensure session manager exists so gameCallback is wired up.
     // Without this, the state machine reaches state 1 but has no
     // callback to actually start emulation.
-    if (this->kailleraSessionManager == nullptr)
-    {
-        this->kailleraSessionManager = new KailleraSessionManager(this);
-        connect(this->kailleraSessionManager, &KailleraSessionManager::gameStarted,
-                this, &MainWindow::on_Kaillera_GameStarted);
-        connect(this->kailleraSessionManager, &KailleraSessionManager::chatReceived,
-                this, &MainWindow::on_Kaillera_ChatReceived);
-        connect(&KailleraUIBridge::instance(), &KailleraUIBridge::kailleraGameChatReceived,
-                this, &MainWindow::on_Kaillera_ChatReceived);
-        connect(&KailleraUIBridge::instance(), &KailleraUIBridge::p2pChatReceived,
-                this, &MainWindow::on_Kaillera_ChatReceived);
-        connect(&KailleraUIBridge::instance(), &KailleraUIBridge::recordingFileClosed,
-                this, &MainWindow::on_Kaillera_RecordingFileClosed);
-        connect(this->kailleraSessionManager, &KailleraSessionManager::playerDropped,
-                this, &MainWindow::on_Kaillera_PlayerDropped);
-        connect(this->kailleraSessionManager, &KailleraSessionManager::gameEnded,
-                this, &MainWindow::on_Kaillera_GameEnded);
-    }
+    this->ensureKailleraSessionManager();
 
     // Activate playback mode so the state machine uses the playback module
     n02::activateMode(2);
@@ -4517,6 +4638,13 @@ void MainWindow::ensureRollbackLobbyDialog()
     // Remote room chat → in-game chat overlay (mirrors the P2P chat overlay).
     connect(this->rollbackLobbyDialog, &Dialog::RollbackLobbyDialog::roomChatReceived,
             this, &MainWindow::on_Lobby_RoomChatReceived);
+    // Spectating a broadcast match (streaming krec playback).
+    connect(this->rollbackLobbyDialog, &Dialog::RollbackLobbyDialog::spectateLaunch,
+            this, &MainWindow::on_Lobby_SpectateLaunch);
+    connect(this->rollbackLobbyDialog, &Dialog::RollbackLobbyDialog::spectateStreamData,
+            this, &MainWindow::on_Lobby_SpectateData);
+    connect(this->rollbackLobbyDialog, &Dialog::RollbackLobbyDialog::spectateStreamClosed,
+            this, &MainWindow::on_Lobby_SpectateClosed);
 }
 #endif
 
@@ -4550,6 +4678,10 @@ void MainWindow::on_Kaillera_GameStarted(QString gameName, int playerNum, int to
             "Could not find ROM: " + gameName + "\n\nPlease add it to your ROM directory and refresh the list.");
         // Just end the Kaillera game - full cleanup happens when dialog closes
         CoreEndKailleraGame();
+        // A spectate session can't proceed without the ROM — tear it down so its
+        // driver timer doesn't spin forever.
+        if (this->ui_SpectateActive)
+            this->stopLobbySpectate();
         return;
     }
 
@@ -5163,6 +5295,11 @@ void MainWindow::on_Emulation_Finished(bool ret, QString error)
     this->ui_RollbackLivePumpActive = false;
     this->ui_RollbackNetplayRoomActive = false;
     this->ui_RollbackNetplayLaunchActive = false;
+
+    // If this was a spectate session, tear it down (no-op otherwise). Emulation
+    // already stopped, so this just kills the timer, resets speed, and notifies
+    // the lobby. Safe before the recording/lobby handling below.
+    this->stopLobbySpectate();
 
     if (this->ui_LobbyNetplaySession)
     {

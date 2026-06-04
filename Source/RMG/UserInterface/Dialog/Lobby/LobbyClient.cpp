@@ -221,6 +221,10 @@ void LobbyClient::handleEnvelope(const QJsonObject& env)
     else if (type == "MATCH_BEGIN")          handleMatchBegin(data);
     else if (type == "MATCH_PEER_LEFT")      handleMatchPeerLeft(data);
     else if (type == "QUICK_MATCH_STATUS")   handleQuickMatchStatus(data);
+    else if (type == "SPECTATE_BEGIN")       handleSpectateBegin(data);
+    else if (type == "SPECTATE_DATA")        handleSpectateData(data);
+    else if (type == "SPECTATE_END")         handleSpectateEnd(data);
+    else if (type == "SPECTATE_FAIL")        handleSpectateFail(data);
     else qDebug() << "lobby: unknown message type" << type;
 }
 
@@ -315,6 +319,8 @@ void LobbyClient::handleRoomList(const QJsonObject& data)
         r.state       = o.value("state").toString();
         r.hasPassword = o.value("hasPassword").toBool();
         r.startedAtMs = static_cast<qint64>(o.value("startedAt").toDouble());
+        r.broadcasting = o.value("broadcasting").toBool();
+        r.matchId      = static_cast<quint64>(o.value("matchId").toDouble());
         for (const auto& n : o.value("playerNames").toArray())
             r.playerNames << n.toString();
         m_rooms.insert(r.id, r);
@@ -453,6 +459,31 @@ void LobbyClient::handleMatchPeerLeft(const QJsonObject& data)
 void LobbyClient::handleQuickMatchStatus(const QJsonObject& data)
 {
     emit quickMatchStatus(data.value("searching").toBool(), data.value("queueSize").toInt());
+}
+
+void LobbyClient::handleSpectateBegin(const QJsonObject& data)
+{
+    emit spectateBegan(static_cast<quint64>(data.value("matchId").toDouble()));
+}
+
+void LobbyClient::handleSpectateData(const QJsonObject& data)
+{
+    const quint64 matchId = static_cast<quint64>(data.value("matchId").toDouble());
+    const QByteArray raw = QByteArray::fromBase64(data.value("data").toString().toLatin1());
+    if (!raw.isEmpty())
+        emit spectateData(matchId, raw);
+}
+
+void LobbyClient::handleSpectateEnd(const QJsonObject& data)
+{
+    emit spectateEnded(static_cast<quint64>(data.value("matchId").toDouble()),
+                       data.value("reason").toString());
+}
+
+void LobbyClient::handleSpectateFail(const QJsonObject& data)
+{
+    emit spectateFailed(static_cast<quint64>(data.value("matchId").toDouble()),
+                        data.value("reason").toString());
 }
 
 // -------- Heartbeat --------
@@ -753,6 +784,44 @@ void LobbyClient::reportMatchFinished(quint64 matchId)
     QJsonObject d;
     d["matchId"] = QJsonValue(qint64(matchId));
     sendEnvelope("MATCH_FINISHED", d);
+}
+
+void LobbyClient::sendBroadcastBegin(quint64 matchId)
+{
+    QJsonObject d;
+    d["matchId"] = QJsonValue(qint64(matchId));
+    sendEnvelope("BROADCAST_BEGIN", d);
+}
+
+void LobbyClient::sendBroadcastData(quint64 matchId, const QByteArray& chunk)
+{
+    if (chunk.isEmpty())
+        return;
+    QJsonObject d;
+    d["matchId"] = QJsonValue(qint64(matchId));
+    d["data"]    = QString::fromLatin1(chunk.toBase64());
+    sendEnvelope("BROADCAST_DATA", d);
+}
+
+void LobbyClient::sendBroadcastEnd(quint64 matchId)
+{
+    QJsonObject d;
+    d["matchId"] = QJsonValue(qint64(matchId));
+    sendEnvelope("BROADCAST_END", d);
+}
+
+void LobbyClient::startSpectate(quint64 matchId)
+{
+    QJsonObject d;
+    d["matchId"] = QJsonValue(qint64(matchId));
+    sendEnvelope("SPECTATE_START", d);
+}
+
+void LobbyClient::stopSpectate(quint64 matchId)
+{
+    QJsonObject d;
+    d["matchId"] = QJsonValue(qint64(matchId));
+    sendEnvelope("SPECTATE_STOP", d);
 }
 
 void LobbyClient::quickMatchJoin(const QString& romName, const QString& romMd5)

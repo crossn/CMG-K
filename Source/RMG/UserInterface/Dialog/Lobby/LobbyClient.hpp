@@ -72,6 +72,8 @@ public:
         bool hasPassword = false;
         QStringList playerNames;   // seated players (for Ongoing Matches)
         qint64 startedAtMs = 0;    // match start, unix ms (0 until in-game)
+        bool    broadcasting = false; // a player is streaming this match for spectators
+        quint64 matchId = 0;          // current match id (set only while broadcasting)
     };
 
     struct LobbyMatchPeer
@@ -145,6 +147,15 @@ public:
     void reportMatchPunchFailed(quint64 matchId, quint64 peerUserId);
     void reportMatchFinished(quint64 matchId);
 
+    // Broadcast (one player streams the live match's .krec up to the server).
+    void sendBroadcastBegin(quint64 matchId);
+    void sendBroadcastData(quint64 matchId, const QByteArray& chunk); // raw krec bytes; base64'd on the wire
+    void sendBroadcastEnd(quint64 matchId);
+
+    // Spectate (pull a broadcast match's krec stream back down).
+    void startSpectate(quint64 matchId);
+    void stopSpectate(quint64 matchId);
+
     // UDP anchor port management — exposed so the GekkoNet session can take
     // the same local port we registered with the server (matches NAT mapping).
     quint16 localUdpPort() const;
@@ -186,6 +197,12 @@ signals:
 
     void quickMatchStatus(bool searching, int queueSize);
 
+    // Spectate stream (server → spectator). data carries decoded krec bytes.
+    void spectateBegan(quint64 matchId);
+    void spectateData(quint64 matchId, const QByteArray& data);
+    void spectateEnded(quint64 matchId, const QString& reason);
+    void spectateFailed(quint64 matchId, const QString& reason);
+
 private slots:
     void onWsConnected();
     void onWsDisconnected();
@@ -220,6 +237,10 @@ private:
     void handleMatchBegin(const QJsonObject& data);
     void handleMatchPeerLeft(const QJsonObject& data);
     void handleQuickMatchStatus(const QJsonObject& data);
+    void handleSpectateBegin(const QJsonObject& data);
+    void handleSpectateData(const QJsonObject& data);
+    void handleSpectateEnd(const QJsonObject& data);
+    void handleSpectateFail(const QJsonObject& data);
 
     void initiateUdpAnchor();
     void sendUdpRegister();

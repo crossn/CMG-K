@@ -33,6 +33,8 @@
 #include <RMG-Core/Settings.hpp>
 #include <RMG-Core/Kaillera.hpp>
 
+#include "n02_client.h" // setRecordingStreamSink (broadcast tee)
+
 #include <QRegularExpression>
 #include <QRegularExpressionValidator>
 
@@ -224,6 +226,16 @@ RollbackLobbyDialog::RollbackLobbyDialog(QWidget* parent)
     connect(m_client, &LobbyClient::matchBegin,           this, &RollbackLobbyDialog::onMatchBegin);
     connect(m_client, &LobbyClient::matchPeerLeft,        this, &RollbackLobbyDialog::onMatchPeerLeft);
     connect(m_client, &LobbyClient::pingProbeMeasured,    this, &RollbackLobbyDialog::onPingMeasured);
+    connect(m_client, &LobbyClient::spectateBegan,        this, &RollbackLobbyDialog::onSpectateBegan);
+    connect(m_client, &LobbyClient::spectateData,         this, &RollbackLobbyDialog::onSpectateData);
+    connect(m_client, &LobbyClient::spectateEnded,        this, &RollbackLobbyDialog::onSpectateEnded);
+    connect(m_client, &LobbyClient::spectateFailed,       this, &RollbackLobbyDialog::onSpectateFailed);
+
+    // Drains staged krec bytes to the WebSocket while broadcasting. ~80 ms keeps
+    // WS frame overhead low without adding meaningful latency to spectators.
+    m_broadcastDrainTimer = new QTimer(this);
+    m_broadcastDrainTimer->setInterval(80);
+    connect(m_broadcastDrainTimer, &QTimer::timeout, this, &RollbackLobbyDialog::onBroadcastDrainTick);
 
     // 5 s cadence is a balance: fast enough that the displayed ping tracks
     // real conditions, slow enough that we're not flooding peers' anchor
@@ -235,6 +247,10 @@ RollbackLobbyDialog::RollbackLobbyDialog(QWidget* parent)
 
 RollbackLobbyDialog::~RollbackLobbyDialog()
 {
+    // Detach the recording sink before we're gone — it captures `this` and is
+    // invoked on the emulation thread (emulation should already be stopped here).
+    if (m_broadcasting)
+        n02::setRecordingStreamSink(nullptr);
     if (m_client)
         m_client->disconnectFromServer();
 }
@@ -547,6 +563,8 @@ QWidget* RollbackLobbyDialog::buildBrowseView()
     m_matchesTree->header()->setSectionResizeMode(0, QHeaderView::Stretch);
     m_matchesTree->header()->setSectionResizeMode(1, QHeaderView::ResizeToContents);
     m_matchesTree->header()->setSectionResizeMode(2, QHeaderView::ResizeToContents);
+    connect(m_matchesTree, &QTreeWidget::itemDoubleClicked,
+            this, &RollbackLobbyDialog::onMatchDoubleClicked);
     lay->addWidget(m_matchesTree);
 
     // Tick the ongoing-match durations once a second (the room list only
@@ -677,6 +695,20 @@ QWidget* RollbackLobbyDialog::buildInRoomView()
         n02_kaillera_recording_enabled = checked;
     });
     settingsRow->addWidget(m_recordCheck);
+
+    // Broadcast: stream this match's krec to the server so others can spectate.
+    // Broadcasting implies recording (the stream is the krec), so ticking it
+    // also forces "Record game" on.
+    m_broadcastCheck = new QCheckBox("Broadcast match", this);
+    m_broadcastCheck->setToolTip(
+        "Stream this match live so others in the lobby can spectate.\n"
+        "Implies Record game (the broadcast is the .krec). Only one player\n"
+        "per match broadcasts — whoever enables it first.");
+    connect(m_broadcastCheck, &QCheckBox::toggled, this, [this](bool checked) {
+        if (checked && m_recordCheck)
+            m_recordCheck->setChecked(true); // broadcasting needs the krec written
+    });
+    settingsRow->addWidget(m_broadcastCheck);
 
     lay->addLayout(settingsRow);
 
@@ -1466,7 +1498,22 @@ void RollbackLobbyDialog::onRoomListChanged()
             matchRow->setText(1, formatMatchDuration(r.startedAtMs));
             matchRow->setText(2, r.romName);
             matchRow->setData(0, Qt::UserRole, QVariant::fromValue(r.id));
+            matchRow->setData(0, Qt::UserRole + 1, QVariant::fromValue(r.matchId)); // 0 unless broadcast
             matchRow->setData(1, Qt::UserRole, r.startedAtMs); // for the duration ticker
+
+            // A broadcast match turns green with a spectate hint; double-clicking
+            // it watches live.
+            if (r.broadcasting && r.matchId != 0)
+            {
+                const QColor live(0x2e, 0xa0, 0x43); // green, readable on light + dark
+                const QString tip = QStringLiteral("🔴 Live — double-click to spectate");
+                matchRow->setText(0, QStringLiteral("🔴  ") + matchRow->text(0));
+                for (int col = 0; col < 3; ++col)
+                {
+                    matchRow->setForeground(col, live);
+                    matchRow->setToolTip(col, tip);
+                }
+            }
             continue;
         }
 
@@ -1666,8 +1713,15 @@ void RollbackLobbyDialog::onRoomDoubleClicked(QTreeWidgetItem* item, int /*colum
 
     if (summary.state == "in_game" || summary.state == "starting")
     {
-        QMessageBox::information(this, "Match in progress",
-            "That room is already playing — try another or wait for it to finish.");
+        if (summary.broadcasting && summary.matchId != 0)
+        {
+            beginSpectate(summary.matchId, summary.romName);
+        }
+        else
+        {
+            QMessageBox::information(this, "Match in progress",
+                "That room is already playing — try another or wait for it to finish.");
+        }
         return;
     }
 
@@ -1681,6 +1735,26 @@ void RollbackLobbyDialog::onRoomDoubleClicked(QTreeWidgetItem* item, int /*colum
         if (!ok) return;
     }
     m_client->joinRoom(roomId, password);
+}
+
+void RollbackLobbyDialog::onMatchDoubleClicked(QTreeWidgetItem* item, int /*column*/)
+{
+    if (!item) return;
+    if (m_client->state() != LobbyClient::ConnectionState::Connected) return;
+    if (m_currentRoomId != 0)
+    {
+        QMessageBox::information(this, "In a room",
+            "Leave your room before spectating a match.");
+        return;
+    }
+    const quint64 matchId = item->data(0, Qt::UserRole + 1).toULongLong();
+    if (matchId == 0)
+    {
+        QMessageBox::information(this, "Not broadcasting",
+            "That match isn't being broadcast, so it can't be spectated.");
+        return;
+    }
+    beginSpectate(matchId, item->text(2));
 }
 
 void RollbackLobbyDialog::onRoomCreateFailed(const QString& reason)
@@ -1896,6 +1970,10 @@ void RollbackLobbyDialog::notifyEmulationStarted()
 
 void RollbackLobbyDialog::notifyEmulationFinished()
 {
+    // Always close out a broadcast if one is running, even on paths that fall
+    // through the early-return below (it flushes the tail + sends BROADCAST_END).
+    stopBroadcast();
+
     if (!m_emulationActive && !m_awaitingEmulationStart) return;
     const quint64 matchId = m_currentMatchId;
     m_emulationActive = false;
@@ -2200,6 +2278,112 @@ void RollbackLobbyDialog::onQuickMatchStatusChanged(bool searching, int queueSiz
     }
 }
 
+// ── Broadcaster ───────────────────────────────────────────────────────
+
+void RollbackLobbyDialog::startBroadcast(quint64 matchId)
+{
+    if (m_broadcasting) return;
+    m_broadcasting = true;
+    m_broadcastMatchId = matchId;
+    {
+        QMutexLocker lock(&m_broadcastMutex);
+        m_broadcastBuf.clear();
+    }
+    // The sink runs on the emulation thread; it only stages bytes (no Qt calls).
+    n02::setRecordingStreamSink([this](const void* data, int len) {
+        this->feedBroadcastBytes(data, len);
+    });
+    m_client->sendBroadcastBegin(matchId);
+    m_broadcastDrainTimer->start();
+    appendChatSystemLine(CHANNEL_ROOM, "Broadcasting this match — others can spectate.");
+}
+
+void RollbackLobbyDialog::stopBroadcast()
+{
+    if (!m_broadcasting) return;
+    m_broadcasting = false;
+    // Stop new bytes, flush the tail, then tell the server.
+    n02::setRecordingStreamSink(nullptr);
+    if (m_broadcastDrainTimer)
+        m_broadcastDrainTimer->stop();
+    onBroadcastDrainTick(); // final flush of whatever the close-out wrote
+    if (m_broadcastMatchId != 0)
+        m_client->sendBroadcastEnd(m_broadcastMatchId);
+    m_broadcastMatchId = 0;
+    QMutexLocker lock(&m_broadcastMutex);
+    m_broadcastBuf.clear();
+}
+
+void RollbackLobbyDialog::feedBroadcastBytes(const void* data, int len)
+{
+    // Emulation thread: stage bytes only, no Qt/network calls here.
+    if (data == nullptr || len <= 0) return;
+    QMutexLocker lock(&m_broadcastMutex);
+    m_broadcastBuf.append(reinterpret_cast<const char*>(data), len);
+}
+
+void RollbackLobbyDialog::onBroadcastDrainTick()
+{
+    QByteArray chunk;
+    {
+        QMutexLocker lock(&m_broadcastMutex);
+        if (m_broadcastBuf.isEmpty()) return;
+        chunk = m_broadcastBuf;   // COW share
+        m_broadcastBuf.clear();   // detaches m_broadcastBuf, leaving chunk intact
+    }
+    if (m_broadcastMatchId != 0)
+        m_client->sendBroadcastData(m_broadcastMatchId, chunk);
+}
+
+// ── Spectator ─────────────────────────────────────────────────────────
+
+void RollbackLobbyDialog::beginSpectate(quint64 matchId, const QString& gameName)
+{
+    if (m_spectatingMatchId != 0) return; // already spectating
+    m_spectatingMatchId = matchId;
+    m_client->startSpectate(matchId);
+    emit spectateLaunch(matchId, gameName);
+    appendChatSystemLine(CHANNEL_LOBBY, "Connecting to spectate…");
+}
+
+void RollbackLobbyDialog::stopSpectating()
+{
+    if (m_spectatingMatchId == 0) return;
+    m_client->stopSpectate(m_spectatingMatchId);
+    m_spectatingMatchId = 0;
+}
+
+void RollbackLobbyDialog::onSpectateBegan(quint64 matchId)
+{
+    if (matchId != m_spectatingMatchId) return;
+    appendChatSystemLine(CHANNEL_LOBBY, "Spectating — buffering the match…");
+}
+
+void RollbackLobbyDialog::onSpectateData(quint64 matchId, const QByteArray& bytes)
+{
+    if (matchId != m_spectatingMatchId) return;
+    emit spectateStreamData(bytes);
+}
+
+void RollbackLobbyDialog::onSpectateEnded(quint64 matchId, const QString& reason)
+{
+    if (matchId != m_spectatingMatchId) return;
+    m_spectatingMatchId = 0; // server already ended it; don't echo SPECTATE_STOP
+    emit spectateStreamClosed(reason);
+}
+
+void RollbackLobbyDialog::onSpectateFailed(quint64 matchId, const QString& reason)
+{
+    if (matchId != m_spectatingMatchId) return;
+    m_spectatingMatchId = 0;
+    const QString human =
+        reason == "not_broadcasting" ? QStringLiteral("That match isn't being broadcast anymore.") :
+        reason == "ended"            ? QStringLiteral("That broadcast just ended.") :
+                                       QStringLiteral("Couldn't spectate: %1").arg(reason);
+    QMessageBox::information(this, "Spectate", human);
+    emit spectateStreamClosed(reason);
+}
+
 void RollbackLobbyDialog::onMatchBegin(quint64 matchId, const QList<LobbyClient::LobbyMatchPeer>& peers)
 {
     const QString line = QString("Match #%1 starting with %2 player(s)").arg(matchId).arg(peers.size());
@@ -2242,6 +2426,14 @@ void RollbackLobbyDialog::onMatchBegin(quint64 matchId, const QList<LobbyClient:
     if (m_recordCheck)
     {
         n02_kaillera_recording_enabled = m_recordCheck->isChecked();
+    }
+
+    // If broadcasting, arm the krec tee and announce to the server now — before
+    // MainWindow calls recordingOpen, so the .krec header is captured too.
+    if (m_broadcastCheck && m_broadcastCheck->isChecked())
+    {
+        n02_kaillera_recording_enabled = true; // broadcasting requires the krec
+        startBroadcast(matchId);
     }
 
     // Capture seated player names (slot-indexed) for the .krec header, the same
