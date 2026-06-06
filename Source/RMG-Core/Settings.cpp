@@ -352,6 +352,9 @@ static l_Setting get_setting(SettingsID settingId)
     case SettingsID::Rollback_VerboseGlideInputLogging:
         setting = {SETTING_SECTION_ROLLBACK, "VerboseGlideInputLogging", false};
         break;
+    case SettingsID::Rollback_StallDiagnostics:
+        setting = {SETTING_SECTION_ROLLBACK, "StallDiagnostics", false};
+        break;
 
     case SettingsID::Core_GFX_Plugin:
         setting = {SETTING_SECTION_CORE, "GFX_Plugin", 

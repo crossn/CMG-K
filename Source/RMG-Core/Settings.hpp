@@ -107,6 +107,7 @@ enum class SettingsID
     Rollback_EnableLocalTesting,
     Rollback_VerbosePifInputLogging,
     Rollback_VerboseGlideInputLogging,
+    Rollback_StallDiagnostics,
 
     // Core Plugin Settings
     Core_GFX_Plugin,

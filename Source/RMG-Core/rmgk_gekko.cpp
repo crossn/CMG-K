@@ -50,6 +50,12 @@ namespace
 constexpr unsigned int kGekkoStateCapacity = 24u * 1024u * 1024u;
 constexpr int kGekkoMaxLoggedFrames = 600;
 constexpr int kGekkoWaitSleepUs = 100;
+// Lightweight stall diagnostics: don't treat a wait as a stall until it exceeds a
+// normal sub-frame hitch (~a frame), then snapshot per-peer stats at a coarse
+// wall-clock cadence. This keeps a multi-second freeze down to a handful of log
+// lines instead of the verbose per-frame firehose.
+constexpr long long kGekkoStallReportThresholdMs = 20;
+constexpr long long kGekkoStallSnapshotIntervalMs = 250;
 // Slippi-style asymmetric time-sync (see project-slippi Ishiiruka,
 // EXI_DeviceSlippi.cpp shouldAdvanceOnlineFrame). The behind player speeds up
 // at twice the authority the ahead player slows down, and the deadzone is
@@ -140,6 +146,13 @@ double g_GekkoSpeedScale = 1.0;
 int g_GekkoTimesyncSampleCounter = 0;
 double g_GekkoTimesyncTargetScale = 1.0;
 bool g_GekkoLogEnabled = false;
+// Lightweight stall diagnostics, independent of verbose logging. Only emits while a
+// rollback session is genuinely stalled (waiting on a peer's input), so the log
+// stays tiny during smooth play.
+bool g_GekkoStallLogEnabled = false;
+bool g_GekkoStallReported = false;
+std::chrono::steady_clock::time_point g_GekkoStallBeginTime;
+std::chrono::steady_clock::time_point g_GekkoStallLastSnapshotTime;
 std::mutex g_GekkoClientReplayMutex;
 ClientInputReplayMode g_GekkoClientReplayMode = ClientInputReplayMode::Off;
 std::vector<uint32_t> g_GekkoClientReplayInputs;
@@ -263,7 +276,11 @@ void reset_gekko_log()
     const char* logEnv = std::getenv("RMGK_GEKKO_LOG");
     g_GekkoLogEnabled = CoreSettingsGetBoolValue(SettingsID::Rollback_VerboseStats) ||
         (logEnv != nullptr && std::strcmp(logEnv, "0") != 0);
-    if (!g_GekkoLogEnabled)
+    const char* stallEnv = std::getenv("RMGK_GEKKO_STALL_LOG");
+    g_GekkoStallLogEnabled = CoreSettingsGetBoolValue(SettingsID::Rollback_StallDiagnostics) ||
+        (stallEnv != nullptr && std::strcmp(stallEnv, "0") != 0);
+    g_GekkoStallReported = false;
+    if (!g_GekkoLogEnabled && !g_GekkoStallLogEnabled)
     {
         g_GekkoLogFrames = 0;
         g_GekkoLastSubmittedInput = 0xffffffffu;
@@ -284,7 +301,8 @@ void reset_gekko_log()
     std::lock_guard<std::mutex> lock(g_GekkoLogMutex);
     const std::filesystem::path path = get_gekko_log_path();
     std::ofstream file(path, std::ios::out | std::ios::trunc);
-    file << "RMG-K GekkoNet input log\n";
+    file << "RMG-K GekkoNet log (verbose=" << (g_GekkoLogEnabled ? 1 : 0)
+         << " stall_only=" << ((g_GekkoStallLogEnabled && !g_GekkoLogEnabled) ? 1 : 0) << ")\n";
     g_GekkoLogFrames = 0;
     g_GekkoLastSubmittedInput = 0xffffffffu;
     g_GekkoLastLatchedInput.clear();
@@ -303,6 +321,23 @@ void reset_gekko_log()
 void write_gekko_log(const std::string& message)
 {
     if (!g_GekkoLogEnabled)
+    {
+        return;
+    }
+
+    std::lock_guard<std::mutex> lock(g_GekkoLogMutex);
+    const std::filesystem::path path = get_gekko_log_path();
+    std::ofstream file(path, std::ios::out | std::ios::app);
+    file << "core_frame=" << CoreGetCurrentFrameCount() << " " << message << "\n";
+}
+
+// Stall-diagnostics writer: fires when EITHER verbose logging or the lightweight
+// stall-only toggle is on, so stall records show up in both modes (and in the
+// stall-only mode they are the only thing written). Same one-line-append shape as
+// write_gekko_log.
+void write_gekko_stall_log(const std::string& message)
+{
+    if (!g_GekkoLogEnabled && !g_GekkoStallLogEnabled)
     {
         return;
     }
@@ -769,6 +804,46 @@ bool process_pending_saves()
     return true;
 }
 
+// Append per-peer GekkoNet network stats (one labelled segment per remote actor)
+// to a log stream. The session only exposes counters per handle via
+// gekko_network_stats(), and the rest of this file historically logged just
+// g_GekkoRemoteHandle (the FIRST remote) — blind to peers 2 and 3 in a 4-player
+// mesh. Since the local sim blocks until EVERY peer's input arrives, a freeze is
+// almost always one specific peer stalling; logging all of them lets a single
+// logging client name the culprit (whichever peer's kb_recv flatlines / ping goes
+// stale during the stall).
+void append_peer_network_stats(std::ostringstream& stream)
+{
+    if (g_GekkoSession == nullptr)
+    {
+        return;
+    }
+    for (int player = 1; player <= g_GekkoPlayers; player++)
+    {
+        if (player == g_GekkoLocalPlayer)
+        {
+            continue;
+        }
+        if (player > static_cast<int>(g_GekkoPlayerHandles.size()))
+        {
+            continue;
+        }
+        const int handle = g_GekkoPlayerHandles[static_cast<size_t>(player - 1)];
+        if (handle < 0)
+        {
+            continue;
+        }
+        GekkoNetworkStats stats = {};
+        gekko_network_stats(g_GekkoSession, handle, &stats);
+        stream << " peer" << player << "_handle=" << handle
+               << " peer" << player << "_ping_ms=" << stats.last_ping
+               << " peer" << player << "_avg_ping_ms=" << std::fixed << std::setprecision(1) << stats.avg_ping
+               << " peer" << player << "_jitter_ms=" << stats.jitter
+               << " peer" << player << "_kb_sent=" << std::setprecision(2) << stats.kb_sent
+               << " peer" << player << "_kb_recv=" << stats.kb_received;
+    }
+}
+
 void apply_gekko_frame_pacing()
 {
     // Read frames_ahead every call (cheap, just a member access in
@@ -814,17 +889,7 @@ void apply_gekko_frame_pacing()
                << " target_scale=" << std::setprecision(4) << g_GekkoTimesyncTargetScale
                << " speed_scale=" << g_GekkoSpeedScale;
 
-        if (g_GekkoRemoteHandle >= 0)
-        {
-            GekkoNetworkStats stats = {};
-            gekko_network_stats(g_GekkoSession, g_GekkoRemoteHandle, &stats);
-            stream << " remote_handle=" << g_GekkoRemoteHandle
-                   << " ping_ms=" << stats.last_ping
-                   << " avg_ping_ms=" << std::setprecision(1) << stats.avg_ping
-                   << " jitter_ms=" << stats.jitter
-                   << " kb_sent=" << stats.kb_sent
-                   << " kb_recv=" << stats.kb_received;
-        }
+        append_peer_network_stats(stream);
 
         write_gekko_log(stream.str());
     }
@@ -951,10 +1016,62 @@ int rollback_execute_begin_frame(void* userData)
                 std::chrono::steady_clock::now() - updateSessionTime).count();
         log_session_events();
 
+        // Lightweight stall diagnostics: a stall we reported has now resolved
+        // (events arrived) — emit one compact end record before the wait counter is
+        // cleared below, so the log captures the freeze's total wall-clock duration.
+        if (count != 0 && g_GekkoStallReported &&
+            (g_GekkoStallLogEnabled || g_GekkoLogEnabled))
+        {
+            const long long waitedMs =
+                std::chrono::duration_cast<std::chrono::milliseconds>(
+                    std::chrono::steady_clock::now() - g_GekkoStallBeginTime).count();
+            std::ostringstream stream;
+            stream << "stall end waited_ms=" << waitedMs
+                   << " loops=" << g_GekkoWaitingLoops
+                   << " frames_ahead=" << std::fixed << std::setprecision(2)
+                   << gekko_frames_ahead(g_GekkoSession);
+            append_peer_network_stats(stream);
+            write_gekko_stall_log(stream.str());
+            g_GekkoStallReported = false;
+        }
+
         if (count == 0)
         {
+            if (g_GekkoWaitingLoops == 0)
+            {
+                g_GekkoStallBeginTime = std::chrono::steady_clock::now();
+                g_GekkoStallReported = false;
+            }
             g_GekkoWaitingLoops++;
             summaryWaitLoops++;
+
+            // Lightweight stall diagnostics: once a wait grows past a normal
+            // sub-frame hitch, snapshot per-peer network stats at a coarse
+            // wall-clock cadence. A peer whose kb_recv stops climbing across these
+            // snapshots is the one starving the mesh.
+            if (g_GekkoStallLogEnabled || g_GekkoLogEnabled)
+            {
+                const auto stallNow = std::chrono::steady_clock::now();
+                const long long waitedMs =
+                    std::chrono::duration_cast<std::chrono::milliseconds>(stallNow - g_GekkoStallBeginTime).count();
+                const long long sinceSnapMs =
+                    std::chrono::duration_cast<std::chrono::milliseconds>(stallNow - g_GekkoStallLastSnapshotTime).count();
+                if (waitedMs >= kGekkoStallReportThresholdMs &&
+                    (!g_GekkoStallReported || sinceSnapMs >= kGekkoStallSnapshotIntervalMs))
+                {
+                    g_GekkoStallLastSnapshotTime = stallNow;
+                    std::ostringstream stream;
+                    stream << "stall " << (g_GekkoStallReported ? "ongoing" : "begin")
+                           << " waited_ms=" << waitedMs
+                           << " loops=" << g_GekkoWaitingLoops
+                           << " frames_ahead=" << std::fixed << std::setprecision(2)
+                           << gekko_frames_ahead(g_GekkoSession);
+                    append_peer_network_stats(stream);
+                    write_gekko_stall_log(stream.str());
+                    g_GekkoStallReported = true;
+                }
+            }
+
             if (g_GekkoLogEnabled &&
                 (g_GekkoWaitingLoops <= 20 || (g_GekkoWaitingLoops % 60) == 0))
             {
@@ -1229,6 +1346,10 @@ int rollback_execute_begin_frame(void* userData)
                            << " pending_save_us=" << g_GekkoLastPendingSaveUs
                            << " frames_ahead=" << std::fixed << std::setprecision(2)
                            << gekko_frames_ahead(g_GekkoSession);
+                    if (summaryWaitLoops > 0 || summaryLoadCount > 0)
+                    {
+                        append_peer_network_stats(stream);
+                    }
                     write_gekko_log(stream.str());
                 }
             }

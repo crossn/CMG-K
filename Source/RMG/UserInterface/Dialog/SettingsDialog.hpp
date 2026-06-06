@@ -69,6 +69,7 @@ class SettingsDialog : public QDialog, private Ui::SettingsDialog
     QColor currentBackgroundColor;
     QColor currentTextColor;
     QCheckBox* rollbackVerboseStatsCheckBox = nullptr;
+    QCheckBox* rollbackStallDiagnosticsCheckBox = nullptr;
     QCheckBox* rollbackEnableLocalTestingCheckBox = nullptr;
     QCheckBox* rollbackVerbosePifInputLoggingCheckBox = nullptr;
     QCheckBox* rollbackVerboseGlideInputLoggingCheckBox = nullptr;
