@@ -4172,14 +4172,14 @@ void MainWindow::on_Lobby_SpectateLaunch(quint64 matchId, QString gameName)
     }
     if (this->emulationThread->isRunning())
     {
-        this->showErrorMessage("Busy", "Stop the current game before spectating.");
+        this->showErrorMessage("Busy", "Stop the current game before watching a live replay.");
         if (this->rollbackLobbyDialog != nullptr)
             this->rollbackLobbyDialog->stopSpectating();
         return;
     }
     if (!CoreInitKaillera())
     {
-        this->showErrorMessage("Spectate Error", QString::fromStdString(CoreGetError()));
+        this->showErrorMessage("Live Replay Error", QString::fromStdString(CoreGetError()));
         if (this->rollbackLobbyDialog != nullptr)
             this->rollbackLobbyDialog->stopSpectating();
         return;
@@ -4197,7 +4197,7 @@ void MainWindow::on_Lobby_SpectateLaunch(quint64 matchId, QString gameName)
     if (this->ui_SpectateTimerId == 0)
         this->ui_SpectateTimerId = this->startTimer(16);
 
-    OnScreenDisplaySetMessage(("Spectating: " + gameName.toStdString()).c_str());
+    OnScreenDisplaySetMessage(("Watching: " + gameName.toStdString()).c_str());
 }
 
 void MainWindow::on_Lobby_SpectateData(QByteArray bytes, int liveFrame)

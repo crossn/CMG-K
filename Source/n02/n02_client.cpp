@@ -21,6 +21,7 @@
 #include <climits>
 #include <cstdint>
 #include <atomic>
+#include <mutex>
 #include <fstream>
 #include <filesystem>
 #include <vector>
@@ -464,6 +465,13 @@ public:
     unsigned short load_short() { unsigned short x = 0; load_bytes(&x, 2); return x; }
 } PlayBackBuffer;
 
+// Guards all PlayBackBuffer access. During a live spectate stream the buffer is
+// fed by playbackAppendBytes() on the UI thread while player_MPV() consumes it
+// on the emulation thread; without this lock a vector realloc on one thread races
+// the other's read (use-after-free → corrupted inputs → desync). Recursive
+// because player_MPV() re-enters itself for chat/drop records.
+static std::recursive_mutex playbackMutex;
+
 // Streaming: is a complete next record present at pb.pos? Guards against
 // consuming a record that has only partially arrived at the live edge.
 static bool streamRecordComplete(PlayBackBufferC& pb) {
@@ -559,6 +567,7 @@ static void scanFrames() {
 static void player_EndGame();
 
 static int player_MPV(void* values, int size) {
+    std::lock_guard<std::recursive_mutex> lock(playbackMutex);
     if (!player_playing)
         return -1;
 
@@ -640,6 +649,7 @@ static bool player_RecordingEnabled() {
 }
 
 static bool player_play(const char* fn) {
+    std::lock_guard<std::recursive_mutex> lock(playbackMutex);
     if (fn == nullptr)
         return false;
 
@@ -678,6 +688,7 @@ static bool player_play(const char* fn) {
 }
 
 static bool player_seekToFrame(int frameIdx) {
+    std::lock_guard<std::recursive_mutex> lock(playbackMutex);
     if (!player_playing) return false;
     if (frameIdx < 0 || frameIdx >= (int)PlayBackBuffer.frameIndex.size()) return false;
     PlayBackBuffer.pos = PlayBackBuffer.frameIndex[frameIdx];
@@ -687,6 +698,7 @@ static bool player_seekToFrame(int frameIdx) {
 
 // Live spectate: begin a stream fed incrementally by player_appendStream().
 static bool player_beginStream() {
+    std::lock_guard<std::recursive_mutex> lock(playbackMutex);
     PlayBackBufferC& pb = PlayBackBuffer;
     pb.reset_all();
     pb.streaming = true;
@@ -698,6 +710,7 @@ static bool player_beginStream() {
 static void player_appendStream(const void* data, int len) {
     if (data == nullptr || len <= 0)
         return;
+    std::lock_guard<std::recursive_mutex> lock(playbackMutex);
     PlayBackBufferC& pb = PlayBackBuffer;
     if (!pb.streaming)
         return;
@@ -715,6 +728,7 @@ static void player_appendStream(const void* data, int len) {
 }
 
 static void player_stopStream() {
+    std::lock_guard<std::recursive_mutex> lock(playbackMutex);
     if (PlayBackBuffer.streaming && player_playing) {
         player_EndGame();
     } else {
@@ -1042,10 +1056,12 @@ bool playbackSeekToFrame(int frameIdx) {
 }
 
 int playbackGetCurrentFrame() {
+    std::lock_guard<std::recursive_mutex> lock(playbackMutex);
     return PlayBackBuffer.currentFrameIdx;
 }
 
 int playbackGetTotalFrames() {
+    std::lock_guard<std::recursive_mutex> lock(playbackMutex);
     return (int)PlayBackBuffer.frameIndex.size();
 }
 

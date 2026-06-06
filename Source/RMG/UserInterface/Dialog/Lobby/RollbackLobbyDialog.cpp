@@ -700,11 +700,11 @@ QWidget* RollbackLobbyDialog::buildInRoomView()
     // Broadcast: stream this match's krec to the server so others can spectate.
     // Broadcasting implies recording (the stream is the krec), so ticking it
     // also forces "Record game" on.
-    m_broadcastCheck = new QCheckBox("Broadcast match", this);
+    m_broadcastCheck = new QCheckBox("Live Replay", this);
     m_broadcastCheck->setToolTip(
-        "Stream this match live so others in the lobby can spectate.\n"
-        "Implies Record game (the broadcast is the .krec). Only one player\n"
-        "per match broadcasts — whoever enables it first.");
+        "Let others in the lobby watch this match live.\n"
+        "Implies Record game (the live replay is the .krec). Only one player\n"
+        "per match streams it — whoever enables it first.");
     connect(m_broadcastCheck, &QCheckBox::toggled, this, [this](bool checked) {
         if (checked && m_recordCheck)
             m_recordCheck->setChecked(true); // broadcasting needs the krec written
@@ -1457,7 +1457,7 @@ QString RollbackLobbyDialog::stateGlyph(const QString& state) const
     if (state == "in_room")    return "In Room";
     if (state == "searching")  return "Searching";
     if (state == "playing")    return "In Game";
-    if (state == "spectating") return "Spectating";
+    if (state == "spectating") return "Watching";
     if (state == "away")       return "Away";
     return state;
 }
@@ -1502,12 +1502,12 @@ void RollbackLobbyDialog::onRoomListChanged()
             matchRow->setData(0, Qt::UserRole + 1, QVariant::fromValue(r.matchId)); // 0 unless broadcast
             matchRow->setData(1, Qt::UserRole, r.startedAtMs); // for the duration ticker
 
-            // A broadcast match turns green with a spectate hint; double-clicking
+            // A live-replay match turns green with a watch hint; double-clicking
             // it watches live.
             if (r.broadcasting && r.matchId != 0)
             {
                 const QColor live(0x2e, 0xa0, 0x43); // green, readable on light + dark
-                const QString tip = QStringLiteral("🔴 Live — double-click to spectate");
+                const QString tip = QStringLiteral("🔴 Live — double-click to watch");
                 matchRow->setText(0, QStringLiteral("🔴  ") + matchRow->text(0));
                 for (int col = 0; col < 3; ++col)
                 {
@@ -1764,14 +1764,14 @@ void RollbackLobbyDialog::onMatchDoubleClicked(QTreeWidgetItem* item, int /*colu
     if (m_currentRoomId != 0)
     {
         QMessageBox::information(this, "In a room",
-            "Leave your room before spectating a match.");
+            "Leave your room before watching a match.");
         return;
     }
     const quint64 matchId = item->data(0, Qt::UserRole + 1).toULongLong();
     if (matchId == 0)
     {
-        QMessageBox::information(this, "Not broadcasting",
-            "That match isn't being broadcast, so it can't be spectated.");
+        QMessageBox::information(this, "Not live",
+            "That match isn't streaming a live replay, so there's nothing to watch.");
         return;
     }
     beginSpectate(matchId, item->text(2));
@@ -2388,7 +2388,7 @@ void RollbackLobbyDialog::startBroadcast(quint64 matchId)
     });
     m_client->sendBroadcastBegin(matchId);
     m_broadcastDrainTimer->start();
-    appendChatSystemLine(CHANNEL_ROOM, "Broadcasting this match — others can spectate.");
+    appendChatSystemLine(CHANNEL_ROOM, "Live Replay on — others can watch this match.");
 }
 
 void RollbackLobbyDialog::stopBroadcast()
@@ -2441,7 +2441,7 @@ void RollbackLobbyDialog::beginSpectate(quint64 matchId, const QString& gameName
     m_spectatingMatchId = matchId;
     m_client->startSpectate(matchId);
     emit spectateLaunch(matchId, gameName);
-    appendChatSystemLine(CHANNEL_LOBBY, "Connecting to spectate…");
+    appendChatSystemLine(CHANNEL_LOBBY, "Connecting to live replay…");
 }
 
 void RollbackLobbyDialog::stopSpectating()
@@ -2454,7 +2454,7 @@ void RollbackLobbyDialog::stopSpectating()
 void RollbackLobbyDialog::onSpectateBegan(quint64 matchId)
 {
     if (matchId != m_spectatingMatchId) return;
-    appendChatSystemLine(CHANNEL_LOBBY, "Spectating — buffering the match…");
+    appendChatSystemLine(CHANNEL_LOBBY, "Watching — buffering the match…");
 }
 
 void RollbackLobbyDialog::onSpectateData(quint64 matchId, const QByteArray& bytes, int liveFrame)
@@ -2475,10 +2475,10 @@ void RollbackLobbyDialog::onSpectateFailed(quint64 matchId, const QString& reaso
     if (matchId != m_spectatingMatchId) return;
     m_spectatingMatchId = 0;
     const QString human =
-        reason == "not_broadcasting" ? QStringLiteral("That match isn't being broadcast anymore.") :
-        reason == "ended"            ? QStringLiteral("That broadcast just ended.") :
-                                       QStringLiteral("Couldn't spectate: %1").arg(reason);
-    QMessageBox::information(this, "Spectate", human);
+        reason == "not_broadcasting" ? QStringLiteral("That live replay isn't available anymore.") :
+        reason == "ended"            ? QStringLiteral("That live replay just ended.") :
+                                       QStringLiteral("Couldn't watch: %1").arg(reason);
+    QMessageBox::information(this, "Live Replay", human);
     emit spectateStreamClosed(reason);
 }
 
