@@ -29,6 +29,7 @@
 #include <thread>
 #include <array>
 #include <mutex>
+#include <sstream>
 
 //
 // Local Defines
@@ -69,6 +70,13 @@ static bool l_UsbInitialized = false;
 
 // GCA variables
 static libusb_device_handle* l_DeviceHandle = nullptr;
+
+// Interrupt endpoint addresses, discovered from the USB descriptor in gca_init().
+// Default to the genuine WUP-028 adapter's values; clones / alt-firmware (e.g. the
+// HHL GC Pocket / RP2040) present 057e:0337 but enumerate their endpoints at
+// different addresses, so we read them from the descriptor rather than assuming.
+static uint8_t l_EndpointIn  = GCA_ENDPOINT_IN;
+static uint8_t l_EndpointOut = GCA_ENDPOINT_OUT;
 static std::atomic<bool> l_PollThreadRunning;
 static std::atomic<bool> l_PolledState;
 static std::mutex l_ControllerStateMutex;
@@ -138,6 +146,78 @@ static void gca_reset_state(void)
     l_ControllerStateMutex.unlock();
 }
 
+// Read the active config descriptor and pick the interrupt IN/OUT endpoint
+// addresses for the claimed interface (interface 0). Logs the full endpoint layout
+// so an unexpected adapter (clone / alt-firmware) is visible in the plugin log.
+// Leaves the genuine-adapter defaults in place if nothing usable is found.
+static void gca_discover_endpoints(void)
+{
+    l_EndpointIn  = GCA_ENDPOINT_IN;
+    l_EndpointOut = GCA_ENDPOINT_OUT;
+
+    libusb_device* dev = libusb_get_device(l_DeviceHandle);
+    libusb_config_descriptor* config = nullptr;
+    if (dev == nullptr ||
+        libusb_get_active_config_descriptor(dev, &config) != LIBUSB_SUCCESS ||
+        config == nullptr)
+    {
+        PluginDebugMessage(M64MSG_WARNING,
+            "gca_discover_endpoints(): could not read config descriptor; using default endpoints");
+        return;
+    }
+
+    bool foundIn  = false;
+    bool foundOut = false;
+    for (int ifaceIdx = 0; ifaceIdx < config->bNumInterfaces; ifaceIdx++)
+    {
+        const libusb_interface& iface = config->interface[ifaceIdx];
+        for (int alt = 0; alt < iface.num_altsetting; alt++)
+        {
+            const libusb_interface_descriptor& asd = iface.altsetting[alt];
+            for (int ep = 0; ep < asd.bNumEndpoints; ep++)
+            {
+                const libusb_endpoint_descriptor& epd = asd.endpoint[ep];
+                const bool isInterrupt =
+                    (epd.bmAttributes & LIBUSB_TRANSFER_TYPE_MASK) == LIBUSB_TRANSFER_TYPE_INTERRUPT;
+                const bool isIn =
+                    (epd.bEndpointAddress & LIBUSB_ENDPOINT_DIR_MASK) == LIBUSB_ENDPOINT_IN;
+
+                std::ostringstream descMsg;
+                descMsg << "gca_discover_endpoints(): iface=" << (int)asd.bInterfaceNumber
+                        << " class=0x" << std::hex << (int)asd.bInterfaceClass
+                        << " ep_addr=0x" << (int)epd.bEndpointAddress
+                        << " attr=0x" << (int)epd.bmAttributes << std::dec
+                        << (isInterrupt ? " interrupt" : "")
+                        << (isIn ? " IN" : " OUT");
+                PluginDebugMessage(M64MSG_INFO, descMsg.str());
+
+                // Only adopt endpoints from the interface we claim (interface 0).
+                if (asd.bInterfaceNumber != 0 || !isInterrupt)
+                {
+                    continue;
+                }
+                if (isIn)
+                {
+                    l_EndpointIn = epd.bEndpointAddress;
+                    foundIn = true;
+                }
+                else
+                {
+                    l_EndpointOut = epd.bEndpointAddress;
+                    foundOut = true;
+                }
+            }
+        }
+    }
+    libusb_free_config_descriptor(config);
+
+    std::ostringstream epMsg;
+    epMsg << "gca_discover_endpoints(): using in=0x" << std::hex << (int)l_EndpointIn
+          << " out=0x" << (int)l_EndpointOut << std::dec
+          << ((foundIn && foundOut) ? " (discovered)" : " (defaults)");
+    PluginDebugMessage(M64MSG_INFO, epMsg.str());
+}
+
 static bool gca_init(void)
 {
     std::string debugMessage;
@@ -185,9 +265,15 @@ static bool gca_init(void)
         return false;
     }
 
+    // Discover the real interrupt endpoint addresses before talking to the adapter.
+    // The genuine WUP-028 uses IN 0x81 / OUT 0x02, but alt-firmware adapters (HHL GC
+    // Pocket / RP2040) number them differently, which made the hard-coded OUT
+    // transfer below fail with LIBUSB_ERROR_NOT_FOUND.
+    gca_discover_endpoints();
+
     // attempt to begin polling
     uint8_t cmd = GCA_COMMAND_POLL;
-    ret = libusb_interrupt_transfer(l_DeviceHandle, GCA_ENDPOINT_OUT, &cmd, sizeof(cmd), nullptr, 16);
+    ret = libusb_interrupt_transfer(l_DeviceHandle, l_EndpointOut, &cmd, sizeof(cmd), nullptr, 16);
     if (ret != LIBUSB_SUCCESS)
     {
         libusb_release_interface(l_DeviceHandle, 0);
@@ -224,7 +310,7 @@ static void gca_poll_thread(void)
 
     while (l_PollThreadRunning.load(std::memory_order_relaxed))
     {
-        ret = libusb_interrupt_transfer(l_DeviceHandle, GCA_ENDPOINT_IN, readBuf, sizeof(readBuf), &transferred, 16);
+        ret = libusb_interrupt_transfer(l_DeviceHandle, l_EndpointIn, readBuf, sizeof(readBuf), &transferred, 16);
         if (ret == LIBUSB_ERROR_NO_DEVICE)
         {
             debugMessage = "gca_poll_thread(): adapter disconnected, stopping polling thread";
