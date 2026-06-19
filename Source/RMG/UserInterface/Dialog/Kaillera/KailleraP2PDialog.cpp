@@ -39,6 +39,8 @@
 #include <QPainter>
 #include <QPoint>
 #include <QResizeEvent>
+#include <QToolTip>
+#include <QEnterEvent>
 #include <QSettings>
 #include <QSizePolicy>
 #include <QWidgetAction>
@@ -807,13 +809,38 @@ static void configureP2PComboPopup(QComboBox* combo, const QString& theme)
     combo->setView(popupView);
 }
 
+// Info badge label that shows its tooltip immediately on hover via
+// QToolTip::showText, instead of relying on Qt's default hover-rest tooltip. The
+// dialog's m_stepTimer fires every 1ms and continuously churns the UI, which
+// keeps resetting the default tooltip's ~700ms rest timer so it never appears —
+// showing the tooltip explicitly on enter sidesteps that entirely.
+class P2PInfoIconLabel : public QLabel
+{
+public:
+    using QLabel::QLabel;
+
+protected:
+    void enterEvent(QEnterEvent* event) override
+    {
+        QToolTip::showText(event->globalPosition().toPoint(), toolTip(), this, rect());
+        QLabel::enterEvent(event);
+    }
+
+    void leaveEvent(QEvent* event) override
+    {
+        QToolTip::hideText();
+        QLabel::leaveEvent(event);
+    }
+};
+
 // Small circular "i" badge placed next to a session-setting control. Hovering it
 // shows a tooltip explaining the setting. Styled directly (not via the dialog
 // stylesheet, which only applies on the "Modern" theme) and given a fixed size so
 // it's a clearly visible, easy-to-hover target on every theme.
 static QLabel* makeP2PInfoIcon(QWidget* parent, const QString& tooltip)
 {
-    auto* icon = new QLabel(QStringLiteral("i"), parent);
+    auto* icon = new P2PInfoIconLabel(parent);
+    icon->setText(QStringLiteral("i"));
     icon->setObjectName("KailleraP2PInfoIcon");
     icon->setAlignment(Qt::AlignCenter);
     icon->setFixedSize(16, 16);
