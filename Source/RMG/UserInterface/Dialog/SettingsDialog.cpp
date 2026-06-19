@@ -232,6 +232,26 @@ SettingsDialog::SettingsDialog(QWidget *parent, QString file) : QDialog(parent)
     QVBoxLayout* rollbackLayout = new QVBoxLayout(rollbackTab);
     QGroupBox* rollbackLoggingGroupBox = new QGroupBox("Logging", rollbackTab);
     QVBoxLayout* rollbackLoggingLayout = new QVBoxLayout(rollbackLoggingGroupBox);
+
+    // Frame-pacing model selector. Index order must match the Rollback_PacingMode
+    // setting values consumed in rmgk_gekko.cpp (0 = symmetric, 1 = asymmetric).
+    QHBoxLayout* rollbackPacingLayout = new QHBoxLayout();
+    QLabel* rollbackPacingLabel = new QLabel("Time-sync pacing:", rollbackTab);
+    this->rollbackPacingModeComboBox = new QComboBox(rollbackTab);
+    this->rollbackPacingModeComboBox->addItem("Aggressive (symmetric, default)");
+    this->rollbackPacingModeComboBox->addItem("Smooth (asymmetric, Slippi-style)");
+    this->rollbackPacingModeComboBox->setToolTip(
+        "How the rollback engine nudges emulation speed to keep peers in sync.\n\n"
+        "Aggressive (symmetric): recomputes every frame and pulls a drifting client\n"
+        "back hard from either side. Reacts fastest; the player who's ahead sees a\n"
+        "slightly more visible framerate nudge.\n\n"
+        "Smooth (asymmetric, Slippi-style): the behind player speeds up at twice the\n"
+        "authority the ahead player slows down, biased to sit slightly ahead. Keeps\n"
+        "the ahead player near full speed with fewer rollback \"teleports\".\n\n"
+        "Takes effect on the next netplay session.");
+    rollbackPacingLayout->addWidget(rollbackPacingLabel);
+    rollbackPacingLayout->addWidget(this->rollbackPacingModeComboBox, 1);
+
     this->rollbackEnableLocalTestingCheckBox = new QCheckBox("Use rollback engine for local play", rollbackTab);
     this->rollbackVerboseStatsCheckBox = new QCheckBox("Enable verbose rollback stats logging", rollbackLoggingGroupBox);
     this->rollbackStallDiagnosticsCheckBox = new QCheckBox("Log netplay stalls only (lightweight freeze diagnostics)", rollbackLoggingGroupBox);
@@ -242,6 +262,7 @@ SettingsDialog::SettingsDialog(QWidget *parent, QString file) : QDialog(parent)
         "frame. Safe to leave on; one player logging is enough to identify the culprit.");
     this->rollbackVerbosePifInputLoggingCheckBox = new QCheckBox("Enable verbose PIF input logging", rollbackLoggingGroupBox);
     this->rollbackVerboseGlideInputLoggingCheckBox = new QCheckBox("Enable verbose Glide input logging", rollbackLoggingGroupBox);
+    rollbackLayout->addLayout(rollbackPacingLayout);
     rollbackLayout->addWidget(this->rollbackEnableLocalTestingCheckBox);
     rollbackLoggingLayout->addWidget(this->rollbackVerboseStatsCheckBox);
     rollbackLoggingLayout->addWidget(this->rollbackStallDiagnosticsCheckBox);
@@ -984,6 +1005,7 @@ void SettingsDialog::loadInterfaceNetplaySettings(void)
 
 void SettingsDialog::loadRollbackSettings(void)
 {
+    this->rollbackPacingModeComboBox->setCurrentIndex(CoreSettingsGetIntValue(SettingsID::Rollback_PacingMode));
     this->rollbackVerboseStatsCheckBox->setChecked(CoreSettingsGetBoolValue(SettingsID::Rollback_VerboseStats));
     this->rollbackStallDiagnosticsCheckBox->setChecked(CoreSettingsGetBoolValue(SettingsID::Rollback_StallDiagnostics));
     this->rollbackEnableLocalTestingCheckBox->setChecked(CoreSettingsGetBoolValue(SettingsID::Rollback_EnableLocalTesting));
@@ -1201,6 +1223,7 @@ void SettingsDialog::loadDefaultInterfaceNetplaySettings(void)
 
 void SettingsDialog::loadDefaultRollbackSettings(void)
 {
+    this->rollbackPacingModeComboBox->setCurrentIndex(CoreSettingsGetDefaultIntValue(SettingsID::Rollback_PacingMode));
     this->rollbackVerboseStatsCheckBox->setChecked(CoreSettingsGetDefaultBoolValue(SettingsID::Rollback_VerboseStats));
     this->rollbackStallDiagnosticsCheckBox->setChecked(CoreSettingsGetDefaultBoolValue(SettingsID::Rollback_StallDiagnostics));
     this->rollbackEnableLocalTestingCheckBox->setChecked(CoreSettingsGetDefaultBoolValue(SettingsID::Rollback_EnableLocalTesting));
@@ -1476,6 +1499,7 @@ void SettingsDialog::saveInterfaceNetplaySettings(void)
 
 void SettingsDialog::saveRollbackSettings(void)
 {
+    CoreSettingsSetValue(SettingsID::Rollback_PacingMode, this->rollbackPacingModeComboBox->currentIndex());
     CoreSettingsSetValue(SettingsID::Rollback_VerboseStats, this->rollbackVerboseStatsCheckBox->isChecked());
     CoreSettingsSetValue(SettingsID::Rollback_StallDiagnostics, this->rollbackStallDiagnosticsCheckBox->isChecked());
     CoreSettingsSetValue(SettingsID::Rollback_EnableLocalTesting, this->rollbackEnableLocalTestingCheckBox->isChecked());

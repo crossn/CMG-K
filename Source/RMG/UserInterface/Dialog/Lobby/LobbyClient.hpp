@@ -169,6 +169,7 @@ public:
     // out from the same NAT mapping GekkoNet will inherit when it re-binds.
     // Peers silently drop these on their still-open anchor socket.
     void punchPeerEndpoints(const QList<LobbyMatchPeer>& peers);
+    bool syncPrematchManifest(const QList<LobbyMatchPeer>& peers, int localSlot, const QString& romFile, QString& error);
 
 signals:
     void stateChanged(LobbyClient::ConnectionState newState);
@@ -257,6 +258,7 @@ private:
 
     QTimer* m_heartbeatTimer = nullptr;
     QTimer* m_udpKeepaliveTimer = nullptr;
+    bool m_inPrematchSync = false;
 
     // Pending HELLO context
     QString m_pendingUsername;

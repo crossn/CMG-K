@@ -56,7 +56,28 @@ constexpr int kGekkoWaitSleepUs = 100;
 // lines instead of the verbose per-frame firehose.
 constexpr long long kGekkoStallReportThresholdMs = 20;
 constexpr long long kGekkoStallSnapshotIntervalMs = 250;
-// Slippi-style asymmetric time-sync (see project-slippi Ishiiruka,
+
+// ---------------------------------------------------------------------------
+// Frame-pacing / time-sync tuning. Two selectable models share the per-frame
+// lerp + CoreRollbackSetTimesyncScale tail in apply_gekko_frame_pacing(); the
+// active one is chosen per session by g_GekkoPacingMode (the Rollback_PacingMode
+// setting, or the RMGK_GEKKO_PACING_MODE env override). See GekkoPacingMode.
+// ---------------------------------------------------------------------------
+
+// Symmetric ("aggressive") model — the default. Recomputes every frame and
+// pulls a drifting client back hard from either side: a single signed
+// strength*frames_ahead correction clamped to a wide scale window. Reacts fast,
+// at the cost of nudging the ahead player's framerate a touch more visibly.
+constexpr float  kGekkoSymTimesyncDeadzone       = 0.20f;
+constexpr double kGekkoSymTimesyncStrength       = 0.015;
+constexpr double kGekkoSymTimesyncMinScale       = 0.97;
+constexpr double kGekkoSymTimesyncMaxScale       = 1.03;
+constexpr double kGekkoSymTimesyncLerp           = 0.35;
+// Recompute timesync every frame so clients that drift ahead are pulled back
+// immediately instead of waiting on a coarse lockstep interval.
+constexpr int    kGekkoSymTimesyncIntervalFrames = 1;
+
+// Asymmetric (Slippi-style) model (see project-slippi Ishiiruka,
 // EXI_DeviceSlippi.cpp shouldAdvanceOnlineFrame). The behind player speeds up
 // at twice the authority the ahead player slows down, and the deadzone is
 // biased so each client happily sits slightly ahead. This keeps the ahead
@@ -66,19 +87,19 @@ constexpr long long kGekkoStallSnapshotIntervalMs = 250;
 // Slippi works in microseconds of clock offset; we work in gekko_frames_ahead()
 // (signed frames, +ve = local ahead), so the windows/deadzones below are the
 // frame-unit equivalents of Slippi's 8000us / -250us deadzone and 3-frame ramp.
-constexpr float  kGekkoTimesyncAheadDeadzone  = 0.48f;  // tolerate being ahead by ~half a frame
-constexpr float  kGekkoTimesyncBehindDeadzone = 0.015f; // but correct almost immediately when behind
-constexpr double kGekkoTimesyncSpeedUpWindow  = 3.0;    // frames behind to reach full speed-up
-constexpr double kGekkoTimesyncSlowDownWindow = 3.0;    // frames ahead to reach full slow-down
-constexpr double kGekkoTimesyncMaxSpeedUp     = 0.01;   // behind: up to +1.0% (scale -> 1.01)
-constexpr double kGekkoTimesyncMaxSlowDown    = 0.005;  // ahead:  up to -0.5% (scale -> 0.995)
-constexpr double kGekkoTimesyncLerp = 0.15;
-// Sample gekko_frames_ahead() this often when recomputing the target
-// emulation speed. Mirrors Slippi's SLIPPI_ONLINE_LOCKSTEP_INTERVAL (30
-// frames @ 60Hz = once per ~500ms) — single-frame jitter spikes no
-// longer kick the speed scale around; the lerp keeps speed_scale
-// converging toward the cached target on every frame in between.
-constexpr int kGekkoTimesyncIntervalFrames = 30;
+constexpr float  kGekkoAsymTimesyncAheadDeadzone  = 0.48f;  // tolerate being ahead by ~half a frame
+constexpr float  kGekkoAsymTimesyncBehindDeadzone = 0.015f; // but correct almost immediately when behind
+constexpr double kGekkoAsymTimesyncSpeedUpWindow  = 3.0;    // frames behind to reach full speed-up
+constexpr double kGekkoAsymTimesyncSlowDownWindow = 3.0;    // frames ahead to reach full slow-down
+constexpr double kGekkoAsymTimesyncMaxSpeedUp     = 0.01;   // behind: up to +1.0% (scale -> 1.01)
+constexpr double kGekkoAsymTimesyncMaxSlowDown    = 0.005;  // ahead:  up to -0.5% (scale -> 0.995)
+constexpr double kGekkoAsymTimesyncLerp           = 0.15;
+// Sample gekko_frames_ahead() this often when recomputing the target emulation
+// speed in the asymmetric model. Mirrors Slippi's SLIPPI_ONLINE_LOCKSTEP_INTERVAL
+// (30 frames @ 60Hz = once per ~500ms) — single-frame jitter spikes no longer
+// kick the speed scale around; the lerp keeps speed_scale converging toward the
+// cached target on every frame in between.
+constexpr int    kGekkoAsymTimesyncIntervalFrames = 30;
 constexpr size_t kGekkoClientReplayFrames = 600;
 
 #ifdef RMGK_HAVE_GEKKONET
@@ -87,6 +108,17 @@ enum class ClientInputReplayMode
     Off,
     Recording,
     Playing
+};
+
+// Selectable rollback time-sync model. Cached per session in reset_gekko_log()
+// from the Rollback_PacingMode setting (or the RMGK_GEKKO_PACING_MODE env
+// override) so apply_gekko_frame_pacing() — which runs every frame — never hits
+// the settings store on the hot path. The int values are persisted, so keep them
+// stable.
+enum class GekkoPacingMode
+{
+    Symmetric  = 0, // aggressive per-frame correction (default)
+    Asymmetric = 1, // Slippi-style biased correction
 };
 
 struct PendingGekkoSave
@@ -140,11 +172,12 @@ int g_GekkoWaitingLoops = 0;
 int g_GekkoLocalInputLogRepeats = 0;
 int g_GekkoPacingLogFrames = 0;
 double g_GekkoSpeedScale = 1.0;
-// Timesync sample state. Counter wraps every kGekkoTimesyncIntervalFrames
-// to trigger a fresh frames_ahead sample. TargetScale is what g_GekkoSpeedScale
-// lerps toward between samples.
+// Timesync state. TargetScale is recomputed on sample frames (cadence depends on
+// the active pacing mode); SpeedScale lerps toward it so pacing is smooth.
 int g_GekkoTimesyncSampleCounter = 0;
 double g_GekkoTimesyncTargetScale = 1.0;
+// Active frame-pacing model, cached at session start (see GekkoPacingMode).
+GekkoPacingMode g_GekkoPacingMode = GekkoPacingMode::Symmetric;
 bool g_GekkoLogEnabled = false;
 // Lightweight stall diagnostics, independent of verbose logging. Only emits while a
 // rollback session is genuinely stalled (waiting on a peer's input), so the log
@@ -280,6 +313,19 @@ void reset_gekko_log()
     g_GekkoStallLogEnabled = CoreSettingsGetBoolValue(SettingsID::Rollback_StallDiagnostics) ||
         (stallEnv != nullptr && std::strcmp(stallEnv, "0") != 0);
     g_GekkoStallReported = false;
+
+    // Frame-pacing model, cached per session regardless of logging (this runs
+    // before the early-out below). RMGK_GEKKO_PACING_MODE overrides the setting,
+    // mirroring the logging toggles above: "1" = asymmetric, anything else
+    // (incl. unset/"0") = symmetric (the default).
+    const char* pacingEnv = std::getenv("RMGK_GEKKO_PACING_MODE");
+    const int pacingMode = pacingEnv != nullptr
+        ? std::atoi(pacingEnv)
+        : CoreSettingsGetIntValue(SettingsID::Rollback_PacingMode);
+    g_GekkoPacingMode = (pacingMode == static_cast<int>(GekkoPacingMode::Asymmetric))
+        ? GekkoPacingMode::Asymmetric
+        : GekkoPacingMode::Symmetric;
+
     if (!g_GekkoLogEnabled && !g_GekkoStallLogEnabled)
     {
         g_GekkoLogFrames = 0;
@@ -636,7 +682,7 @@ bool submit_local_input()
         uint32_t input = localOnlySession ? physicalInputs[playerIndex] : physicalInputs[0];
         {
             std::lock_guard<std::mutex> lock(g_GekkoClientReplayMutex);
-            if (!localOnlySession && g_GekkoLocalPlayer == 2 && g_GekkoClientReplayMode == ClientInputReplayMode::Recording)
+            if (!localOnlySession && g_GekkoLocalPlayer > 1 && g_GekkoClientReplayMode == ClientInputReplayMode::Recording)
             {
                 g_GekkoClientReplayInputs.push_back(input);
                 if (g_GekkoClientReplayInputs.size() >= kGekkoClientReplayFrames)
@@ -646,7 +692,7 @@ bool submit_local_input()
                     write_gekko_log("client_input_replay mode=playing recorded_frames=600");
                 }
             }
-            else if (!localOnlySession && g_GekkoLocalPlayer == 2 && g_GekkoClientReplayMode == ClientInputReplayMode::Playing &&
+            else if (!localOnlySession && g_GekkoLocalPlayer > 1 && g_GekkoClientReplayMode == ClientInputReplayMode::Playing &&
                 !g_GekkoClientReplayInputs.empty())
             {
                 input = g_GekkoClientReplayInputs[g_GekkoClientReplayIndex++];
@@ -847,36 +893,58 @@ void append_peer_network_stats(std::ostringstream& stream)
 void apply_gekko_frame_pacing()
 {
     // Read frames_ahead every call (cheap, just a member access in
-    // GekkoSession) but only recompute the target scale once per
-    // sampling interval. The per-frame lerp below carries the speed scale
-    // toward the cached target between samples.
+    // GekkoSession) but only recompute the target scale on sample frames. The
+    // per-frame lerp below carries the speed scale toward the cached target
+    // between samples. Both the sample cadence and the target computation depend
+    // on the active pacing model (see GekkoPacingMode); the lerp tail is shared.
     const float framesAhead = gekko_frames_ahead(g_GekkoSession);
+    const bool asymmetric = (g_GekkoPacingMode == GekkoPacingMode::Asymmetric);
+    const int intervalFrames =
+        asymmetric ? kGekkoAsymTimesyncIntervalFrames : kGekkoSymTimesyncIntervalFrames;
+    const double lerp = asymmetric ? kGekkoAsymTimesyncLerp : kGekkoSymTimesyncLerp;
     const bool isSampleFrame =
-        (g_GekkoTimesyncSampleCounter % kGekkoTimesyncIntervalFrames) == 0;
+        (g_GekkoTimesyncSampleCounter % intervalFrames) == 0;
     if (isSampleFrame)
     {
-        // Asymmetric correction: the behind player speeds up at twice the
-        // authority the ahead player slows down, with a deadzone biased toward
-        // sitting slightly ahead. Ramp linearly to the cap over the configured
-        // frame window, matching Slippi's shouldAdvanceOnlineFrame.
-        double deviation = 0.0;
-        if (framesAhead < -kGekkoTimesyncBehindDeadzone)
+        if (asymmetric)
         {
-            const double multiplier =
-                std::min(-static_cast<double>(framesAhead) / kGekkoTimesyncSpeedUpWindow, 1.0);
-            deviation = multiplier * kGekkoTimesyncMaxSpeedUp;
+            // Asymmetric correction: the behind player speeds up at twice the
+            // authority the ahead player slows down, with a deadzone biased
+            // toward sitting slightly ahead. Ramp linearly to the cap over the
+            // configured frame window, matching Slippi's shouldAdvanceOnlineFrame.
+            double deviation = 0.0;
+            if (framesAhead < -kGekkoAsymTimesyncBehindDeadzone)
+            {
+                const double multiplier =
+                    std::min(-static_cast<double>(framesAhead) / kGekkoAsymTimesyncSpeedUpWindow, 1.0);
+                deviation = multiplier * kGekkoAsymTimesyncMaxSpeedUp;
+            }
+            else if (framesAhead > kGekkoAsymTimesyncAheadDeadzone)
+            {
+                const double multiplier =
+                    std::min(static_cast<double>(framesAhead) / kGekkoAsymTimesyncSlowDownWindow, 1.0);
+                deviation = multiplier * -kGekkoAsymTimesyncMaxSlowDown;
+            }
+            g_GekkoTimesyncTargetScale = 1.0 + deviation;
         }
-        else if (framesAhead > kGekkoTimesyncAheadDeadzone)
+        else
         {
-            const double multiplier =
-                std::min(static_cast<double>(framesAhead) / kGekkoTimesyncSlowDownWindow, 1.0);
-            deviation = multiplier * -kGekkoTimesyncMaxSlowDown;
+            // Symmetric correction: a single signed strength*frames_ahead nudge
+            // clamped to a wide scale window, recomputed every frame so a client
+            // drifting ahead is pulled back immediately. Stronger and more
+            // reactive than the asymmetric model.
+            double newTarget = 1.0;
+            if (framesAhead >= kGekkoSymTimesyncDeadzone || framesAhead <= -kGekkoSymTimesyncDeadzone)
+            {
+                newTarget = 1.0 - (static_cast<double>(framesAhead) * kGekkoSymTimesyncStrength);
+                newTarget = std::clamp(newTarget, kGekkoSymTimesyncMinScale, kGekkoSymTimesyncMaxScale);
+            }
+            g_GekkoTimesyncTargetScale = newTarget;
         }
-        g_GekkoTimesyncTargetScale = 1.0 + deviation;
     }
     g_GekkoTimesyncSampleCounter++;
 
-    g_GekkoSpeedScale += (g_GekkoTimesyncTargetScale - g_GekkoSpeedScale) * kGekkoTimesyncLerp;
+    g_GekkoSpeedScale += (g_GekkoTimesyncTargetScale - g_GekkoSpeedScale) * lerp;
     CoreRollbackSetTimesyncScale(g_GekkoSpeedScale);
 
     g_GekkoPacingLogFrames++;
@@ -884,7 +952,8 @@ void apply_gekko_frame_pacing()
         (g_GekkoTimesyncTargetScale != 1.0 || g_GekkoPacingLogFrames <= 10 || (g_GekkoPacingLogFrames % 60) == 0))
     {
         std::ostringstream stream;
-        stream << "pacing frames_ahead=" << std::fixed << std::setprecision(2) << framesAhead
+        stream << "pacing mode=" << (asymmetric ? "asym" : "sym")
+               << " frames_ahead=" << std::fixed << std::setprecision(2) << framesAhead
                << " sample=" << (isSampleFrame ? 1 : 0)
                << " target_scale=" << std::setprecision(4) << g_GekkoTimesyncTargetScale
                << " speed_scale=" << g_GekkoSpeedScale;
@@ -1345,7 +1414,9 @@ int rollback_execute_begin_frame(void* userData)
                            << " last_run_frame_us=" << g_GekkoLastRunFrameUs
                            << " pending_save_us=" << g_GekkoLastPendingSaveUs
                            << " frames_ahead=" << std::fixed << std::setprecision(2)
-                           << gekko_frames_ahead(g_GekkoSession);
+                           << gekko_frames_ahead(g_GekkoSession)
+                           << " target_scale=" << std::setprecision(4) << g_GekkoTimesyncTargetScale
+                           << " speed_scale=" << g_GekkoSpeedScale;
                     if (summaryWaitLoops > 0 || summaryLoadCount > 0)
                     {
                         append_peer_network_stats(stream);
@@ -1732,6 +1803,14 @@ CORE_EXPORT bool rmgk_gekko::start_lobby_session(const char* gameName, int playe
             g_GekkoPlayerHandles[static_cast<size_t>(player - 1)] = handle;
             g_GekkoLocalHandles[static_cast<size_t>(player - 1)] = handle;
             gekko_set_local_delay(g_GekkoSession, handle, static_cast<unsigned char>(clampedLocalDelay));
+            if (g_GekkoLogEnabled)
+            {
+                std::ostringstream stream;
+                stream << "gekko_add_actor result=ok player=" << player
+                       << " type=local handle=" << handle
+                       << " local_delay=" << clampedLocalDelay;
+                write_gekko_log(stream.str());
+            }
         }
         else
         {
@@ -1767,6 +1846,14 @@ CORE_EXPORT bool rmgk_gekko::start_lobby_session(const char* gameName, int playe
                 g_GekkoRemoteHandle = handle;
             }
             g_GekkoPlayerHandles[static_cast<size_t>(player - 1)] = handle;
+            if (g_GekkoLogEnabled)
+            {
+                std::ostringstream stream;
+                stream << "gekko_add_actor result=ok player=" << player
+                       << " type=remote handle=" << handle
+                       << " remote=" << addrString;
+                write_gekko_log(stream.str());
+            }
         }
     }
 
@@ -2198,7 +2285,7 @@ CORE_EXPORT bool rmgk_gekko::debug_run_frame_with_inputs(const uint32_t* inputs,
 CORE_EXPORT bool rmgk_gekko::toggle_client_input_replay()
 {
 #ifdef RMGK_HAVE_GEKKONET
-    if (g_GekkoSession == nullptr || g_GekkoLocalPlayer != 2)
+    if (g_GekkoSession == nullptr || g_GekkoLocalPlayer <= 1)
     {
         return false;
     }

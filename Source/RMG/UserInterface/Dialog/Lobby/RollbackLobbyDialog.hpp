@@ -322,6 +322,7 @@ private:
     quint64  m_currentRoomId = 0;
 
     QString m_currentRoomGame;
+    QString m_currentRoomMd5;
     QString m_currentRoomRegion;
     QString m_currentRoomState;
     int     m_currentRoomDelay      = 2;
