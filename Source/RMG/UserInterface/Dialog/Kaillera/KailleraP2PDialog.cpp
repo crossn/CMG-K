@@ -527,6 +527,15 @@ static QString buildP2PStyleSheet(const QString& theme)
         "  font-size: 11px;"
         "  padding: 0 2px;"
         "}"
+        "QLabel#KailleraP2PInfoIcon {"
+        "  color: %4;"
+        "  border: 1px solid %4;"
+        "  border-radius: 9px;"
+        "  min-width: 16px; max-width: 16px;"
+        "  min-height: 16px; max-height: 16px;"
+        "  font-size: 10px;"
+        "  font-weight: 700;"
+        "}"
         "QLabel#KailleraP2PSectionLabel {"
         "  color: palette(text);"
         "  padding: 2px 0px 0px 0px;"
@@ -805,6 +814,19 @@ static void configureP2PComboPopup(QComboBox* combo, const QString& theme)
         "}").arg(popupColor.name(QColor::HexRgb), borderColor.name(QColor::HexRgb)));
 
     combo->setView(popupView);
+}
+
+// Small circular "i" badge placed next to a session-setting control. Hovering it
+// shows a tooltip explaining the setting; styled via #KailleraP2PInfoIcon so it
+// picks up the muted theme color like the other help text.
+static QLabel* makeP2PInfoIcon(QWidget* parent, const QString& tooltip)
+{
+    auto* icon = new QLabel(QStringLiteral("i"), parent);
+    icon->setObjectName("KailleraP2PInfoIcon");
+    icon->setAlignment(Qt::AlignCenter);
+    icon->setToolTip(tooltip);
+    icon->setCursor(Qt::WhatsThisCursor);
+    return icon;
 }
 
 // Check if a string looks like a NAT traversal code rather than an IP address.
@@ -1349,6 +1371,12 @@ void KailleraP2PDialog::setupUI()
         }
     });
     fdlyLayout->addWidget(m_customFrameDelayCombo);
+    fdlyLayout->addWidget(makeP2PInfoIcon(m_frameDelayRow,
+        "Input delay: frames your inputs are buffered before they take effect.\n\n"
+        "Higher delay smooths online play — the netcode has more slack, so fewer\n"
+        "corrections/rollbacks — at the cost of slightly less responsive controls.\n"
+        "Lower delay feels snappier but reacts worse to a jittery connection.\n\n"
+        "Leave it automatic to track your ping, or pick a fixed amount."));
     fdlyLayout->addStretch();
     hostLayout->addWidget(m_frameDelayRow);
 
@@ -1382,6 +1410,12 @@ void KailleraP2PDialog::setupUI()
         }
     });
     predictionLayout->addWidget(m_predictionWindowCombo);
+    predictionLayout->addWidget(makeP2PInfoIcon(m_hostGroup,
+        "Prediction window: how many frames the netcode guesses the remote player's\n"
+        "input before it has to stall and wait for real input to arrive.\n\n"
+        "Higher tolerates more network jitter without freezing, but a wrong guess\n"
+        "means a larger rollback (a bigger on-screen correction). Default adapts to\n"
+        "the connection."));
     predictionLayout->addStretch();
     hostLayout->addLayout(predictionLayout);
 
@@ -1397,13 +1431,6 @@ void KailleraP2PDialog::setupUI()
     configureP2PComboPopup(m_pacingModeCombo, theme);
     m_pacingModeCombo->addItem("Aggressive", 0);
     m_pacingModeCombo->addItem("Smooth", 1);
-    m_pacingModeCombo->setToolTip(
-        "Time-sync pacing model used to keep both players in lockstep.\n\n"
-        "Aggressive: recomputes every frame and corrects hard from either side.\n"
-        "Reacts fastest; the player who's ahead sees a slightly more visible nudge.\n\n"
-        "Smooth (Slippi-style): the behind player speeds up more than the ahead\n"
-        "player slows, biased to sit slightly ahead — fewer rollback \"teleports\".\n\n"
-        "Set by the host; applies to both players.");
     const int pacingModeIndex = m_pacingModeCombo->findData(m_rollbackPacingMode);
     m_pacingModeCombo->setCurrentIndex(pacingModeIndex >= 0 ? pacingModeIndex : 0);
     connect(m_pacingModeCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this](int index) {
@@ -1413,6 +1440,13 @@ void KailleraP2PDialog::setupUI()
         }
     });
     pacingLayout->addWidget(m_pacingModeCombo);
+    pacingLayout->addWidget(makeP2PInfoIcon(m_hostGroup,
+        "Time-sync pacing model used to keep both players in lockstep.\n\n"
+        "Aggressive: recomputes every frame and corrects hard from either side.\n"
+        "Reacts fastest; the player who's ahead sees a slightly more visible nudge.\n\n"
+        "Smooth (Slippi-style): the behind player speeds up more than the ahead\n"
+        "player slows, biased to sit slightly ahead — fewer rollback \"teleports\".\n\n"
+        "Set by the host; applies to both players."));
     pacingLayout->addStretch();
     hostLayout->addLayout(pacingLayout);
 
