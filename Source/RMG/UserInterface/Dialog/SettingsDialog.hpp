@@ -16,7 +16,6 @@
 #include <QStandardItemModel>
 #include <QHBoxLayout>
 #include <QCheckBox>
-#include <QComboBox>
 #include <QStringList>
 #include <QTreeWidget>
 #include <QDialog>
@@ -69,7 +68,6 @@ class SettingsDialog : public QDialog, private Ui::SettingsDialog
 
     QColor currentBackgroundColor;
     QColor currentTextColor;
-    QComboBox* rollbackPacingModeComboBox = nullptr;
     QCheckBox* rollbackVerboseStatsCheckBox = nullptr;
     QCheckBox* rollbackStallDiagnosticsCheckBox = nullptr;
     QCheckBox* rollbackEnableLocalTestingCheckBox = nullptr;

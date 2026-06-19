@@ -59,6 +59,7 @@ static const char* kGameLayerStandard = "STD";
 static const char* kGameLayerRollback = "RB";
 static const char* kRollbackDelayMessagePrefix = "RMGK:RBDELAY:";
 static const char* kRollbackPredictionMessagePrefix = "RMGK:RBPRED:";
+static const char* kRollbackPacingMessagePrefix = "RMGK:RBPACE:";
 static constexpr int kRollbackDelayModeDefault = 0;
 static constexpr int kRollbackDelayModeLower = 1;
 static constexpr int kRollbackDelayModeHigher = 2;
@@ -1384,6 +1385,37 @@ void KailleraP2PDialog::setupUI()
     predictionLayout->addStretch();
     hostLayout->addLayout(predictionLayout);
 
+    auto* pacingLayout = new QHBoxLayout();
+    pacingLayout->setContentsMargins(0, 0, 0, 0);
+    pacingLayout->setSpacing(6);
+    auto* pacingModeLabel = new QLabel("Pacing:", m_hostGroup);
+    pacingLayout->addWidget(pacingModeLabel);
+    m_pacingModeCombo = new QComboBox(m_hostGroup);
+    m_pacingModeCombo->setObjectName("KailleraP2PCombo");
+    m_pacingModeCombo->setMinimumWidth(120);
+    m_pacingModeCombo->setSizeAdjustPolicy(QComboBox::AdjustToContentsOnFirstShow);
+    configureP2PComboPopup(m_pacingModeCombo, theme);
+    m_pacingModeCombo->addItem("Aggressive", 0);
+    m_pacingModeCombo->addItem("Smooth", 1);
+    m_pacingModeCombo->setToolTip(
+        "Time-sync pacing model used to keep both players in lockstep.\n\n"
+        "Aggressive: recomputes every frame and corrects hard from either side.\n"
+        "Reacts fastest; the player who's ahead sees a slightly more visible nudge.\n\n"
+        "Smooth (Slippi-style): the behind player speeds up more than the ahead\n"
+        "player slows, biased to sit slightly ahead — fewer rollback \"teleports\".\n\n"
+        "Set by the host; applies to both players.");
+    const int pacingModeIndex = m_pacingModeCombo->findData(m_rollbackPacingMode);
+    m_pacingModeCombo->setCurrentIndex(pacingModeIndex >= 0 ? pacingModeIndex : 0);
+    connect(m_pacingModeCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this](int index) {
+        if (canEditRollbackPacingSettings() && m_pacingModeCombo != nullptr && index >= 0)
+        {
+            setRollbackPacingMode(m_pacingModeCombo->itemData(index).toInt(), m_isHost, true);
+        }
+    });
+    pacingLayout->addWidget(m_pacingModeCombo);
+    pacingLayout->addStretch();
+    hostLayout->addLayout(pacingLayout);
+
     if (m_isHost)
     {
         auto* publicLobbyRow = new QHBoxLayout();
@@ -1424,9 +1456,11 @@ void KailleraP2PDialog::setupUI()
 
     const int formLabelWidth = std::max(
         m_frameDelayLabel->sizeHint().width(),
-        predictionWindowLabel->sizeHint().width());
+        std::max(predictionWindowLabel->sizeHint().width(),
+                 pacingModeLabel->sizeHint().width()));
     m_frameDelayLabel->setMinimumWidth(formLabelWidth);
     predictionWindowLabel->setMinimumWidth(formLabelWidth);
+    pacingModeLabel->setMinimumWidth(formLabelWidth);
 
     const QMargins hostMargins = hostLayout->contentsMargins();
     m_frameDelayLabel->setText(isRollbackMode() ? "Input Delay:" : "Frame Delay:");
@@ -1590,6 +1624,93 @@ bool KailleraP2PDialog::canEditRollbackPredictionSettings() const
     return m_isHost || !m_hasRemoteRollbackPredictionSettings;
 }
 
+bool KailleraP2PDialog::canEditRollbackPacingSettings() const
+{
+    return m_isHost || !m_hasRemoteRollbackPacingSettings;
+}
+
+void KailleraP2PDialog::sendRollbackPacingSettings(bool force)
+{
+    if (!m_isHost || !isRollbackMode() || !p2p_is_connected() ||
+        m_rollbackGameActive || n02::isGameRunning())
+    {
+        return;
+    }
+
+    const int pacingMode = (m_rollbackPacingMode == 1) ? 1 : 0;
+    if (!force && m_hasSentRollbackPacingSettings &&
+        m_lastSentRollbackPacingMode == pacingMode)
+    {
+        return;
+    }
+
+    QByteArray message = QByteArray(kRollbackPacingMessagePrefix) +
+        QByteArray::number(pacingMode);
+    p2p_send_chat(message.data());
+
+    m_hasSentRollbackPacingSettings = true;
+    m_lastSentRollbackPacingMode = pacingMode;
+}
+
+bool KailleraP2PDialog::parseRollbackPacingMessage(const QString& message, int& pacingMode) const
+{
+    QString text = message.trimmed().toUpper();
+    if (!text.startsWith(kRollbackPacingMessagePrefix))
+    {
+        return false;
+    }
+
+    text = text.mid(QString(kRollbackPacingMessagePrefix).size());
+    bool ok = false;
+    const int parsedPacingMode = text.toInt(&ok);
+    pacingMode = (ok && parsedPacingMode == 1) ? 1 : 0;
+    return true;
+}
+
+void KailleraP2PDialog::setRollbackPacingMode(int mode, bool announceToPeer, bool resetReady)
+{
+    mode = (mode == 1) ? 1 : 0;
+    const bool changed = (m_rollbackPacingMode != mode);
+    m_rollbackPacingMode = mode;
+
+    if (canEditRollbackPacingSettings())
+    {
+        // Pacing is applied by reset_gekko_log() reading the engine setting, so
+        // persist it there (and to disk) the moment the host picks it.
+        CoreSettingsSetValue(SettingsID::Rollback_PacingMode, m_rollbackPacingMode);
+        CoreSettingsSave();
+    }
+
+    updateRollbackPacingControls();
+
+    if (changed && resetReady)
+    {
+        resetReadyState();
+    }
+    if (changed && announceToPeer)
+    {
+        sendRollbackPacingSettings(true);
+    }
+}
+
+void KailleraP2PDialog::updateRollbackPacingControls()
+{
+    if (m_pacingModeCombo == nullptr)
+    {
+        return;
+    }
+
+    const bool inGame = (isRollbackMode() && m_rollbackGameActive) || n02::isGameRunning();
+    const bool blocked = m_pacingModeCombo->blockSignals(true);
+    const int index = m_pacingModeCombo->findData((m_rollbackPacingMode == 1) ? 1 : 0);
+    if (index >= 0)
+    {
+        m_pacingModeCombo->setCurrentIndex(index);
+    }
+    m_pacingModeCombo->setEnabled(isRollbackMode() && canEditRollbackPacingSettings() && !inGame);
+    m_pacingModeCombo->blockSignals(blocked);
+}
+
 void KailleraP2PDialog::loadLocalRollbackSettings()
 {
     QSettings settings("RMG-K", "n02");
@@ -1600,6 +1721,10 @@ void KailleraP2PDialog::loadLocalRollbackSettings()
     m_rollbackFrameDelay = m_customRollbackFrameDelay;
     m_rollbackPredictionWindow = normalizeRollbackPredictionWindow(
         settings.value("Rollback_PredictionWindow", 0).toInt());
+    // Pacing rides the engine's own setting (read by reset_gekko_log) rather than
+    // the dialog's n02 QSettings, so it stays the single source of truth.
+    m_rollbackPacingMode =
+        CoreSettingsGetIntValue(SettingsID::Rollback_PacingMode) == 1 ? 1 : 0;
 }
 
 void KailleraP2PDialog::appendChatHtml(const QString& html, bool debug)
@@ -2373,6 +2498,7 @@ void KailleraP2PDialog::setGameLayer(GameLayer layer, bool announceToPeer, bool 
         sendGameLayer();
         sendRollbackDelaySettings(true);
         sendRollbackPredictionSettings(true);
+        sendRollbackPacingSettings(true);
     }
 }
 
@@ -2482,6 +2608,7 @@ void KailleraP2PDialog::applyGameLayerUI()
         m_rollbackLayerButton->setEnabled(m_isHost && !inGame);
     }
     updateRollbackPredictionControls();
+    updateRollbackPacingControls();
     updateNetcodeModeStatus();
     updatePeerConnectionUI();
 }
@@ -3069,6 +3196,22 @@ void KailleraP2PDialog::onChatReceived(QString nick, QString message)
         return;
     }
 
+    int rollbackPacingMode = 0;
+    if (parseRollbackPacingMessage(message, rollbackPacingMode))
+    {
+        if (!m_isHost)
+        {
+            m_rollbackPacingMode = rollbackPacingMode;
+            m_hasRemoteRollbackPacingSettings = true;
+            // Apply the host's pacing for this session so reset_gekko_log() picks
+            // it up. In-memory only (no CoreSettingsSave) so the joiner's own saved
+            // default isn't permanently overwritten by the host's choice.
+            CoreSettingsSetValue(SettingsID::Rollback_PacingMode, m_rollbackPacingMode);
+            updateRollbackPacingControls();
+        }
+        return;
+    }
+
     appendChatHtml("<b>" + nick.toHtmlEscaped() + ":</b> " + message.toHtmlEscaped(), false);
 }
 
@@ -3328,6 +3471,7 @@ void KailleraP2PDialog::onPeerJoined()
     sendGameLayer();
     sendRollbackDelaySettings(true);
     sendRollbackPredictionSettings(true);
+    sendRollbackPacingSettings(true);
     m_travHostPeerIp.clear();
     m_travHostPeerPort = 0;
     m_travHostPeerDeadlineMs = 0;
@@ -3376,15 +3520,18 @@ void KailleraP2PDialog::onPeerLeft()
     m_lastPing = -1;
     m_hasRemoteRollbackDelaySettings = false;
     m_hasRemoteRollbackPredictionSettings = false;
+    m_hasRemoteRollbackPacingSettings = false;
     if (!m_isHost)
     {
         loadLocalRollbackSettings();
     }
     m_hasSentRollbackDelaySettings = false;
     m_hasSentRollbackPredictionSettings = false;
+    m_hasSentRollbackPacingSettings = false;
     m_lastSentRollbackDelayMode = -1;
     m_lastSentRollbackFrameDelay = -1;
     m_lastSentRollbackPredictionWindow = -1;
+    m_lastSentRollbackPacingMode = -1;
     if (isRollbackMode())
     {
         updateRollbackDelayControls();
@@ -3404,6 +3551,7 @@ void KailleraP2PDialog::onPeerLeft()
         });
     }
     updateRollbackPredictionControls();
+    updateRollbackPacingControls();
     if (!kickedPeer)
     {
         appendPeerLeftNotice(departedName);
@@ -3479,11 +3627,14 @@ void KailleraP2PDialog::resetClientConnectionAttemptState()
     m_lastPing = -1;
     m_hasRemoteRollbackDelaySettings = false;
     m_hasRemoteRollbackPredictionSettings = false;
+    m_hasRemoteRollbackPacingSettings = false;
     m_hasSentRollbackDelaySettings = false;
     m_hasSentRollbackPredictionSettings = false;
+    m_hasSentRollbackPacingSettings = false;
     m_lastSentRollbackDelayMode = -1;
     m_lastSentRollbackFrameDelay = -1;
     m_lastSentRollbackPredictionWindow = -1;
+    m_lastSentRollbackPacingMode = -1;
 
     m_travJoinEnabled = false;
     m_travNextJoinMs = 0;
@@ -3517,6 +3668,7 @@ void KailleraP2PDialog::resetClientConnectionAttemptState()
         updateRollbackDelayControls();
     }
     updateRollbackPredictionControls();
+    updateRollbackPacingControls();
 }
 
 void KailleraP2PDialog::beginTraversalJoinAttempt()
@@ -3635,6 +3787,7 @@ void KailleraP2PDialog::onReady()
         sendGameLayer();
         sendRollbackDelaySettings(true);
         sendRollbackPredictionSettings(true);
+        sendRollbackPacingSettings(true);
     }
 
     m_ready = (m_btnReady != nullptr) ? m_btnReady->isChecked() : !m_ready;
