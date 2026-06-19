@@ -527,15 +527,6 @@ static QString buildP2PStyleSheet(const QString& theme)
         "  font-size: 11px;"
         "  padding: 0 2px;"
         "}"
-        "QLabel#KailleraP2PInfoIcon {"
-        "  color: %4;"
-        "  border: 1px solid %4;"
-        "  border-radius: 9px;"
-        "  min-width: 16px; max-width: 16px;"
-        "  min-height: 16px; max-height: 16px;"
-        "  font-size: 10px;"
-        "  font-weight: 700;"
-        "}"
         "QLabel#KailleraP2PSectionLabel {"
         "  color: palette(text);"
         "  padding: 2px 0px 0px 0px;"
@@ -817,15 +808,25 @@ static void configureP2PComboPopup(QComboBox* combo, const QString& theme)
 }
 
 // Small circular "i" badge placed next to a session-setting control. Hovering it
-// shows a tooltip explaining the setting; styled via #KailleraP2PInfoIcon so it
-// picks up the muted theme color like the other help text.
+// shows a tooltip explaining the setting. Styled directly (not via the dialog
+// stylesheet, which only applies on the "Modern" theme) and given a fixed size so
+// it's a clearly visible, easy-to-hover target on every theme.
 static QLabel* makeP2PInfoIcon(QWidget* parent, const QString& tooltip)
 {
     auto* icon = new QLabel(QStringLiteral("i"), parent);
     icon->setObjectName("KailleraP2PInfoIcon");
     icon->setAlignment(Qt::AlignCenter);
+    icon->setFixedSize(16, 16);
     icon->setToolTip(tooltip);
     icon->setCursor(Qt::WhatsThisCursor);
+    icon->setStyleSheet(
+        "QLabel {"
+        "  color: palette(window-text);"
+        "  border: 1px solid palette(mid);"
+        "  border-radius: 8px;"
+        "  font-size: 10px;"
+        "  font-weight: bold;"
+        "}");
     return icon;
 }
 
