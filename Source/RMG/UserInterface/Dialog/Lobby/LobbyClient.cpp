@@ -1091,7 +1091,7 @@ void LobbyClient::requestChatHistory(const QString& channel)
 
 void LobbyClient::createRoom(const QString& name, const QString& romName, const QString& romMd5,
                               const QString& romRegion, int maxPlayers, int delay, int prediction,
-                              const QString& password)
+                              int pacing, const QString& password)
 {
     QJsonObject rom;
     rom["name"]   = romName;
@@ -1104,6 +1104,7 @@ void LobbyClient::createRoom(const QString& name, const QString& romName, const 
     d["maxPlayers"] = maxPlayers;
     d["delay"]      = delay;
     d["prediction"] = prediction;
+    d["pacing"]     = pacing;
     if (!password.isEmpty())
         d["password"] = password;
 
@@ -1133,11 +1134,12 @@ void LobbyClient::startRoom()
 // ROOM_UPDATE_SETTINGS handler validates (host, state == "waiting"), clamps,
 // and rebroadcasts ROOM_STATE with the new values + auto flags so every seated
 // client picks them up and the match starts on the resolved delay.
-void LobbyClient::updateRoomSettings(int delay, int prediction, bool delayAuto, bool predictionAuto)
+void LobbyClient::updateRoomSettings(int delay, int prediction, int pacing, bool delayAuto, bool predictionAuto)
 {
     QJsonObject d;
     d["delay"]          = delay;
     d["prediction"]     = prediction;
+    d["pacing"]         = pacing;
     d["delayAuto"]      = delayAuto;
     d["predictionAuto"] = predictionAuto;
     sendEnvelope("ROOM_UPDATE_SETTINGS", d);

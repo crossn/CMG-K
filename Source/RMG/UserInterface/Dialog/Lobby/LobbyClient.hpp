@@ -118,17 +118,17 @@ public:
     // Rooms
     void createRoom(const QString& name, const QString& romName, const QString& romMd5,
                     const QString& romRegion, int maxPlayers, int delay, int prediction,
-                    const QString& password = QString());
+                    int pacing, const QString& password = QString());
     void joinRoom(quint64 roomId, const QString& password = QString());
     void leaveRoom();
     void startRoom();
     void kickFromRoom(quint64 userId);
 
-    // Host-only: change the room's rollback delay / prediction. The *Auto flags
-    // tell the server whether each value is host-Auto-driven so non-hosts can
-    // mirror the host's label. Server must ack with a fresh ROOM_STATE so all
-    // seated peers stay in sync.
-    void updateRoomSettings(int delay, int prediction, bool delayAuto, bool predictionAuto);
+    // Host-only: change the room's rollback delay / prediction / pacing. The
+    // *Auto flags tell the server whether delay/prediction are host-Auto-driven
+    // so non-hosts can mirror the host's label (pacing has no Auto). Server must
+    // ack with a fresh ROOM_STATE so all seated peers stay in sync.
+    void updateRoomSettings(int delay, int prediction, int pacing, bool delayAuto, bool predictionAuto);
 
     // Ping probe — server replies with target's UDP endpoint; client probes directly.
     void requestPingProbe(quint64 targetUserId);

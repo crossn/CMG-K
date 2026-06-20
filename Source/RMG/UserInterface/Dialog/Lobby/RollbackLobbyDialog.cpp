@@ -679,6 +679,25 @@ QWidget* RollbackLobbyDialog::buildInRoomView()
     settingsRow->addWidget(predLbl);
     settingsRow->addWidget(m_predictionCombo);
 
+    settingsRow->addSpacing(SPACING_DEFAULT * 2);
+
+    const QString pacingTip = QStringLiteral(
+        "Time-sync pacing model used to keep all seats in lockstep.\n"
+        "Aggressive: corrects hard every frame; snappiest, slightly more visible\n"
+        "speed nudges for whoever's ahead.\n"
+        "Smooth (Slippi-style): gentler, biased to sit slightly ahead — fewer\n"
+        "rollback \"teleports\".\n"
+        "\n"
+        "Host-only. All players will use the same model.");
+    auto* pacingLbl = new QLabel("Pacing:", this);
+    m_pacingCombo = new QComboBox(this);
+    m_pacingCombo->addItem("Aggressive", 0);
+    m_pacingCombo->addItem("Smooth", 1);
+    m_pacingCombo->setToolTip(pacingTip);
+    m_pacingCombo->setProperty("originalTip", pacingTip);
+    settingsRow->addWidget(pacingLbl);
+    settingsRow->addWidget(m_pacingCombo);
+
     settingsRow->addStretch(1);
 
     // Per-player local recording toggle. Sits on the (otherwise host-only)
@@ -728,6 +747,7 @@ QWidget* RollbackLobbyDialog::buildInRoomView()
     };
     connect(m_delayCombo,      QOverload<int>::of(&QComboBox::currentIndexChanged), this, pushSettings);
     connect(m_predictionCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, pushSettings);
+    connect(m_pacingCombo,     QOverload<int>::of(&QComboBox::currentIndexChanged), this, pushSettings);
 
     // ── Seats — bold section header + vertical player-list rows ──
     auto* seatsHeader = new QLabel("SEATS", this);
@@ -1607,6 +1627,9 @@ void RollbackLobbyDialog::onCreateRoomClicked()
 void RollbackLobbyDialog::onRoomCreateRequested()
 {
     if (!m_createRoomDialog) return;
+    // Seed the new room's pacing from the host's saved engine setting; the host
+    // can change it in-room via the pacing combo (like delay/prediction).
+    const int pacing = CoreSettingsGetIntValue(SettingsID::Rollback_PacingMode) == 1 ? 1 : 0;
     m_client->createRoom(
         m_createRoomDialog->name(),
         m_createRoomDialog->romName(),
@@ -1615,6 +1638,7 @@ void RollbackLobbyDialog::onRoomCreateRequested()
         m_createRoomDialog->maxPlayers(),
         m_createRoomDialog->delay(),
         m_createRoomDialog->prediction(),
+        pacing,
         m_createRoomDialog->password());
 }
 
@@ -1795,6 +1819,7 @@ void RollbackLobbyDialog::onRoomStateChanged(const QJsonObject& roomState)
     const QString romRegion = rom.value("region").toString();
     const int delay = roomState.value("delay").toInt();
     const int prediction = roomState.value("prediction").toInt();
+    const int pacing = roomState.value("pacing").toInt() == 1 ? 1 : 0;
     // Whether the host left each value on "Auto" — lets non-hosts mirror the
     // host's "Auto (N f)" / "Default" labels instead of a bare number.
     const bool roomDelayAuto = roomState.value("delayAuto").toBool();
@@ -1809,7 +1834,13 @@ void RollbackLobbyDialog::onRoomStateChanged(const QJsonObject& roomState)
     m_currentRoomRegion     = romRegion;
     m_currentRoomDelay      = delay;
     m_currentRoomPrediction = prediction;
+    m_currentRoomPacing     = pacing;
     m_currentRoomHostId     = hostId;
+
+    // Pacing is host-authoritative and applies to every seat. Mirror it into the
+    // engine setting now (host included) so the match starts on the room's model;
+    // reset_gekko_log() reads Rollback_PacingMode when the session begins.
+    CoreSettingsSetValue(SettingsID::Rollback_PacingMode, pacing);
 
     // Auto-stop emulation if the room transitioned out of in_game while we
     // still had a live local match (host dropped it for everyone).
@@ -1867,7 +1898,7 @@ void RollbackLobbyDialog::onRoomStateChanged(const QJsonObject& roomState)
     // Suppress the currentIndexChanged signal during the assignment so the
     // combo doesn't immediately re-send an UPDATE for the same value we
     // just received from the server.
-    if (m_delayCombo && m_predictionCombo)
+    if (m_delayCombo && m_predictionCombo && m_pacingCombo)
     {
         static const QString tipDisabledNotHost = QStringLiteral(
             "Only the host can change rollback settings.");
@@ -1899,11 +1930,15 @@ void RollbackLobbyDialog::onRoomStateChanged(const QJsonObject& roomState)
             m_predictionCombo->setCurrentIndex(m_predictionCombo->findData(0));
         else
             m_predictionCombo->setCurrentIndex(pickIndex(m_predictionCombo, prediction));
+        // Pacing is a plain 2-choice value (no Auto): mirror the room's value on
+        // every seat.
+        m_pacingCombo->setCurrentIndex(pickIndex(m_pacingCombo, pacing));
         // Keep the delay "Auto" entry's label showing the live resolved value.
         // (Prediction's "Default" entry is a plain, fixed label.)
         setAutoComboLabel(m_delayCombo, delay);
         m_delayCombo->setEnabled(editable);
         m_predictionCombo->setEnabled(editable);
+        m_pacingCombo->setEnabled(editable);
 
         const QString delayTip = editable
             ? m_delayCombo->property("originalTip").toString()
@@ -1911,8 +1946,12 @@ void RollbackLobbyDialog::onRoomStateChanged(const QJsonObject& roomState)
         const QString predTip = editable
             ? m_predictionCombo->property("originalTip").toString()
             : (iAmHost ? tipDisabledMidMatch : tipDisabledNotHost);
+        const QString pacingTip = editable
+            ? m_pacingCombo->property("originalTip").toString()
+            : (iAmHost ? tipDisabledMidMatch : tipDisabledNotHost);
         m_delayCombo->setToolTip(delayTip);
         m_predictionCombo->setToolTip(predTip);
+        m_pacingCombo->setToolTip(pacingTip);
         m_suppressSettingsSignal = false;
     }
 
@@ -2156,7 +2195,7 @@ int RollbackLobbyDialog::worstSeatPingMs() const
 
 void RollbackLobbyDialog::applyHostRoomSettings(bool force)
 {
-    if (m_currentRoomId == 0 || !m_client || !m_delayCombo || !m_predictionCombo)
+    if (m_currentRoomId == 0 || !m_client || !m_delayCombo || !m_predictionCombo || !m_pacingCombo)
         return;
     // The delay combo is enabled only for the host of a waiting room, so its
     // enabled state doubles as the "I'm allowed to push settings now" gate.
@@ -2169,23 +2208,27 @@ void RollbackLobbyDialog::applyHostRoomSettings(bool force)
     const int effPred = m_predictionAuto
         ? kAutoPredictionWindow
         : m_predictionCombo->currentData().toInt();
+    const int effPacing = m_pacingCombo->currentData().toInt() == 1 ? 1 : 0;
 
     // Delay's "Auto" entry shows the resolved value, e.g. "Auto (4 f)".
     // Prediction's "Default" entry stays a plain label (always 7, not ping-based).
     if (m_delayAuto) setAutoComboLabel(m_delayCombo, effDelay);
 
-    if (!force && effDelay == m_currentRoomDelay && effPred == m_currentRoomPrediction)
+    if (!force && effDelay == m_currentRoomDelay && effPred == m_currentRoomPrediction &&
+        effPacing == m_currentRoomPacing)
         return;
 
-    m_client->updateRoomSettings(effDelay, effPred, m_delayAuto, m_predictionAuto);
+    m_client->updateRoomSettings(effDelay, effPred, effPacing, m_delayAuto, m_predictionAuto);
 
     // Persist the concrete resolved values (never the Auto sentinel 0) so
-    // CreateRoomDialog seeds a valid delay/prediction for the next room.
+    // CreateRoomDialog seeds a valid delay/prediction for the next room. Pacing
+    // also rides the engine setting so a freshly created room defaults to it.
     QSettings s;
     s.beginGroup("Lobby/CreateRoom");
     s.setValue("Delay",      effDelay);
     s.setValue("Prediction", effPred);
     s.endGroup();
+    CoreSettingsSetValue(SettingsID::Rollback_PacingMode, effPacing);
 }
 
 void RollbackLobbyDialog::onRoomLeft(const QString& reason)
@@ -2203,6 +2246,7 @@ void RollbackLobbyDialog::onRoomLeft(const QString& reason)
     m_currentRoomState.clear();
     m_currentRoomDelay = 2;
     m_currentRoomPrediction = 7;
+    m_currentRoomPacing = 0;
     m_currentRoomHostId = 0;
     m_currentMatchId = 0;
     m_awaitingEmulationStart = false;
@@ -2694,6 +2738,11 @@ void RollbackLobbyDialog::onMatchBegin(quint64 matchId, const QList<LobbyClient:
             m_currentRoomPrediction);
         CoreAddCallbackMessage(CoreDebugMessageType::Info, buf);
     }
+
+    // Pacing isn't threaded through matchReady — the engine reads it from the
+    // Rollback_PacingMode setting at session start. Set it from the room's value
+    // here so the match definitively runs the host-selected model.
+    CoreSettingsSetValue(SettingsID::Rollback_PacingMode, m_currentRoomPacing);
 
     // Defer the emit so the OS finishes releasing the anchor port before
     // GekkoNet attempts to bind it. 100ms is plenty on Windows for an UDP
