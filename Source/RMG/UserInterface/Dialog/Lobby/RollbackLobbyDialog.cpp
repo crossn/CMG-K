@@ -48,6 +48,7 @@
 #include <QTreeWidget>
 #include <QHeaderView>
 #include <QTabWidget>
+#include <QTabBar>
 #include <QTextEdit>
 #include <QLineEdit>
 #include <QJsonArray>
@@ -62,6 +63,7 @@
 #include <QDateTime>
 #include <QShowEvent>
 #include <QCloseEvent>
+#include <QMouseEvent>
 #include <QTimer>
 #include <QFont>
 #include <QUrl>
@@ -103,6 +105,40 @@ void setAutoComboLabel(QComboBox* combo, int resolved)
     const int idx = combo->findData(0);
     if (idx >= 0) combo->setItemText(idx, QStringLiteral("Auto (%1 f)").arg(resolved));
 }
+
+// Tab bar where every tab is half the column wide: one tab → 50% (the right
+// half stays empty), two tabs → 50% each = 100%. So the "Lobby" tab keeps the
+// same width whether or not a "Room" tab is present. Never narrower than the
+// tab's own content, so labels never clip on a very narrow column.
+class HalfWidthTabBar : public QTabBar
+{
+public:
+    using QTabBar::QTabBar;
+protected:
+    QSize tabSizeHint(int index) const override
+    {
+        QSize hint = QTabBar::tabSizeHint(index);
+        const int avail = parentWidget() ? parentWidget()->width() : width();
+        if (avail > 0)
+            hint.setWidth(qMax(hint.width(), avail / 2));
+        return hint;
+    }
+};
+
+// QTabWidget that installs the HalfWidthTabBar. setTabBar()/tabBar() are
+// protected on QTabWidget, so the custom bar has to be wired up from inside a
+// subclass rather than after construction.
+class ChatTabWidget : public QTabWidget
+{
+public:
+    explicit ChatTabWidget(QWidget* parent = nullptr) : QTabWidget(parent)
+    {
+        auto* bar = new HalfWidthTabBar(this);
+        bar->setExpanding(false);   // a lone tab must stay 50%, not stretch
+        bar->setDrawBase(false);    // no full-width base line under the tabs
+        setTabBar(bar);
+    }
+};
 } // namespace
 
 // ──────────────────────────────────────────────────────────────────────
@@ -166,6 +202,108 @@ namespace
             case LobbyClient::ConnectionState::Failed:         return c.fail;
             default:                                           return c.idle;
         }
+    }
+
+    // ── Per-player / per-state / per-ping accents ──────────────────────
+    // Distinct seat colors so P1-P4 read apart at a glance (P1 blue,
+    // P2 red, P3 green, P4 amber — a Smash/Mario-Kart-style set). Light
+    // and dark variants keep contrast on both themes; brightness mirrors
+    // the way statusColors() picks Material 500 on dark / 800 on light.
+    QString playerAccentHex(int slot, bool dark)
+    {
+        switch (slot)
+        {
+            case 1: return dark ? "#4aa3ff" : "#0078D7"; // blue
+            case 2: return dark ? "#ff6b66" : "#d83a34"; // red
+            case 3: return dark ? "#4caf50" : "#2e9e3f"; // green
+            case 4: return dark ? "#ffca45" : "#b5790a"; // amber
+            default: return dark ? "#bdbdbd" : "#9e9e9e";
+        }
+    }
+
+    // Soft accent-tinted fill for the seat card. rgba so it sits gently over
+    // palette(base) on either theme — heavier on dark where a faint wash
+    // would vanish.
+    QString playerCardBg(int slot, bool dark)
+    {
+        struct RGB { int r, g, b; };
+        RGB c;
+        switch (slot)
+        {
+            case 1: c = dark ? RGB{74, 163, 255} : RGB{0, 120, 215};  break;
+            case 2: c = dark ? RGB{255, 107, 102} : RGB{216, 58, 52}; break;
+            case 3: c = dark ? RGB{76, 175, 80} : RGB{46, 158, 63};   break;
+            case 4: c = dark ? RGB{255, 202, 69} : RGB{181, 121, 10}; break;
+            default: c = RGB{128, 128, 128}; break;
+        }
+        return QString("rgba(%1, %2, %3, %4)")
+            .arg(c.r).arg(c.g).arg(c.b)
+            .arg(dark ? "0.14" : "0.08");
+    }
+
+    // Same accent at a stronger alpha for the card's hairline border.
+    QString playerBorderRgba(int slot, bool dark)
+    {
+        struct RGB { int r, g, b; };
+        RGB c;
+        switch (slot)
+        {
+            case 1: c = dark ? RGB{74, 163, 255} : RGB{0, 120, 215};  break;
+            case 2: c = dark ? RGB{255, 107, 102} : RGB{216, 58, 52}; break;
+            case 3: c = dark ? RGB{76, 175, 80} : RGB{46, 158, 63};   break;
+            case 4: c = dark ? RGB{255, 202, 69} : RGB{181, 121, 10}; break;
+            default: c = RGB{128, 128, 128}; break;
+        }
+        return QString("rgba(%1, %2, %3, 0.55)").arg(c.r).arg(c.g).arg(c.b);
+    }
+
+    // Ping quality tiers: green good, amber playable, red rough, grey unknown.
+    // (statusColors() already resolves the active theme.)
+    QString pingHex(int ms)
+    {
+        const auto c = statusColors();
+        if (ms < 0)   return c.idle; // no measurement yet
+        if (ms <= 60) return c.ok;
+        if (ms <= 120) return c.wait;
+        return c.fail;
+    }
+
+    // Color for a presence/room state string (the values stateGlyph maps).
+    QString stateHex(const QString& state, bool dark)
+    {
+        const auto c = statusColors();
+        if (state == "idle" || state == "waiting")          return c.ok;
+        if (state == "hosting" || state == "in_room")       return dark ? "#4aa3ff" : "#0078D7";
+        if (state == "searching" || state == "starting" ||
+            state == "connecting")                          return c.wait;
+        if (state == "playing" || state == "in_game")       return dark ? "#b78cff" : "#7a44c9"; // purple
+        if (state == "spectating")                          return dark ? "#4aa3ff" : "#0078D7";
+        if (state == "browsing")                            return c.idle;
+        return c.idle;
+    }
+
+    // Right-aligned seat meta as rich text: an accent-colored HOST badge and a
+    // ping-tier-colored "N ms". Shared by renderSeatFilled and the live ping
+    // refresh in onPingMeasured so the two never drift. pingMs < 0 hides ping.
+    QString seatMetaHtml(int slot, bool isHost, int pingMs, bool dark)
+    {
+        QStringList parts;
+        if (isHost)
+            parts << QString("<span style='color:%1; font-weight:700;'>HOST</span>")
+                         .arg(playerAccentHex(slot, dark));
+        if (pingMs >= 0)
+            parts << QString("<span style='color:%1; font-weight:600;'>%2 ms</span>")
+                         .arg(pingHex(pingMs)).arg(pingMs);
+        return parts.join(QStringLiteral("&nbsp;·&nbsp;"));
+    }
+
+    // A translucent fill derived from a solid hex — used for the soft pill /
+    // badge backgrounds so an accent reads gently over palette(window/base).
+    QString tintRgba(const QString& hex, double alpha)
+    {
+        const QColor c(hex);
+        return QString("rgba(%1, %2, %3, %4)")
+            .arg(c.red()).arg(c.green()).arg(c.blue()).arg(alpha);
     }
 
     // Apply a +N point delta to the widget's font. Used to bump section
@@ -419,15 +557,26 @@ QWidget* RollbackLobbyDialog::buildMarquee()
 
     h->addSpacing(SPACING_DEFAULT);
 
-    m_statusLed = new QLabel(this);
+    // Connection status: a colored LED dot + status-colored label. No filled
+    // pill background — just the dot and text follow the connection state
+    // (set in updateStatusIndicator).
+    m_statusPill = new QFrame(this);
+    m_statusPill->setObjectName("StatusPill");
+    auto* pillLay = new QHBoxLayout(m_statusPill);
+    pillLay->setContentsMargins(0, 0, 0, 0);
+    pillLay->setSpacing(SPACING_TIGHT + 2);
+
+    m_statusLed = new QLabel(m_statusPill);
     m_statusLed->setFixedSize(STATUS_DOT_PX, STATUS_DOT_PX);
     m_statusLed->setStyleSheet(
         QString("background-color: %1; border-radius: %2px;")
             .arg(statusColors().idle).arg(STATUS_DOT_PX / 2));
-    h->addWidget(m_statusLed);
+    pillLay->addWidget(m_statusLed);
 
-    m_statusText = new QLabel("Offline", this);
-    h->addWidget(m_statusText);
+    m_statusText = new QLabel("Offline", m_statusPill);
+    m_statusText->setStyleSheet(QString("color: %1; font-weight: 600;").arg(statusColors().idle));
+    pillLay->addWidget(m_statusText);
+    h->addWidget(m_statusPill);
 
     h->addSpacing(SPACING_DEFAULT * 2);
 
@@ -604,18 +753,22 @@ QWidget* RollbackLobbyDialog::buildInRoomView()
     topRow->addStretch(1);
 
     m_roomStateLabel = new QLabel("Waiting", this);
-    bumpFont(m_roomStateLabel, 0, /*bold=*/true);
     topRow->addWidget(m_roomStateLabel);
+    applyRoomStateBadge("Waiting", stateHex("waiting", isDarkTheme()));
     lay->addLayout(topRow);
 
-    // ROM title (large)
+    // ROM title (large). Word-wrap so a long ROM name doesn't pin a wide
+    // minimum width on the whole left column (it's shared via the stacked
+    // widget with the browse view).
     m_roomTitle = new QLabel("—", this);
     bumpFont(m_roomTitle, 4, /*bold=*/true);
+    m_roomTitle->setWordWrap(true);
     lay->addWidget(m_roomTitle);
 
     // Subtitle (host / max players) — default WindowText since this is
     // important info; the bold title above gives the hierarchy.
     m_roomSubtitle = new QLabel("—", this);
+    m_roomSubtitle->setWordWrap(true);
     lay->addWidget(m_roomSubtitle);
 
     // Meta line (Seats / Region) — plain rich text. Delay and prediction
@@ -661,6 +814,7 @@ QWidget* RollbackLobbyDialog::buildInRoomView()
 
     auto* delayLbl = new QLabel("Frame delay:", this);
     m_delayCombo = new QComboBox(this);
+    m_delayCombo->setObjectName("LobbyCombo");
     fillFrameCombo(m_delayCombo, "Auto");
     m_delayCombo->setToolTip(delayTip);
     // Stash the explainer so onRoomStateChanged can restore it after a
@@ -673,6 +827,7 @@ QWidget* RollbackLobbyDialog::buildInRoomView()
 
     auto* predLbl = new QLabel("Prediction:", this);
     m_predictionCombo = new QComboBox(this);
+    m_predictionCombo->setObjectName("LobbyCombo");
     fillFrameCombo(m_predictionCombo, "Default");
     m_predictionCombo->setToolTip(predictionTip);
     m_predictionCombo->setProperty("originalTip", predictionTip);
@@ -691,6 +846,7 @@ QWidget* RollbackLobbyDialog::buildInRoomView()
         "Host-only. All players will use the same model.");
     auto* pacingLbl = new QLabel("Pacing:", this);
     m_pacingCombo = new QComboBox(this);
+    m_pacingCombo->setObjectName("LobbyCombo");
     m_pacingCombo->addItem("Aggressive", 0);
     m_pacingCombo->addItem("Smooth", 1);
     m_pacingCombo->setToolTip(pacingTip);
@@ -699,11 +855,19 @@ QWidget* RollbackLobbyDialog::buildInRoomView()
     settingsRow->addWidget(m_pacingCombo);
 
     settingsRow->addStretch(1);
+    lay->addLayout(settingsRow);
 
-    // Per-player local recording toggle. Sits on the (otherwise host-only)
-    // settings row but stays enabled for everyone — each player decides whether
-    // to save their own .krec. Initialized from the cap-aware default and kept
-    // in the shared n02 recording flag, exactly like the p2p / kaillera lobbies.
+    // Recording toggles live on their own row beneath the combos. Keeping them
+    // off the combo row keeps that row's minimum width small, so the left
+    // column can be dragged narrower (more room for chat / players).
+    auto* toggleRow = new QHBoxLayout;
+    toggleRow->setContentsMargins(0, 0, 0, 0);
+    toggleRow->setSpacing(SPACING_DEFAULT);
+
+    // Per-player local recording toggle. Stays enabled for everyone — each
+    // player decides whether to save their own .krec. Initialized from the
+    // cap-aware default and kept in the shared n02 recording flag, exactly like
+    // the p2p / kaillera lobbies.
     m_recordCheck = new QCheckBox("Record game", this);
     m_recordCheck->setToolTip(
         "Record this match to a .krec file on your PC.\n"
@@ -714,7 +878,7 @@ QWidget* RollbackLobbyDialog::buildInRoomView()
     connect(m_recordCheck, &QCheckBox::toggled, this, [](bool checked) {
         n02_kaillera_recording_enabled = checked;
     });
-    settingsRow->addWidget(m_recordCheck);
+    toggleRow->addWidget(m_recordCheck);
 
     // Broadcast: stream this match's krec to the server so others can spectate.
     // Broadcasting implies recording (the stream is the krec), so ticking it
@@ -728,9 +892,10 @@ QWidget* RollbackLobbyDialog::buildInRoomView()
         if (checked && m_recordCheck)
             m_recordCheck->setChecked(true); // broadcasting needs the krec written
     });
-    settingsRow->addWidget(m_broadcastCheck);
+    toggleRow->addWidget(m_broadcastCheck);
+    toggleRow->addStretch(1);
 
-    lay->addLayout(settingsRow);
+    lay->addLayout(toggleRow);
 
     // Both combos share the same change handler. Skip emits while we're
     // applying values from a ROOM_STATE refresh — otherwise we'd ping-pong
@@ -758,7 +923,7 @@ QWidget* RollbackLobbyDialog::buildInRoomView()
     auto* seatsBox = new QWidget(this);
     auto* seatsLay = new QVBoxLayout(seatsBox);
     seatsLay->setContentsMargins(0, SPACING_TIGHT, 0, 0);
-    seatsLay->setSpacing(0);
+    seatsLay->setSpacing(SPACING_TIGHT);
     for (int i = 0; i < 4; ++i)
     {
         buildSeatRow(m_seats[i], i + 1, seatsBox);
@@ -814,25 +979,28 @@ QWidget* RollbackLobbyDialog::buildInRoomView()
 
 void RollbackLobbyDialog::buildSeatRow(SeatRow& s, int slotIdx, QWidget* parent)
 {
-    s.row = new QWidget(parent);
+    s.slot = slotIdx;
+    // A QFrame (not bare QWidget) so the per-player card background / border
+    // set via setStyleSheet in the render helpers paints reliably.
+    auto* card = new QFrame(parent);
+    card->setObjectName("SeatCard");
+    s.row = card;
     auto* lay = new QHBoxLayout(s.row);
-    lay->setContentsMargins(SPACING_DEFAULT, SPACING_TIGHT, SPACING_DEFAULT, SPACING_TIGHT);
+    lay->setContentsMargins(MARGIN_GROUP, SPACING_DEFAULT, SPACING_DEFAULT, SPACING_DEFAULT);
     lay->setSpacing(SPACING_DEFAULT);
 
-    // Filled/empty dot — single glyph, color follows palette so it picks
-    // up the theme like everything else.
+    // Filled/empty dot — single glyph, tinted with the player's accent when
+    // filled (set in renderSeatFilled), muted grey when empty.
     s.dotLabel = new QLabel(QStringLiteral("○"), s.row);
     s.dotLabel->setFixedWidth(14);
     lay->addWidget(s.dotLabel);
 
-    // Slot tag — bold, fixed width so names line up across rows.
+    // Slot tag — a colored "P1" chip; shape + color applied per-player in the
+    // render helpers. Fixed min size so names line up across rows.
     s.slotLabel = new QLabel(QString("P%1").arg(slotIdx), s.row);
-    s.slotLabel->setFixedWidth(28);
-    {
-        QFont f = s.slotLabel->font();
-        f.setBold(true);
-        s.slotLabel->setFont(f);
-    }
+    s.slotLabel->setObjectName("SeatChip");
+    s.slotLabel->setAlignment(Qt::AlignCenter);
+    s.slotLabel->setMinimumWidth(30);
     lay->addWidget(s.slotLabel);
 
     s.nameLabel = new QLabel(QStringLiteral("Waiting…"), s.row);
@@ -840,9 +1008,10 @@ void RollbackLobbyDialog::buildSeatRow(SeatRow& s, int slotIdx, QWidget* parent)
 
     lay->addStretch(1);
 
-    // Right-aligned meta (host · ping). PlaceholderText is theme-aware
-    // muted body text — readable on Fusion Dark and not screaming on light.
+    // Right-aligned meta (HOST badge · ping). Rich text so the badge and the
+    // ping value can carry their own colors.
     s.metaLabel = new QLabel(QString(), s.row);
+    s.metaLabel->setTextFormat(Qt::RichText);
     s.metaLabel->setForegroundRole(QPalette::PlaceholderText);
     lay->addWidget(s.metaLabel);
 
@@ -872,17 +1041,38 @@ void RollbackLobbyDialog::renderSeatEmpty(SeatRow& s)
 {
     s.isHost = false;
     s.userId = 0;
+
+    // Muted, dashed card — clearly "open seat" without competing with the
+    // filled, color-tinted player cards.
+    if (s.row)
+        s.row->setStyleSheet(
+            "QFrame#SeatCard {"
+            "  background-color: transparent;"
+            "  border: 1px dashed palette(mid);"
+            "  border-radius: 8px;"
+            "}");
     if (s.dotLabel)
     {
         s.dotLabel->setText(QStringLiteral("○"));
-        s.dotLabel->setForegroundRole(QPalette::PlaceholderText);
+        s.dotLabel->setStyleSheet(QString("color: %1;").arg(statusColors().idle));
     }
     if (s.slotLabel)
-        s.slotLabel->setForegroundRole(QPalette::PlaceholderText);
+        s.slotLabel->setStyleSheet(
+            QString("QLabel#SeatChip {"
+                    "  background-color: rgba(128,128,128,0.18);"
+                    "  color: %1;"
+                    "  border-radius: 7px;"
+                    "  padding: 1px 7px;"
+                    "  font-weight: 700;"
+                    "}").arg(statusColors().idle));
     if (s.nameLabel)
     {
         s.nameLabel->setText(QStringLiteral("Waiting…"));
+        s.nameLabel->setStyleSheet(QString());
         s.nameLabel->setForegroundRole(QPalette::PlaceholderText);
+        QFont f = s.nameLabel->font();
+        f.setBold(false);
+        s.nameLabel->setFont(f);
     }
     if (s.metaLabel) s.metaLabel->setText(QString());
     if (s.kickButton) s.kickButton->setVisible(false);
@@ -893,29 +1083,54 @@ void RollbackLobbyDialog::renderSeatFilled(SeatRow& s, const QString& username, 
 {
     s.isHost = isHost;
     if (s.kickButton) s.kickButton->setVisible(canKick);
+
+    const bool dark = isDarkTheme();
+    const QString accent = playerAccentHex(s.slot, dark);
+
+    // Player-colored, gently tinted card. Self stands out with a more vivid
+    // (fully-opaque) accent border in the same color — kept at 1px because a
+    // 2px rounded border renders with uneven/notchy corners.
+    if (s.row)
+        s.row->setStyleSheet(QString(
+            "QFrame#SeatCard {"
+            "  background-color: %1;"
+            "  border: 1px solid %2;"
+            "  border-radius: 8px;"
+            "}")
+            .arg(playerCardBg(s.slot, dark),
+                 isSelf ? accent : playerBorderRgba(s.slot, dark)));
+
     if (s.dotLabel)
     {
         s.dotLabel->setText(QStringLiteral("●"));
-        s.dotLabel->setForegroundRole(QPalette::WindowText);
+        s.dotLabel->setStyleSheet(QString("color: %1;").arg(accent));
     }
     if (s.slotLabel)
-        s.slotLabel->setForegroundRole(QPalette::WindowText);
+        s.slotLabel->setStyleSheet(QString(
+            "QLabel#SeatChip {"
+            "  background-color: %1;"
+            "  color: white;"
+            "  border-radius: 7px;"
+            "  padding: 1px 7px;"
+            "  font-weight: 700;"
+            "}").arg(accent));
     if (s.nameLabel)
     {
         QString name = username;
         if (isSelf) name += QStringLiteral("  (you)");
         s.nameLabel->setText(name);
+        s.nameLabel->setStyleSheet(QString());
         s.nameLabel->setForegroundRole(QPalette::WindowText);
+        QFont f = s.nameLabel->font();
+        f.setBold(isSelf);
+        s.nameLabel->setFont(f);
     }
     if (s.metaLabel)
     {
-        // Compose host + ping. Self never shows a ping (pingMs == -1 also
-        // means "no measurement yet" for peers we haven't probed). Ping shows
-        // up after the first PROBE_REPLY arrives, refreshes on each tick.
-        QStringList parts;
-        if (isHost)              parts << QStringLiteral("host");
-        if (!isSelf && pingMs >= 0) parts << QStringLiteral("%1 ms").arg(pingMs);
-        s.metaLabel->setText(parts.join(QStringLiteral(" · ")));
+        // HOST badge + ping. Self never shows a ping (pingMs == -1 also means
+        // "no measurement yet" for peers we haven't probed). Ping shows up
+        // after the first PROBE_REPLY arrives, refreshed on each tick.
+        s.metaLabel->setText(seatMetaHtml(s.slot, isHost, isSelf ? -1 : pingMs, dark));
     }
 }
 
@@ -923,33 +1138,43 @@ void RollbackLobbyDialog::renderSeatFilled(SeatRow& s, const QString& username, 
 
 QWidget* RollbackLobbyDialog::buildChatColumn()
 {
-    // No "Chat" wrapper — the tab labels ("Lobby" / "Room") already convey
-    // the column's identity and the splitter handle separates it visually.
+    // The tab labels ("Lobby" / "Room") already convey the column's identity;
+    // a borderless rounded card frame matches the players list and the P2P
+    // hosting screen. documentMode keeps the tabs flat so they don't double-
+    // border against the card edge.
     auto* col = new QWidget(this);
     auto* lay = new QVBoxLayout(col);
     lay->setContentsMargins(MARGIN_OUTER, MARGIN_OUTER, MARGIN_OUTER, MARGIN_OUTER);
     lay->setSpacing(SPACING_DEFAULT);
 
-    m_chatTabs = new QTabWidget(this);
-    // documentMode=true gives Chrome-style "floating" tabs that visually
-    // detach from the content below; documentMode=false (the default) lets
-    // the active tab sit flush in the pane border instead. Combine with
-    // QTextEdit::NoFrame inside so we don't double-border the chat area.
+    auto* card = new QFrame(col);
+    card->setObjectName("LobbyCard");
+    auto* cardLay = new QVBoxLayout(card);
+    cardLay->setContentsMargins(SPACING_DEFAULT, SPACING_DEFAULT, SPACING_DEFAULT, SPACING_DEFAULT);
+    cardLay->setSpacing(SPACING_DEFAULT);
 
-    m_chatViewLobby = new QTextEdit(this);
+    // ChatTabWidget installs the HalfWidthTabBar internally (setTabBar is
+    // protected). Each tab is half the column wide: one tab → 50%, two → 100%.
+    m_chatTabs = new ChatTabWidget(card);
+    m_chatTabs->setObjectName("ChatTabs");
+    m_chatTabs->setDocumentMode(true);
+
+    m_chatViewLobby = new QTextEdit(card);
     m_chatViewLobby->setReadOnly(true);
     m_chatViewLobby->setLineWrapMode(QTextEdit::WidgetWidth);
     m_chatViewLobby->setFrameShape(QFrame::NoFrame);
     m_chatTabs->addTab(m_chatViewLobby, "Lobby");
 
-    lay->addWidget(m_chatTabs, 1);
+    cardLay->addWidget(m_chatTabs, 1);
 
-    m_chatInput = new QLineEdit(this);
+    m_chatInput = new QLineEdit(card);
     m_chatInput->setPlaceholderText("Type a message and press Enter…");
     m_chatInput->setEnabled(false);
     m_chatInput->setMinimumHeight(BUTTON_MIN_HEIGHT);
     connect(m_chatInput, &QLineEdit::returnPressed, this, &RollbackLobbyDialog::onChatSendClicked);
-    lay->addWidget(m_chatInput);
+    cardLay->addWidget(m_chatInput);
+
+    lay->addWidget(card, 1);
 
     return col;
 }
@@ -958,15 +1183,20 @@ QWidget* RollbackLobbyDialog::buildChatColumn()
 
 QWidget* RollbackLobbyDialog::buildPlayersColumn()
 {
-    // No "Players" wrapper — the tree's column header ("Player / State /
-    // Ping") already labels the content and the splitter handle isolates
-    // the column visually.
+    // The tree's column header ("Player / State / Ping") already labels the
+    // content; a borderless rounded card frame gives it the polished, P2P-
+    // style container without a heavy titled group box.
     auto* col = new QWidget(this);
     auto* lay = new QVBoxLayout(col);
     lay->setContentsMargins(MARGIN_OUTER, MARGIN_OUTER, MARGIN_OUTER, MARGIN_OUTER);
     lay->setSpacing(SPACING_DEFAULT);
 
-    m_playersTree = new QTreeWidget(this);
+    auto* card = new QFrame(col);
+    card->setObjectName("LobbyCard");
+    auto* cardLay = new QVBoxLayout(card);
+    cardLay->setContentsMargins(SPACING_TIGHT, SPACING_TIGHT, SPACING_TIGHT, SPACING_TIGHT);
+
+    m_playersTree = new QTreeWidget(card);
     m_playersTree->setObjectName("PlayersTree");
     m_playersTree->setHeaderLabels({ "Player", "State", "Est. Ping" });
     m_playersTree->setRootIsDecorated(false);
@@ -978,7 +1208,11 @@ QWidget* RollbackLobbyDialog::buildPlayersColumn()
     m_playersTree->header()->setSectionResizeMode(0, QHeaderView::Stretch);
     m_playersTree->header()->setSectionResizeMode(1, QHeaderView::ResizeToContents);
     m_playersTree->header()->setSectionResizeMode(2, QHeaderView::ResizeToContents);
-    lay->addWidget(m_playersTree);
+    // Click in the empty area below the rows to clear the selection (handled in
+    // eventFilter — there's no built-in property for this).
+    m_playersTree->viewport()->installEventFilter(this);
+    cardLay->addWidget(m_playersTree);
+    lay->addWidget(card);
 
     return col;
 }
@@ -1001,11 +1235,96 @@ void RollbackLobbyDialog::applyStylesheet()
         : QStringLiteral("rgba(0, 120, 215, 0.10)");
     const QString bannerBorder = QStringLiteral("rgba(0, 120, 215, 0.45)");
 
+    // Brand accent (P1 blue) for the header text, and a faint accent wash for
+    // the marquee strip so it reads as a header band rather than blank window.
+    const QString brandAccent = playerAccentHex(1, dark);
+    const QString marqueeBg   = tintRgba(brandAccent, dark ? 0.16 : 0.07);
+
+    // Themed chevron for the styled combos (same asset the P2P dialog uses), so
+    // the drop-down arrow doesn't fall back to Qt's default that clashes with
+    // the rounded border.
+    const QString comboArrow = QString(":/icons/%1/svg/arrow-down-s-line.svg")
+        .arg(dark ? "white" : "black");
+
     const QString qss = QString(
-        // Marquee — thin divider, no fancy gradient.
+        // Marquee — faint accent header band with a hairline divider.
         "QFrame#LobbyMarquee {"
-        "  background-color: palette(window);"
+        "  background-color: %5;"
         "  border-bottom: 1px solid %1;"
+        "}"
+        "QLabel#LobbyBrand { color: %4; }"
+
+        // Rounded content cards (players list, chat) — the P2P-style container
+        // without a heavy titled group box.
+        "QFrame#LobbyCard {"
+        "  border: 1px solid %1;"
+        "  border-radius: 10px;"
+        "  background-color: palette(base);"
+        "}"
+
+        // Active Rooms / Ongoing Matches — styled as tables: square 1px outline,
+        // a distinct header row, and light column / row separators.
+        "QTreeWidget#RoomsTree, QTreeWidget#MatchesTree {"
+        "  border: 1px solid %1;"
+        "  background-color: palette(base);"
+        "}"
+        "QTreeWidget#RoomsTree::item, QTreeWidget#MatchesTree::item {"
+        "  padding: 3px 4px;"
+        "  border-bottom: 1px solid rgba(127, 127, 127, 0.12);"
+        "}"
+        "QTreeWidget#RoomsTree QHeaderView::section,"
+        " QTreeWidget#MatchesTree QHeaderView::section {"
+        "  background-color: rgba(127, 127, 127, 0.12);"
+        "  color: palette(text);"
+        "  border: none;"
+        "  border-right: 1px solid %1;"
+        "  border-bottom: 1px solid %1;"
+        "  padding: 4px 6px;"
+        "  font-weight: 600;"
+        "}"
+        "QTreeWidget#RoomsTree QHeaderView::section:last,"
+        " QTreeWidget#MatchesTree QHeaderView::section:last {"
+        "  border-right: none;"
+        "}"
+
+        // Chat tabs — flat underline style (no surrounding bar / boxed tabs).
+        // Each tab is half the column wide via HalfWidthTabBar.
+        "QTabWidget#ChatTabs::pane {"
+        "  border: none;"
+        "  background: transparent;"
+        "}"
+        "QTabWidget#ChatTabs QTabBar {"
+        "  background: transparent;"
+        "  qproperty-drawBase: 0;"
+        "}"
+        // Both tabs read as tabs (subtle neutral fill); the active one is
+        // accented with a blue fill, text and underline. Only the *outer*
+        // corners round — the two tabs share a flat seam in the middle (first
+        // tab rounds top-left, last rounds top-right, a lone tab rounds both).
+        "QTabWidget#ChatTabs QTabBar::tab {"
+        "  background: rgba(127, 127, 127, 0.12);"
+        "  border: none;"
+        "  border-bottom: 2px solid transparent;"
+        "  border-top-left-radius: 0px;"
+        "  border-top-right-radius: 0px;"
+        "  padding: 5px 10px;"
+        "  margin: 0px;"
+        "  color: palette(text);"
+        "}"
+        "QTabWidget#ChatTabs QTabBar::tab:first { border-top-left-radius: 6px; }"
+        "QTabWidget#ChatTabs QTabBar::tab:last { border-top-right-radius: 6px; }"
+        "QTabWidget#ChatTabs QTabBar::tab:only-one {"
+        "  border-top-left-radius: 6px;"
+        "  border-top-right-radius: 6px;"
+        "}"
+        "QTabWidget#ChatTabs QTabBar::tab:hover {"
+        "  background: rgba(127, 127, 127, 0.20);"
+        "}"
+        "QTabWidget#ChatTabs QTabBar::tab:selected {"
+        "  color: %4;"
+        "  background: %5;"
+        "  border-bottom: 2px solid %4;"
+        "  font-weight: 600;"
         "}"
 
         // Section headers — bold uppercase label with a hairline divider
@@ -1034,7 +1353,7 @@ void RollbackLobbyDialog::applyStylesheet()
         "QPushButton#QuickMatchBtn, QPushButton#StartGameBtn,"
         " QPushButton#BannerReturnBtn {"
         "  border: 1px solid #0066b4;"
-        "  border-radius: 4px;"
+        "  border-radius: 7px;"
         "  padding: 4px 16px;"
         "  font-weight: 700;"
         "  color: white;"
@@ -1053,7 +1372,75 @@ void RollbackLobbyDialog::applyStylesheet()
         "  color: palette(mid);"
         "  border-color: %1;"
         "}"
-    ).arg(border, bannerBg, bannerBorder);
+
+        // Secondary action buttons — Create Room / Drop / Leave read as a set,
+        // matching the P2P hosting screen's secondary buttons.
+        "QPushButton#CreateRoomBtn, QPushButton#DropBtn, QPushButton#LeaveBtn {"
+        "  border: 1px solid %1;"
+        "  border-radius: 7px;"
+        "  padding: 4px 14px;"
+        "  font-weight: 600;"
+        "  background-color: palette(button);"
+        "}"
+        "QPushButton#CreateRoomBtn:hover, QPushButton#DropBtn:hover,"
+        " QPushButton#LeaveBtn:hover {"
+        "  border-color: palette(dark);"
+        "  background-color: palette(light);"
+        "}"
+        "QPushButton#CreateRoomBtn:pressed, QPushButton#DropBtn:pressed,"
+        " QPushButton#LeaveBtn:pressed {"
+        "  background-color: palette(midlight);"
+        "}"
+        "QPushButton#CreateRoomBtn:disabled, QPushButton#DropBtn:disabled {"
+        "  color: palette(mid);"
+        "}"
+
+        // Session-setting combos — rounded, themed border (P2P style).
+        "QComboBox#LobbyCombo, QComboBox#BrowseRomCombo {"
+        "  border: 1px solid %1;"
+        "  border-radius: 7px;"
+        "  background-color: palette(base);"
+        "  padding: 3px 8px;"
+        "  min-height: 22px;"
+        "}"
+        "QComboBox#LobbyCombo:focus, QComboBox#BrowseRomCombo:focus {"
+        "  border-color: palette(highlight);"
+        "}"
+        "QComboBox#LobbyCombo:disabled { color: palette(mid); }"
+        "QComboBox#LobbyCombo::drop-down, QComboBox#BrowseRomCombo::drop-down {"
+        "  subcontrol-origin: padding;"
+        "  subcontrol-position: top right;"
+        "  width: 20px;"
+        "  border: none;"
+        "  border-left: 1px solid %1;"
+        "  border-top-right-radius: 7px;"
+        "  border-bottom-right-radius: 7px;"
+        "  background-color: transparent;"
+        "  margin: 1px;"
+        "}"
+        "QComboBox#LobbyCombo::down-arrow, QComboBox#BrowseRomCombo::down-arrow {"
+        "  image: url(%6);"
+        "  width: 12px;"
+        "  height: 12px;"
+        "}"
+
+        // Seat kick button — red accent, transparent until hovered (P2P style).
+        "QPushButton#SeatKickButton {"
+        "  border: 1px solid transparent;"
+        "  border-radius: 6px;"
+        "  padding: 0px;"
+        "  color: #c03a3a;"
+        "  background-color: transparent;"
+        "  font-weight: 800;"
+        "}"
+        "QPushButton#SeatKickButton:hover {"
+        "  border-color: #d77a7a;"
+        "  background-color: rgba(208, 72, 72, 0.12);"
+        "}"
+        "QPushButton#SeatKickButton:pressed {"
+        "  background-color: rgba(208, 72, 72, 0.20);"
+        "}"
+    ).arg(border, bannerBg, bannerBorder, brandAccent, marqueeBg, comboArrow);
 
     setStyleSheet(qss);
 }
@@ -1144,6 +1531,20 @@ void RollbackLobbyDialog::closeEvent(QCloseEvent* event)
     if (m_client)
         m_client->disconnectFromServer();
     QDialog::closeEvent(event);
+}
+
+bool RollbackLobbyDialog::eventFilter(QObject* watched, QEvent* event)
+{
+    // A click in the players-list viewport that doesn't land on a row clears
+    // the selection, so a highlighted name can be dismissed by clicking off it.
+    if (m_playersTree && watched == m_playersTree->viewport() &&
+        event->type() == QEvent::MouseButtonPress)
+    {
+        auto* me = static_cast<QMouseEvent*>(event);
+        if (!m_playersTree->itemAt(me->position().toPoint()))
+            m_playersTree->clearSelection();
+    }
+    return QDialog::eventFilter(watched, event);
 }
 
 QString RollbackLobbyDialog::prefillUsername() const
@@ -1325,13 +1726,32 @@ void RollbackLobbyDialog::onConnectError(const QString& msg)
 
 void RollbackLobbyDialog::updateStatusIndicator(LobbyClient::ConnectionState s)
 {
+    const QString sc = statusColor(s);
     if (m_statusLed)
     {
         m_statusLed->setStyleSheet(
             QString("background-color: %1; border-radius: %2px;")
-                .arg(statusColor(s)).arg(STATUS_DOT_PX / 2));
+                .arg(sc).arg(STATUS_DOT_PX / 2));
     }
-    if (m_statusText) m_statusText->setText(humanState(s));
+    if (m_statusText)
+    {
+        m_statusText->setText(humanState(s));
+        m_statusText->setStyleSheet(QString("color: %1; font-weight: 600;").arg(sc));
+    }
+}
+
+void RollbackLobbyDialog::applyRoomStateBadge(const QString& text, const QString& colorHex)
+{
+    if (!m_roomStateLabel) return;
+    m_roomStateLabel->setText(text);
+    m_roomStateLabel->setStyleSheet(QString(
+        "QLabel {"
+        "  color: %1;"
+        "  background-color: %2;"
+        "  border-radius: 9px;"
+        "  padding: 2px 10px;"
+        "  font-weight: 700;"
+        "}").arg(colorHex, tintRgba(colorHex, isDarkTheme() ? 0.22 : 0.14)));
 }
 
 void RollbackLobbyDialog::updateInRoomBanner()
@@ -1369,11 +1789,9 @@ void RollbackLobbyDialog::updateServerMeta()
     }
     const int players = m_client->users().size();
     const int rooms = m_client->rooms().size();
-    QUrl u(m_serverUrl);
-    QString host = u.isValid() && !u.host().isEmpty() ? u.host() : m_serverUrl;
-    if (u.port() > 0) host = QString("%1:%2").arg(host).arg(u.port());
-    m_serverMeta->setText(QString("%1  ·  %2 player%3  ·  %4 room%5")
-                              .arg(host)
+    // Server host/IP intentionally omitted from the header — just show the
+    // live population.
+    m_serverMeta->setText(QString("%1 player%2  ·  %3 room%4")
                               .arg(players).arg(players == 1 ? "" : "s")
                               .arg(rooms).arg(rooms == 1 ? "" : "s"));
 }
@@ -1428,15 +1846,18 @@ void RollbackLobbyDialog::onUserUpdated(quint64 userId)
 
 void RollbackLobbyDialog::refreshPlayerRow(QTreeWidgetItem* item, const LobbyClient::LobbyUser& u)
 {
+    const bool dark = isDarkTheme();
     item->setText(0, u.username);
-    // Self gets bold; everyone else uses default palette text.
+    // Self gets bold and an accent tint; everyone else uses default palette text.
     if (u.id == m_client->selfUserId())
     {
         QFont f = item->font(0);
         f.setBold(true);
         item->setFont(0, f);
+        item->setForeground(0, QColor(playerAccentHex(1, dark)));
     }
     item->setText(1, stateGlyph(u.state));
+    item->setForeground(1, QColor(stateHex(u.state, dark)));
 
     // While searching, hovering the state shows which ROM they're queued for.
     if (u.state == "searching" && !u.searchingRom.isEmpty())
@@ -1454,12 +1875,15 @@ void RollbackLobbyDialog::refreshPlayerRow(QTreeWidgetItem* item, const LobbyCli
     if (u.id == m_client->selfUserId())
     {
         item->setText(2, dash);
+        item->setForeground(2, QColor(statusColors().idle));
     }
     else
     {
         const int rtt = UserInterface::Dialog::LobbyRegions::estimatedRttMs(
             m_client->selfRegion(), u.region);
         item->setText(2, rtt > 0 ? QString("~%1 ms").arg(rtt) : dash);
+        // Tint by the same ping tiers as the seat cards (grey when unknown).
+        item->setForeground(2, QColor(pingHex(rtt > 0 ? rtt : -1)));
     }
 
     const QString regionLabel = UserInterface::Dialog::LobbyRegions::labelFor(u.region);
@@ -1574,6 +1998,7 @@ void RollbackLobbyDialog::refreshRoomRow(QTreeWidgetItem* item, const LobbyClien
     if (r.hasPassword) nameCell = QStringLiteral("🔒  ") + nameCell;
     if (mine)          nameCell = QStringLiteral("★  ") + nameCell;
 
+    const bool dark = isDarkTheme();
     item->setText(0, nameCell);
     item->setText(1, r.hostName);
     item->setText(2, r.romName);
@@ -1581,10 +2006,19 @@ void RollbackLobbyDialog::refreshRoomRow(QTreeWidgetItem* item, const LobbyClien
     item->setText(4, stateGlyph(r.state));
     item->setData(0, Qt::UserRole, QVariant::fromValue(r.id));
 
-    // Bold the user's own room; everything else native.
+    // Seats: green when there's room to join, red when full.
+    const bool full = (r.maxPlayers > 0 && r.players >= r.maxPlayers);
+    const auto sc = statusColors();
+    item->setForeground(3, QColor(full ? sc.fail : sc.ok));
+    // State: same color language as presence / seats.
+    item->setForeground(4, QColor(stateHex(r.state, dark)));
+
+    // Bold the user's own room and tint its name with the P1 accent.
     QFont f = item->font(0);
     f.setBold(mine);
     item->setFont(0, f);
+    if (mine)
+        item->setForeground(0, QColor(playerAccentHex(1, dark)));
 }
 
 void RollbackLobbyDialog::onCreateRoomClicked()
@@ -1885,7 +2319,7 @@ void RollbackLobbyDialog::onRoomStateChanged(const QJsonObject& roomState)
     m_roomSubtitle->setText(QString("Hosted by %1  ·  %2 players max")
                                 .arg(hostName).arg(maxPlayers));
 
-    m_roomStateLabel->setText(stateGlyph(state));
+    applyRoomStateBadge(stateGlyph(state), stateHex(state, isDarkTheme()));
 
     const QJsonArray players = roomState.value("players").toArray();
     QStringList metaParts;
@@ -2165,10 +2599,7 @@ void RollbackLobbyDialog::onPingMeasured(quint64 userId, int rttMs)
     {
         if (s.userId != userId || !s.metaLabel)
             continue;
-        QStringList parts;
-        if (s.isHost) parts << QStringLiteral("host");
-        parts << QStringLiteral("%1 ms").arg(rttMs);
-        s.metaLabel->setText(parts.join(QStringLiteral(" · ")));
+        s.metaLabel->setText(seatMetaHtml(s.slot, s.isHost, rttMs, isDarkTheme()));
         break;
     }
 
@@ -2566,7 +2997,7 @@ void RollbackLobbyDialog::onMatchBegin(quint64 matchId, const QList<LobbyClient:
     // the awaiting flag was set and left Drop disabled.
     if (m_startBtn) m_startBtn->setEnabled(false);
     if (m_dropBtn)  m_dropBtn->setEnabled(true);
-    if (m_roomStateLabel) m_roomStateLabel->setText("Connecting…");
+    applyRoomStateBadge("Connecting…", stateHex("connecting", isDarkTheme()));
 
     CoreAddCallbackMessage(CoreDebugMessageType::Info,
         QString("Rollback lobby MATCH_BEGIN: match=%1 peers=%2 self=%3 roomGame='%4' delay=%5 prediction=%6 anchorPort=%7")
@@ -2704,7 +3135,7 @@ void RollbackLobbyDialog::onMatchBegin(quint64 matchId, const QList<LobbyClient:
         appendChatSystemLine(CHANNEL_ROOM, message);
         CoreAddCallbackMessage(CoreDebugMessageType::Error, message.toUtf8().constData());
         m_awaitingEmulationStart = false;
-        if (m_roomStateLabel) m_roomStateLabel->setText("Pre-match sync failed");
+        applyRoomStateBadge("Pre-match sync failed", QString(statusColors().fail));
         return;
     }
 
@@ -2718,7 +3149,7 @@ void RollbackLobbyDialog::onMatchBegin(quint64 matchId, const QList<LobbyClient:
         appendChatSystemLine(CHANNEL_ROOM, message);
         CoreAddCallbackMessage(CoreDebugMessageType::Error, message.toUtf8().constData());
         m_awaitingEmulationStart = false;
-        if (m_roomStateLabel) m_roomStateLabel->setText("Pre-match sync failed");
+        applyRoomStateBadge("Pre-match sync failed", QString(statusColors().fail));
         return;
     }
     appendChatSystemLine(CHANNEL_ROOM, "Pre-match sync complete.");

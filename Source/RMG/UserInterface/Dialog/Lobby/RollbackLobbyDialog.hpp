@@ -96,6 +96,9 @@ signals:
 protected:
     void showEvent(QShowEvent* event) override;
     void closeEvent(QCloseEvent* event) override;
+    // Clears the players-list selection when the user clicks empty space in it,
+    // so a highlighted name can be dismissed by clicking off it.
+    bool eventFilter(QObject* watched, QEvent* event) override;
 
 private slots:
     void onConnectClicked();
@@ -184,6 +187,9 @@ private:
     void    switchToInRoomView();
     void    enterRoom(quint64 roomId, const QString& greetingChatLine);
     void    updateStatusIndicator(LobbyClient::ConnectionState s);
+    // Render the in-room state label as a colored pill (Waiting / Connecting /
+    // In Game / failure). colorHex drives both the text and the soft fill.
+    void    applyRoomStateBadge(const QString& text, const QString& colorHex);
     void    updateServerMeta();
     void    updateInRoomBanner();   // refresh "you're in: X" banner in browse view
 
@@ -217,6 +223,7 @@ private:
         QPushButton* kickButton = nullptr; // ✕ — host-only, removes the seated player
         bool     isHost    = false;
         quint64  userId    = 0;           // seated user, 0 when empty
+        int      slot      = 0;           // 1-4, drives the per-player accent color
     };
     void buildSeatRow(SeatRow& row, int slotIdx, QWidget* parent);
     void renderSeatEmpty(SeatRow& row);
@@ -234,6 +241,7 @@ private:
     // ── Marquee bar ──
     QFrame*  m_marquee     = nullptr;
     QLabel*  m_brandLabel  = nullptr;
+    QFrame*  m_statusPill  = nullptr;   // rounded pill holding the LED + text
     QLabel*  m_statusLed   = nullptr;
     QLabel*  m_statusText  = nullptr;
     QLabel*  m_serverMeta  = nullptr;
