@@ -8,6 +8,9 @@
 
 #include "LobbyClient.hpp"
 
+#include <RMG-Core/Cheats.hpp>
+#include <RMG-Core/Error.hpp>
+
 #include <QWebSocket>
 #include <QUdpSocket>
 #include <QAbstractSocket>
@@ -16,10 +19,13 @@
 #include <QJsonValue>
 #include <QHostAddress>
 #include <QHostInfo>
+#include <QNetworkInterface>
 #include <QDateTime>
+#include <QCoreApplication>
 #include <QtEndian>
 #include <QRandomGenerator>
 #include <QDebug>
+#include <QSet>
 #include <cstring>
 
 using namespace UserInterface::Dialog;
@@ -35,6 +41,8 @@ namespace
     constexpr quint8 ANCHOR_OP_PUNCH       = 0x03;
     constexpr quint8 ANCHOR_OP_PROBE       = 0x04; // client → peer: ping request
     constexpr quint8 ANCHOR_OP_PROBE_REPLY = 0x05; // peer → client: ping echo
+    constexpr quint8 ANCHOR_OP_PREMATCH_MANIFEST = 0x06;
+    constexpr quint8 ANCHOR_OP_PREMATCH_ACK      = 0x07;
 
     // Burst size for NAT punch-through. Defends against single-packet loss
     // and brief mapping-creation latency on consumer routers — NOT against
@@ -43,6 +51,163 @@ namespace
 
     // PROBE/PROBE_REPLY packet: [magic(4) | op(1) | senderUserId(8) | nonce(8)]
     constexpr int PROBE_PACKET_SIZE = 4 + 1 + 8 + 8;
+
+    uint64_t prematchHashBytes(const std::string& data)
+    {
+        uint64_t hash = 1469598103934665603ull;
+        for (unsigned char byte : data)
+        {
+            hash ^= byte;
+            hash *= 1099511628211ull;
+        }
+        return hash;
+    }
+
+    void appendPrematchU32(std::string& data, uint32_t value)
+    {
+        data.push_back(static_cast<char>(value & 0xffu));
+        data.push_back(static_cast<char>((value >> 8) & 0xffu));
+        data.push_back(static_cast<char>((value >> 16) & 0xffu));
+        data.push_back(static_cast<char>((value >> 24) & 0xffu));
+    }
+
+    void appendPrematchU64(QByteArray& data, uint64_t value)
+    {
+        for (int i = 0; i < 8; i++)
+            data.append(static_cast<char>((value >> (i * 8)) & 0xffu));
+    }
+
+    bool readPrematchU32(const std::string& data, size_t& offset, uint32_t& value)
+    {
+        if (offset + sizeof(uint32_t) > data.size())
+            return false;
+
+        value = static_cast<uint32_t>(static_cast<unsigned char>(data[offset])) |
+            (static_cast<uint32_t>(static_cast<unsigned char>(data[offset + 1])) << 8) |
+            (static_cast<uint32_t>(static_cast<unsigned char>(data[offset + 2])) << 16) |
+            (static_cast<uint32_t>(static_cast<unsigned char>(data[offset + 3])) << 24);
+        offset += sizeof(uint32_t);
+        return true;
+    }
+
+    bool readPrematchU64(const QByteArray& data, int offset, uint64_t& value)
+    {
+        if (offset < 0 || data.size() < offset + static_cast<int>(sizeof(uint64_t)))
+            return false;
+
+        value = 0;
+        for (int i = 0; i < 8; i++)
+            value |= static_cast<uint64_t>(static_cast<unsigned char>(data[offset + i])) << (i * 8);
+        return true;
+    }
+
+    bool buildPrematchManifest(const QString& romFile, std::string& manifest, uint64_t& manifestHash, size_t& cheatCount)
+    {
+        std::vector<CoreCheat> cheats;
+        std::string cheatManifest;
+
+        if (!CoreGetEnabledNetplayCheats(romFile.toStdU32String(), cheats) || !CoreSerializeNetplayCheats(cheats, cheatManifest))
+            return false;
+
+        manifest.clear();
+        manifest.append("RMGKPMAN", 8);
+        appendPrematchU32(manifest, 1);
+        appendPrematchU32(manifest, 1);
+        appendPrematchU32(manifest, static_cast<uint32_t>(cheatManifest.size()));
+        manifest.append(cheatManifest);
+        manifestHash = prematchHashBytes(manifest);
+        cheatCount = cheats.size();
+        return true;
+    }
+
+    bool applyPrematchManifest(const std::string& manifest, uint64_t& manifestHash, size_t& cheatCount)
+    {
+        size_t offset = 8;
+        uint32_t version = 0;
+        uint32_t sectionMask = 0;
+        uint32_t cheatManifestLen = 0;
+        std::vector<CoreCheat> cheats;
+
+        manifestHash = prematchHashBytes(manifest);
+        cheatCount = 0;
+
+        if (manifest.size() < 8 || std::memcmp(manifest.data(), "RMGKPMAN", 8) != 0 ||
+            !readPrematchU32(manifest, offset, version) ||
+            !readPrematchU32(manifest, offset, sectionMask) ||
+            version != 1 || (sectionMask & ~1u) != 0 ||
+            !readPrematchU32(manifest, offset, cheatManifestLen) ||
+            offset + cheatManifestLen != manifest.size())
+        {
+            return false;
+        }
+
+        const std::string cheatManifest(manifest.data() + offset, manifest.data() + offset + cheatManifestLen);
+        if (!CoreDeserializeNetplayCheats(cheatManifest, cheats))
+            return false;
+
+        cheatCount = cheats.size();
+        return CoreSetNetplayCheats(cheats);
+    }
+
+    QByteArray buildPrematchPacket(quint8 op, quint64 senderUserId, uint64_t manifestHash, const std::string& manifest = {})
+    {
+        QByteArray packet;
+        packet.reserve(4 + 1 + 8 + 8 + static_cast<int>(manifest.size()));
+        packet.append(ANCHOR_MAGIC, 4);
+        packet.append(static_cast<char>(op));
+        const quint64 senderBE = qToBigEndian(senderUserId);
+        packet.append(reinterpret_cast<const char*>(&senderBE), sizeof(senderBE));
+        appendPrematchU64(packet, manifestHash);
+        if (!manifest.empty())
+            packet.append(manifest.data(), static_cast<int>(manifest.size()));
+        return packet;
+    }
+
+    bool readPrematchSenderAndHash(const QByteArray& packet, quint64& senderUserId, uint64_t& manifestHash)
+    {
+        if (packet.size() < 4 + 1 + 8 + 8)
+            return false;
+
+        quint64 senderBE = 0;
+        std::memcpy(&senderBE, packet.constData() + 5, sizeof(senderBE));
+        senderUserId = qFromBigEndian(senderBE);
+        return readPrematchU64(packet, 13, manifestHash);
+    }
+
+
+    QString detectLocalIPv4()
+    {
+        for (const QNetworkInterface& iface : QNetworkInterface::allInterfaces())
+        {
+            const auto flags = iface.flags();
+            if (!(flags & QNetworkInterface::IsUp) ||
+                !(flags & QNetworkInterface::IsRunning) ||
+                (flags & QNetworkInterface::IsLoopBack))
+            {
+                continue;
+            }
+
+            for (const QNetworkAddressEntry& entry : iface.addressEntries())
+            {
+                const QHostAddress address = entry.ip();
+                if (address.protocol() != QAbstractSocket::IPv4Protocol ||
+                    address.isLoopback())
+                {
+                    continue;
+                }
+
+                const quint32 ipv4 = address.toIPv4Address();
+                const bool isPrivate =
+                    ((ipv4 & 0xff000000u) == 0x0a000000u) ||
+                    ((ipv4 & 0xfff00000u) == 0xac100000u) ||
+                    ((ipv4 & 0xffff0000u) == 0xc0a80000u);
+                if (isPrivate)
+                    return address.toString();
+            }
+        }
+
+        return QString();
+    }
 } // namespace
 
 LobbyClient::LobbyClient(QObject* parent)
@@ -86,9 +251,13 @@ void LobbyClient::connectToServer(const QString& wsUrl, const QString& username,
 
     m_pendingUsername  = username;
     m_pendingRomHashes = romHashes;
+    m_pendingLocalIp   = detectLocalIPv4();
     m_selfUserId       = 0;
     m_users.clear();
     m_rooms.clear();
+
+    qInfo() << "Rollback lobby local IPv4 detection"
+            << "localIp" << (m_pendingLocalIp.isEmpty() ? QString("<none>") : m_pendingLocalIp);
 
     QUrl url(wsUrl);
     if (!udpAddr.isEmpty())
@@ -545,9 +714,15 @@ void LobbyClient::onUdpKeepaliveTimer()
 void LobbyClient::punchPeerEndpoints(const QList<LobbyMatchPeer>& peers)
 {
     if (!m_udp || m_udp->state() == QAbstractSocket::UnconnectedState)
+    {
+        qWarning() << "Rollback lobby punch skipped: udp socket not connected";
         return;
+    }
     if (m_selfUserId == 0)
+    {
+        qWarning() << "Rollback lobby punch skipped: missing self user id";
         return;
+    }
 
     QByteArray pkt;
     pkt.reserve(13);
@@ -561,12 +736,223 @@ void LobbyClient::punchPeerEndpoints(const QList<LobbyMatchPeer>& peers)
         if (p.userId == m_selfUserId)
             continue;
         if (p.publicIp.isEmpty() || p.publicPort == 0)
+        {
+            qWarning() << "Rollback lobby punch skipped peer"
+                       << "userId" << p.userId
+                       << "slot" << p.slot
+                       << "public" << p.publicIp << p.publicPort
+                       << "local" << p.localIp;
             continue;
+        }
         QHostAddress addr(p.publicIp);
         if (addr.isNull())
+        {
+            qWarning() << "Rollback lobby punch skipped peer with invalid address"
+                       << "userId" << p.userId
+                       << "slot" << p.slot
+                       << "public" << p.publicIp << p.publicPort;
             continue;
+        }
+        qInfo() << "Rollback lobby punching peer"
+                << "selfUserId" << m_selfUserId
+                << "localPort" << m_udp->localPort()
+                << "peerUserId" << p.userId
+                << "slot" << p.slot
+                << "public" << p.publicIp << p.publicPort
+                << "local" << p.localIp
+                << "burst" << ANCHOR_PUNCH_BURST;
         for (int i = 0; i < ANCHOR_PUNCH_BURST; ++i)
             m_udp->writeDatagram(pkt, addr, p.publicPort);
+    }
+}
+
+bool LobbyClient::syncPrematchManifest(const QList<LobbyMatchPeer>& peers, int localSlot, const QString& romFile, QString& error)
+{
+    struct PrematchSyncGuard
+    {
+        LobbyClient& client;
+        explicit PrematchSyncGuard(LobbyClient& client) : client(client) { client.m_inPrematchSync = true; }
+        ~PrematchSyncGuard() { client.m_inPrematchSync = false; }
+    } guard(*this);
+
+    error.clear();
+    if (!m_udp || m_udp->state() == QAbstractSocket::UnconnectedState)
+    {
+        error = "Pre-match sync failed: UDP anchor is not connected";
+        return false;
+    }
+    if (m_selfUserId == 0 || localSlot < 1)
+    {
+        error = "Pre-match sync failed: missing local identity";
+        return false;
+    }
+    if (romFile.isEmpty())
+    {
+        error = "Pre-match sync failed: local ROM path was not resolved";
+        return false;
+    }
+
+    LobbyMatchPeer local{};
+    LobbyMatchPeer host{};
+    bool foundLocal = false;
+    bool foundHost = false;
+    for (const auto& peer : peers)
+    {
+        if (peer.userId == m_selfUserId)
+        {
+            local = peer;
+            foundLocal = true;
+        }
+        if (peer.slot == 1)
+        {
+            host = peer;
+            foundHost = true;
+        }
+    }
+    if (!foundLocal || !foundHost)
+    {
+        error = "Pre-match sync failed: incomplete peer list";
+        return false;
+    }
+
+    auto endpointFor = [&](const LobbyMatchPeer& peer) {
+        QString ip = peer.publicIp;
+        if (!local.publicIp.isEmpty() && local.publicIp == peer.publicIp && !peer.localIp.isEmpty())
+            ip = peer.localIp;
+        return QPair<QHostAddress, quint16>(QHostAddress(ip), peer.publicPort);
+    };
+
+    if (localSlot == 1)
+    {
+        std::string manifest;
+        uint64_t manifestHash = 0;
+        size_t cheatCount = 0;
+        if (!buildPrematchManifest(romFile, manifest, manifestHash, cheatCount))
+        {
+            error = QString::fromStdString(CoreGetError().empty() ? std::string("Pre-match sync failed: could not build manifest") : CoreGetError());
+            return false;
+        }
+
+        const QByteArray packet = buildPrematchPacket(ANCHOR_OP_PREMATCH_MANIFEST, m_selfUserId, manifestHash, manifest);
+        QSet<quint64> pendingAcks;
+        for (const auto& peer : peers)
+        {
+            if (peer.userId != m_selfUserId)
+                pendingAcks.insert(peer.userId);
+        }
+
+        qInfo() << "Rollback lobby prematch host begin"
+                << "hash" << static_cast<qulonglong>(manifestHash)
+                << "bytes" << manifest.size()
+                << "cheats" << static_cast<qulonglong>(cheatCount)
+                << "peers" << pendingAcks.size();
+
+        while (!pendingAcks.isEmpty())
+        {
+            QCoreApplication::processEvents(QEventLoop::AllEvents, 10);
+            for (const auto& peer : peers)
+            {
+                if (!pendingAcks.contains(peer.userId))
+                    continue;
+                const auto endpoint = endpointFor(peer);
+                if (!endpoint.first.isNull() && endpoint.second != 0)
+                    m_udp->writeDatagram(packet, endpoint.first, endpoint.second);
+            }
+
+            for (int i = 0; i < 5; i++)
+            {
+                QCoreApplication::processEvents(QEventLoop::AllEvents, 10);
+                if (!m_udp->waitForReadyRead(10))
+                    continue;
+                while (m_udp->hasPendingDatagrams())
+                {
+                    QByteArray datagram;
+                    QHostAddress sender;
+                    quint16 senderPort = 0;
+                    datagram.resize(int(m_udp->pendingDatagramSize()));
+                    m_udp->readDatagram(datagram.data(), datagram.size(), &sender, &senderPort);
+
+                    if (datagram.size() < 5 || std::memcmp(datagram.constData(), ANCHOR_MAGIC, 4) != 0 ||
+                        static_cast<quint8>(datagram.at(4)) != ANCHOR_OP_PREMATCH_ACK)
+                    {
+                        continue;
+                    }
+
+                    quint64 senderUserId = 0;
+                    uint64_t ackHash = 0;
+                    if (readPrematchSenderAndHash(datagram, senderUserId, ackHash) && ackHash == manifestHash)
+                        pendingAcks.remove(senderUserId);
+                }
+            }
+        }
+
+        if (!applyPrematchManifest(manifest, manifestHash, cheatCount))
+        {
+            error = QString::fromStdString(CoreGetError());
+            return false;
+        }
+
+        qInfo() << "Rollback lobby prematch host complete"
+                << "hash" << static_cast<qulonglong>(manifestHash)
+                << "cheats" << static_cast<qulonglong>(cheatCount);
+        return true;
+    }
+
+    const auto hostEndpoint = endpointFor(host);
+    if (hostEndpoint.first.isNull() || hostEndpoint.second == 0)
+    {
+        error = "Pre-match sync failed: invalid host endpoint";
+        return false;
+    }
+
+    qInfo() << "Rollback lobby prematch client waiting"
+            << "hostUserId" << host.userId
+            << "hostEndpoint" << hostEndpoint.first.toString()
+            << hostEndpoint.second;
+
+    for (;;)
+    {
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 10);
+        if (!m_udp->waitForReadyRead(50))
+            continue;
+
+        while (m_udp->hasPendingDatagrams())
+        {
+            QByteArray datagram;
+            QHostAddress sender;
+            quint16 senderPort = 0;
+            datagram.resize(int(m_udp->pendingDatagramSize()));
+            m_udp->readDatagram(datagram.data(), datagram.size(), &sender, &senderPort);
+
+            if (datagram.size() < 5 || std::memcmp(datagram.constData(), ANCHOR_MAGIC, 4) != 0 ||
+                static_cast<quint8>(datagram.at(4)) != ANCHOR_OP_PREMATCH_MANIFEST)
+            {
+                continue;
+            }
+
+            quint64 senderUserId = 0;
+            uint64_t manifestHash = 0;
+            if (!readPrematchSenderAndHash(datagram, senderUserId, manifestHash) || senderUserId != host.userId)
+                continue;
+
+            const int manifestOffset = 4 + 1 + 8 + 8;
+            const std::string manifest(datagram.constData() + manifestOffset, datagram.constData() + datagram.size());
+            size_t cheatCount = 0;
+            if (!applyPrematchManifest(manifest, manifestHash, cheatCount))
+            {
+                error = QString::fromStdString(CoreGetError());
+                return false;
+            }
+
+            const QByteArray ack = buildPrematchPacket(ANCHOR_OP_PREMATCH_ACK, m_selfUserId, manifestHash);
+            for (int i = 0; i < ANCHOR_PUNCH_BURST; i++)
+                m_udp->writeDatagram(ack, hostEndpoint.first, hostEndpoint.second);
+
+            qInfo() << "Rollback lobby prematch client complete"
+                    << "hash" << static_cast<qulonglong>(manifestHash)
+                    << "cheats" << static_cast<qulonglong>(cheatCount);
+            return true;
+        }
     }
 }
 
@@ -581,10 +967,17 @@ void LobbyClient::releaseUdpAnchor()
         m_udpKeepaliveTimer->stop();
     if (m_udp && m_udp->state() != QAbstractSocket::UnconnectedState)
     {
+        qInfo() << "Rollback lobby releasing UDP anchor"
+                << "localPort" << m_udp->localPort()
+                << "state" << m_udp->state();
         // abort() is more aggressive than close(): forces immediate socket
         // teardown rather than the graceful path. Necessary so GekkoNet can
         // re-bind the same port without racing the OS's lingering release.
         m_udp->abort();
+    }
+    else
+    {
+        qWarning() << "Rollback lobby releaseUdpAnchor skipped: udp not connected";
     }
 }
 
@@ -599,6 +992,9 @@ void LobbyClient::reopenUdpAnchor()
 
 void LobbyClient::onUdpReadyRead()
 {
+    if (m_inPrematchSync)
+        return;
+
     while (m_udp->hasPendingDatagrams())
     {
         QByteArray datagram;
@@ -695,7 +1091,7 @@ void LobbyClient::requestChatHistory(const QString& channel)
 
 void LobbyClient::createRoom(const QString& name, const QString& romName, const QString& romMd5,
                               const QString& romRegion, int maxPlayers, int delay, int prediction,
-                              const QString& password)
+                              int pacing, const QString& password)
 {
     QJsonObject rom;
     rom["name"]   = romName;
@@ -708,6 +1104,7 @@ void LobbyClient::createRoom(const QString& name, const QString& romName, const 
     d["maxPlayers"] = maxPlayers;
     d["delay"]      = delay;
     d["prediction"] = prediction;
+    d["pacing"]     = pacing;
     if (!password.isEmpty())
         d["password"] = password;
 
@@ -737,11 +1134,12 @@ void LobbyClient::startRoom()
 // ROOM_UPDATE_SETTINGS handler validates (host, state == "waiting"), clamps,
 // and rebroadcasts ROOM_STATE with the new values + auto flags so every seated
 // client picks them up and the match starts on the resolved delay.
-void LobbyClient::updateRoomSettings(int delay, int prediction, bool delayAuto, bool predictionAuto)
+void LobbyClient::updateRoomSettings(int delay, int prediction, int pacing, bool delayAuto, bool predictionAuto)
 {
     QJsonObject d;
     d["delay"]          = delay;
     d["prediction"]     = prediction;
+    d["pacing"]         = pacing;
     d["delayAuto"]      = delayAuto;
     d["predictionAuto"] = predictionAuto;
     sendEnvelope("ROOM_UPDATE_SETTINGS", d);

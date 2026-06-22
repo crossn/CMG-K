@@ -355,6 +355,10 @@ static l_Setting get_setting(SettingsID settingId)
     case SettingsID::Rollback_StallDiagnostics:
         setting = {SETTING_SECTION_ROLLBACK, "StallDiagnostics", false};
         break;
+    case SettingsID::Rollback_PacingMode:
+        // 0 = symmetric/aggressive (default), 1 = asymmetric/Slippi-style.
+        setting = {SETTING_SECTION_ROLLBACK, "PacingMode", 0};
+        break;
 
     case SettingsID::Core_GFX_Plugin:
         setting = {SETTING_SECTION_CORE, "GFX_Plugin", 

@@ -270,6 +270,7 @@ private:
     // (0..9), so currentIndex() is the wire value.
     QComboBox* m_delayCombo      = nullptr;
     QComboBox* m_predictionCombo = nullptr;
+    QComboBox* m_pacingCombo     = nullptr;  // 0 = aggressive, 1 = smooth
     bool       m_suppressSettingsSignal = false;  // guard against ROOM_STATE → setCurrentIndex echo
 
     // Per-player local toggle: when checked, this client writes a .krec of the
@@ -322,10 +323,12 @@ private:
     quint64  m_currentRoomId = 0;
 
     QString m_currentRoomGame;
+    QString m_currentRoomMd5;
     QString m_currentRoomRegion;
     QString m_currentRoomState;
     int     m_currentRoomDelay      = 2;
     int     m_currentRoomPrediction = 7;
+    int     m_currentRoomPacing     = 0;   // 0 = aggressive, 1 = smooth
     quint64 m_currentRoomHostId     = 0;   // seated host's user id (0 when none)
     quint64 m_currentMatchId        = 0;
 
