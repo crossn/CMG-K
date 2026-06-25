@@ -3460,19 +3460,39 @@ void MainWindow::timerEvent(QTimerEvent *event)
             const int liveFrame = this->ui_SpectateLiveFrame > 0
                 ? this->ui_SpectateLiveFrame
                 : n02::playbackGetTotalFrames();
-            const int target = 90; // ~1.5 s behind live
-            const int behind = liveFrame - n02::playbackGetCurrentFrame();
+            const int settle   = 90;  // once catching up, stop ~1.5 s behind live
+            const int reengage = 240; // but don't RE-start catch-up until ~4 s behind
+            const int behind   = liveFrame - n02::playbackGetCurrentFrame();
 
-            if (behind > target)
+            // Hysteresis: engage catch-up only when we're well behind, then run
+            // until we're close. Without the gap, normal live-stream jitter near
+            // the edge would flip the headless toggle on/off and flicker the
+            // screen. The initial join (behind = whole backlog) always engages.
+            const bool wantFastForward = this->ui_SpectateFastForward
+                ? (behind > settle)
+                : (behind > reengage);
+
+            if (wantFastForward)
             {
-                // Catch up headless: drop video/audio/pacing so the emulator
-                // runs uncapped (the krec still feeds via the PIF sync callback).
-                // Drains the backlog in ~1-2 s instead of crawling at rendered 5x.
+                // Fast-forward the buffered krec up to the broadcaster's live
+                // edge. Drop video+audio (headless) so rendering can't cap the
+                // rate, but keep PACING ON and drive the core's speed limiter —
+                // that's the mechanism that actually advances frames faster.
+                // (Dropping the pacing flag skips the limiter but, in practice,
+                // does NOT run uncapped — it crawls at ~1x, so the whole backlog
+                // took realtime to drain.) Speed is capped at the core's 1000%
+                // (10x) max; scale to the gap so a big backlog drains at full
+                // tilt and eases off as we approach the edge.
                 if (!this->ui_SpectateFastForward)
                 {
-                    CoreSetFrameOutput(CoreFrameOutput_Input);
+                    CoreSetFrameOutput(CoreFrameOutput_Input | CoreFrameOutput_Pacing);
                     this->ui_SpectateFastForward = true;
                 }
+                const int speed = behind > 900 ? 1000   // far behind: 10x
+                                : behind > 300 ? 500    // 5x
+                                :                200;   // near the edge: 2x
+                if (CoreGetSpeedFactor() != speed)
+                    CoreSetSpeedFactor(speed);
             }
             else if (this->ui_SpectateFastForward)
             {
