@@ -18,6 +18,8 @@
 #include <QStringList>
 #include <QByteArray>
 #include <QMutex>
+#include <QPoint>
+#include <QVariant>
 
 #include <RMG-Core/RomSettings.hpp>
 
@@ -29,7 +31,6 @@ class QTextEdit;
 class QLineEdit;
 class QPushButton;
 class QSplitter;
-class QTabWidget;
 class QStackedWidget;
 class QComboBox;
 class QCheckBox;
@@ -142,6 +143,7 @@ private slots:
     void onSpectateFailed(quint64 matchId, const QString& reason);
 
     void onChatSendClicked();
+    void onRoomChatSendClicked();
     void onChatMessageReceived(const LobbyClient::ChatMessage& msg);
     void onMatchBegin(quint64 matchId, const QList<LobbyClient::LobbyMatchPeer>& peers);
 
@@ -164,6 +166,12 @@ private:
 
     // Repopulate the browse-view ROM picker from m_roms (RMG-K library).
     void     populateBrowseRoms();
+
+    // Resolve the game selected in the (editable) browse picker to its item data
+    // {name, md5, file}. Falls back to matching the typed text to an item, so a
+    // typed-but-not-committed entry still resolves. Shared by Quick Match and
+    // Create Room. Empty map when nothing valid is selected.
+    QVariantMap selectedBrowseRom() const;
 
     // Swap the top-level stack between the connect screen and the live lobby.
     void     showConnectView(const QString& statusMessage = QString());
@@ -216,6 +224,7 @@ private:
     struct SeatRow
     {
         QWidget* row       = nullptr;
+        QLabel*  dragHandle = nullptr;    // ⋮⋮ — host-only drag grip (reorder)
         QLabel*  dotLabel  = nullptr;     // ● filled, ○ empty
         QLabel*  slotLabel = nullptr;     // "P1"
         QLabel*  nameLabel = nullptr;     // username or "Waiting…"
@@ -229,6 +238,29 @@ private:
     void renderSeatEmpty(SeatRow& row);
     void renderSeatFilled(SeatRow& row, const QString& username, bool isHost,
                           bool isSelf, int pingMs, bool canKick);
+
+    // Seat reorder (host, waiting): a seat's drag handle starts a QDrag carrying
+    // its slot; the seats container handles the drop and asks the server to swap.
+    void startSeatDrag(int slot, QWidget* card);
+    int  seatSlotAtPos(const QPoint& pos) const;
+
+    // Returns the local ROM path whose MD5 matches `md5` (case-insensitive), or
+    // empty if the user doesn't have that ROM. Gates joining a room and resolves
+    // the ROM at match start so both use identical matching.
+    QString localRomPathForMd5(const QString& md5) const;
+
+    // Cleanly abort a match that failed before emulation started (ROM missing or
+    // pre-match sync failed/timed out): reset await state, tell the server the
+    // match is over so the room returns to "waiting", reopen the ping anchor,
+    // and surface `reason` in room chat. Prevents the dialog from getting stuck
+    // on "Connecting…" with a half-started match.
+    void abortMatchStart(const QString& reason);
+
+    // Enable the host's Start button only once the room is startable: waiting,
+    // 2+ players seated, AND a ping measured for every seated peer. Re-run from
+    // both onRoomStateChanged (seats change) and onPingMeasured (ping lands),
+    // since pings arrive asynchronously after seats populate.
+    void refreshStartButton();
 
     LobbyClient* m_client = nullptr;
 
@@ -253,10 +285,10 @@ private:
     QTreeWidget* m_roomsTree     = nullptr;
     QTreeWidget* m_matchesTree   = nullptr;
     QTimer*      m_matchDurationTimer = nullptr;
-    QTabWidget*  m_chatTabs      = nullptr;
     QTextEdit*   m_chatViewLobby = nullptr;
-    QTextEdit*   m_chatViewRoom  = nullptr; // nullptr when not in a room
-    QLineEdit*   m_chatInput     = nullptr;
+    QTextEdit*   m_chatViewRoom  = nullptr; // room chat, shown in the in-room view
+    QLineEdit*   m_chatInput     = nullptr; // lobby chat input (middle column)
+    QLineEdit*   m_roomChatInput = nullptr; // room chat input (below the seats)
 
     // ── Stacked browse / in-room view ──
     QStackedWidget* m_roomsStack = nullptr;
@@ -305,6 +337,10 @@ private:
 
     // Seat rows (always 4 — slots beyond maxPlayers are hidden)
     SeatRow    m_seats[4];
+    QWidget*   m_seatsBox        = nullptr; // container that accepts seat drops
+    bool       m_canReorderSeats = false;   // host && room waiting
+    QPoint     m_seatDragStartPos;          // press point, to clear the drag threshold
+    int        m_seatDragSlot    = 0;       // slot being dragged (0 = none)
 
     // Drives PING_PROBE_REQUEST → UDP PROBE → PROBE_REPLY refresh cycle for
     // each peer seated in the current room. Started when a room is entered,

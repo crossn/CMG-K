@@ -124,6 +124,10 @@ public:
     void startRoom();
     void kickFromRoom(quint64 userId);
 
+    // Host-only: swap two seats (P1-P4) to re-order players before the match.
+    // Server validates (host, waiting, valid slots) and rebroadcasts ROOM_STATE.
+    void swapSeats(int slotA, int slotB);
+
     // Host-only: change the room's rollback delay / prediction / pacing. The
     // *Auto flags tell the server whether delay/prediction are host-Auto-driven
     // so non-hosts can mirror the host's label (pacing has no Auto). Server must

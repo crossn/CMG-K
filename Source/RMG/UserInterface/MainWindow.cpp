@@ -4192,6 +4192,7 @@ void MainWindow::on_Lobby_SpectateLaunch(quint64 matchId, QString gameName)
     this->ui_SpectateActive    = true;
     this->ui_SpectateMatchId   = matchId;
     this->ui_SpectateLiveFrame = 0; // updated from broadcaster-stamped SPECTATE_DATA
+    this->ui_SpectateNamesShown = false; // set once the krec header arrives
 
     // ~60 Hz: drive the playback state machine + fast-forward.
     if (this->ui_SpectateTimerId == 0)
@@ -4210,6 +4211,18 @@ void MainWindow::on_Lobby_SpectateData(QByteArray bytes, int liveFrame)
     if (liveFrame > this->ui_SpectateLiveFrame)
         this->ui_SpectateLiveFrame = liveFrame;
     n02::playbackAppendBytes(bytes.constData(), static_cast<int>(bytes.size()));
+
+#ifdef _WIN32
+    // The krec header carries the slot-ordered player names; once it has been
+    // parsed (synchronously, in playbackAppendBytes above), label the OSD ports
+    // from it exactly like a live match does. Names ride in the stream, not a
+    // side channel, so the slot order is authoritative.
+    if (!this->ui_SpectateNamesShown && n02::playbackHeaderReady())
+    {
+        OnScreenDisplaySetKailleraPortLabels(n02::playbackNumPlayers(), GetLiveKailleraPortLabelNames());
+        this->ui_SpectateNamesShown = true;
+    }
+#endif
 }
 
 void MainWindow::on_Lobby_SpectateClosed(QString reason)
@@ -4822,11 +4835,33 @@ void MainWindow::on_Lobby_SessionRequested(QString gameName, QStringList remoteP
     {
         this->showErrorMessage("ROM Not Found",
             "Could not find ROM: " + gameName + "\n\nPlease add it to your ROM directory and refresh the list.");
+        // The lobby flagged itself "awaiting emulation" before emitting
+        // matchReady; clear it so the room doesn't stay stuck on "Connecting…".
+#ifdef NETPLAY
+        if (this->rollbackLobbyDialog != nullptr)
+            this->rollbackLobbyDialog->notifyEmulationFinished();
+#endif
         return;
     }
 
     if (this->emulationThread->isRunning())
     {
+        // ~2 s of 50 ms retries. If the previous game still won't stop after
+        // that it's wedged; bail out gracefully rather than retry forever (which
+        // left a hung game running in the background).
+        if (++this->ui_RollbackRelaunchAttempts > 40)
+        {
+            this->ui_RollbackRelaunchAttempts = 0;
+            CoreAddCallbackMessage(CoreDebugMessageType::Error,
+                "Lobby→LobbySession: previous emulation won't stop — giving up to avoid a hung instance");
+            this->showErrorMessage("Couldn't start match",
+                "The previous game is still shutting down. Please wait a moment and try again.");
+#ifdef NETPLAY
+            if (this->rollbackLobbyDialog != nullptr)
+                this->rollbackLobbyDialog->notifyEmulationFinished();
+#endif
+            return;
+        }
         CoreAddCallbackMessage(CoreDebugMessageType::Info,
             "Lobby→LobbySession: emulation thread running — stopping and retrying");
         CoreStopEmulation();
@@ -4837,6 +4872,7 @@ void MainWindow::on_Lobby_SessionRequested(QString gameName, QStringList remoteP
             });
         return;
     }
+    this->ui_RollbackRelaunchAttempts = 0;
 
     if (this->ui_RollbackNetplayLaunchActive)
     {
@@ -4931,6 +4967,11 @@ void MainWindow::on_Lobby_RoomChatReceived(QString nickname, QString message)
 
     nickname = nickname.trimmed();
     message = NormalizeOsdKailleraChatMessage(message);
+
+    // Carry room chat into the krec so broadcast spectators (and saved replays)
+    // see it too — a no-op unless a recording is open. The spectator's playback
+    // routes the embedded 0x08 record to its OSD like any other chat line.
+    n02::recordingQueueChat(nickname.toUtf8().constData(), message.toUtf8().constData());
 
     const std::string chatLine = "<" + nickname.toStdString() + "> " + message.toStdString();
     OnScreenDisplaySetKailleraChatMessage(chatLine);

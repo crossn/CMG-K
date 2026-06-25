@@ -156,11 +156,16 @@ class MainWindow : public QMainWindow, private Ui::MainWindow
     bool ui_RollbackLivePumpActive = false;
     bool ui_RollbackNetplayRoomActive = false;
     bool ui_RollbackNetplayLaunchActive = false;
+    // Bounds the "stop the old game, retry in 50ms" relaunch loop so a previous
+    // emulation that refuses to stop can't spin forever (hung background game).
+    int  ui_RollbackRelaunchAttempts = 0;
     // Spectating a broadcast match via streaming krec playback (distinct from the
     // lobby *match* flow above — the spectator runs playback, not GekkoNet).
     bool    ui_SpectateActive  = false;
     quint64 ui_SpectateMatchId = 0;
     int     ui_SpectateTimerId = 0;
+    bool    ui_SpectateNamesShown = false; // OSD port labels set from krec header
+
     int     ui_SpectateLiveFrame   = 0;     // broadcaster's live krec frame (fast-forward target)
     bool    ui_SpectateFastForward = false; // true while headless-catching-up to the live edge
     // Lazily creates rollbackLobbyDialog and wires its signals (once).

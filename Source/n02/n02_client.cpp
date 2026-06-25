@@ -25,6 +25,7 @@
 #include <fstream>
 #include <filesystem>
 #include <vector>
+#include <utility>
 
 #include "common/nThread.h"
 #include "common/k_socket.h"
@@ -120,6 +121,15 @@ static std::function<void(const void*, int)> recording_stream_sink;
 // broadcast drain to stamp BROADCAST_DATA so spectators know the live edge.
 static std::atomic<int> recording_frame_count{0};
 
+// Lobby room chat arrives on the UI thread, but RecordingBuffer is only safe to
+// touch on the emulation thread. Queue chat here and drain it into the krec (as
+// 0x08 records) on the emulation thread just before the next input frame, so the
+// buffer always has a single writer. recording_active gates enqueues so the
+// queue can't grow without bound while nothing is being recorded.
+static std::atomic<bool> recording_active{false};
+static std::mutex recording_chat_mutex;
+static std::vector<std::pair<std::string, std::string>> recording_chat_queue;
+
 static std::filesystem::path pathFromUtf8String(const std::string& utf8) {
 #if defined(__cpp_char8_t)
     std::u8string converted;
@@ -186,6 +196,11 @@ public:
 } RecordingBuffer;
 
 static void close_recording() {
+    recording_active.store(false, std::memory_order_release);
+    {
+        std::lock_guard<std::mutex> lk(recording_chat_mutex);
+        recording_chat_queue.clear();
+    }
     if (recording_file.is_open()) {
         if (RecordingBuffer.len() > 0)
             RecordingBuffer.write();
@@ -195,6 +210,26 @@ static void close_recording() {
         if (callbacks.recordingFileClosedCallback) {
             callbacks.recordingFileClosedCallback();
         }
+    }
+}
+
+// Drain queued chat into the open krec as 0x08 records (nick\0 msg\0). Called on
+// the emulation thread before an input frame, so RecordingBuffer keeps a single
+// writer. Each record is flushed on its own; lines are length-bounded at enqueue
+// time so a record always fits RecordingBuffer's 500-byte buffer.
+static void drain_recording_chat() {
+    std::vector<std::pair<std::string, std::string>> pending;
+    {
+        std::lock_guard<std::mutex> lk(recording_chat_mutex);
+        if (recording_chat_queue.empty())
+            return;
+        pending.swap(recording_chat_queue);
+    }
+    for (auto& c : pending) {
+        RecordingBuffer.put_char(8);
+        RecordingBuffer.put_bytes(const_cast<char*>(c.first.c_str()),  (int)c.first.size()  + 1);
+        RecordingBuffer.put_bytes(const_cast<char*>(c.second.c_str()), (int)c.second.size() + 1);
+        RecordingBuffer.write();
     }
 }
 
@@ -325,6 +360,14 @@ static void openRecordingFile(const char* appName, const char* game, int player,
             if (recording_stream_sink)
                 recording_stream_sink(header, (int)sizeof(header));
         }
+
+        // Fresh recording: drop any chat queued before this session and arm chat
+        // capture only if the file actually opened.
+        {
+            std::lock_guard<std::mutex> lk(recording_chat_mutex);
+            recording_chat_queue.clear();
+        }
+        recording_active.store(recording_file.is_open(), std::memory_order_release);
 }
 
 static int gameCallbackWrapper(char *game, int player, int numplayers_arg) {
@@ -516,6 +559,17 @@ static bool parsePlaybackHeader() {
     pb.pos = 264;
     playerno = pb.load_int();
     numplayers = pb.load_int();
+
+    // Player names live at [272,400) on KRC1. Copy them into the shared global so
+    // a spectator can label the OSD ports from the stream, just like a live match
+    // does (KRC0 has no names — leave them blank).
+    memset(recording_player_names, 0, sizeof(recording_player_names));
+    if (isKRC1)
+    {
+        memcpy(recording_player_names, pb.data.data() + 272, sizeof(recording_player_names));
+        for (int i = 0; i < 4; i++)
+            recording_player_names[i][31] = '\0';
+    }
 
     pb.headerSize = hs;
     pb.pos = hs;
@@ -932,10 +986,25 @@ int modifyPlayValues(void *values, int size) {
     return -1;
 }
 
+void recordingQueueChat(const char* nick, const char* msg) {
+    if (!recording_active.load(std::memory_order_acquire))
+        return;
+    std::string n(nick ? nick : "");
+    std::string m(msg ? msg : "");
+    // Bound so a 0x08 record always fits RecordingBuffer (500 bytes) and the
+    // playback reader (nick[100] / msg[500]).
+    if (n.size() > 31)  n.resize(31);
+    if (m.size() > 255) m.resize(255);
+    std::lock_guard<std::mutex> lk(recording_chat_mutex);
+    if (recording_chat_queue.size() < 256) // backstop against runaway growth
+        recording_chat_queue.emplace_back(std::move(n), std::move(m));
+}
+
 void recordingWriteInputs(const void* values, int size) {
     if (!recording_file.is_open() || values == nullptr || size <= 0) {
         return;
     }
+    drain_recording_chat(); // flush any queued chat just ahead of this frame
     const short siz = (size > 0x7FFF) ? 0x7FFF : (short)size;
     RecordingBuffer.put_char(0x12);
     RecordingBuffer.put_short(siz);
@@ -1063,6 +1132,15 @@ int playbackGetCurrentFrame() {
 int playbackGetTotalFrames() {
     std::lock_guard<std::recursive_mutex> lock(playbackMutex);
     return (int)PlayBackBuffer.frameIndex.size();
+}
+
+bool playbackHeaderReady() {
+    std::lock_guard<std::recursive_mutex> lock(playbackMutex);
+    return PlayBackBuffer.headerParsed;
+}
+
+int playbackNumPlayers() {
+    return numplayers;
 }
 
 } // namespace n02

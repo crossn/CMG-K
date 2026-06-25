@@ -12,7 +12,6 @@
 #include <QHBoxLayout>
 #include <QFormLayout>
 #include <QLineEdit>
-#include <QComboBox>
 #include <QSpinBox>
 #include <QCheckBox>
 #include <QPushButton>
@@ -20,19 +19,22 @@
 #include <QDialogButtonBox>
 #include <QSettings>
 #include <QFileInfo>
-#include <QVariantMap>
 
 using namespace UserInterface::Dialog;
 
 CreateRoomDialog::CreateRoomDialog(const QString& defaultUsername,
-                                   const QMap<QString, CoreRomSettings>& roms,
+                                   const QString& gameName, const QString& gameMd5,
                                    QWidget* parent)
     : QDialog(parent)
 {
     setWindowTitle("Create Room");
     setModal(true);
+    // The game comes from the lobby's shared picker, not a picker of our own.
+    m_romName = gameName;
+    m_romMd5  = gameMd5;
     buildUi(defaultUsername);
-    populateRoms(roms);
+    if (m_gameLabel)
+        m_gameLabel->setText(gameName.isEmpty() ? QStringLiteral("—") : gameName);
     loadDefaults();
     validateInput();
 }
@@ -51,10 +53,9 @@ void CreateRoomDialog::buildUi(const QString& defaultUsername)
         m_nameEdit->setPlaceholderText("My Room");
     form->addRow("Room name:", m_nameEdit);
 
-    m_romCombo = new QComboBox(this);
-    m_romCombo->setEditable(false);
-    m_romCombo->setSizeAdjustPolicy(QComboBox::AdjustToContents);
-    form->addRow("Game:", m_romCombo);
+    m_gameLabel = new QLabel(this);
+    m_gameLabel->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    form->addRow("Game:", m_gameLabel);
 
     m_maxPlayersSpin = new QSpinBox(this);
     m_maxPlayersSpin->setRange(2, 4);
@@ -99,44 +100,8 @@ void CreateRoomDialog::buildUi(const QString& defaultUsername)
 
     // Validation hooks
     connect(m_nameEdit,      &QLineEdit::textChanged, this, &CreateRoomDialog::validateInput);
-    connect(m_romCombo,      QOverload<int>::of(&QComboBox::currentIndexChanged), this, &CreateRoomDialog::validateInput);
     connect(m_passwordCheck, &QCheckBox::toggled,     this, &CreateRoomDialog::onPasswordToggled);
     connect(m_passwordEdit,  &QLineEdit::textChanged, this, &CreateRoomDialog::validateInput);
-}
-
-void CreateRoomDialog::populateRoms(const QMap<QString, CoreRomSettings>& roms)
-{
-    m_romCombo->clear();
-    if (roms.isEmpty())
-    {
-        m_romCombo->addItem("No ROMs in your library — add some first");
-        m_romCombo->setEnabled(false);
-        return;
-    }
-
-    // Sort by display name for predictable ordering.
-    QList<QString> filePaths = roms.keys();
-    QMap<QString, QString> sortedByName; // name → file
-    for (const auto& file : filePaths)
-    {
-        const auto& settings = roms.value(file);
-        const QString display = displayGameName(QString::fromStdString(settings.GoodName), file);
-        // Append file path as suffix to keep duplicate display names unique.
-        sortedByName.insert(display + "\x01" + file, file);
-    }
-
-    for (auto it = sortedByName.constBegin(); it != sortedByName.constEnd(); ++it)
-    {
-        const QString file = it.value();
-        const auto& settings = roms.value(file);
-        const QString display = displayGameName(QString::fromStdString(settings.GoodName), file);
-
-        QVariantMap data;
-        data["name"] = display;
-        data["md5"]  = QString::fromStdString(settings.MD5);
-        data["file"] = file;
-        m_romCombo->addItem(display, data);
-    }
 }
 
 QString CreateRoomDialog::displayGameName(const QString& goodName, const QString& filePath)
@@ -167,7 +132,7 @@ void CreateRoomDialog::onPasswordToggled(bool enabled)
 void CreateRoomDialog::validateInput()
 {
     const QString name = m_nameEdit->text().trimmed();
-    const bool   hasRom = m_romCombo->isEnabled() && !m_romCombo->currentData().isNull();
+    const bool   hasRom = !m_romMd5.isEmpty();
     const bool passwordRequired = m_passwordCheck->isChecked();
     const QString pwd  = m_passwordEdit->text();
 
@@ -188,9 +153,7 @@ void CreateRoomDialog::onCreateClicked()
     // Capture form values. Delay/prediction stay at their loadDefaults()
     // values (or the struct defaults 2/7) — host adjusts in-room.
     m_name = m_nameEdit->text().trimmed();
-    const QVariantMap romData = m_romCombo->currentData().toMap();
-    m_romName    = romData.value("name").toString();
-    m_romMd5     = romData.value("md5").toString();
+    // m_romName / m_romMd5 were set from the lobby picker in the constructor.
     m_romRegion  = ""; // baked into the ROM; resolved later via md5 lookup
     m_maxPlayers = m_maxPlayersSpin->value();
     m_password   = m_passwordCheck->isChecked() ? m_passwordEdit->text() : QString();
@@ -213,7 +176,6 @@ void CreateRoomDialog::showCreateFailure(const QString& reason)
 void CreateRoomDialog::setFormEnabled(bool enabled)
 {
     m_nameEdit->setEnabled(enabled);
-    m_romCombo->setEnabled(enabled);
     m_maxPlayersSpin->setEnabled(enabled);
     m_passwordCheck->setEnabled(enabled);
     m_passwordEdit->setEnabled(enabled && m_passwordCheck->isChecked());
@@ -224,13 +186,6 @@ void CreateRoomDialog::loadDefaults()
 {
     QSettings s;
     s.beginGroup("Lobby/CreateRoom");
-    if (s.contains("Rom"))
-    {
-        const QString preferred = s.value("Rom").toString();
-        const int idx = m_romCombo->findText(preferred);
-        if (idx >= 0)
-            m_romCombo->setCurrentIndex(idx);
-    }
     if (s.contains("MaxPlayers")) m_maxPlayersSpin->setValue(s.value("MaxPlayers").toInt());
     // Seed the initial delay/prediction from the last in-room values the
     // host configured. The in-room view writes to the same keys.
@@ -243,7 +198,7 @@ void CreateRoomDialog::saveDefaults()
 {
     QSettings s;
     s.beginGroup("Lobby/CreateRoom");
-    s.setValue("Rom",        m_romName);
+    // The game selection is persisted by the lobby's shared picker, not here.
     s.setValue("MaxPlayers", m_maxPlayers);
     // Delay/prediction persistence moves to the in-room view; CreateRoom
     // only consumes those defaults, doesn't write them.

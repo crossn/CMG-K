@@ -792,6 +792,12 @@ bool LobbyClient::syncPrematchManifest(const QList<LobbyMatchPeer>& peers, int l
         return false;
     }
 
+    // Pre-match sync spins a nested event loop on the UI thread. Without a wall-
+    // clock cap, a peer that never answers (UDP blocked, crashed after
+    // MATCH_BEGIN, missing ROM) would hang the whole client forever — the bug
+    // that left users force-killing the window. Bail out gracefully after this.
+    const qint64 kPrematchSyncTimeoutMs = 10'000;
+
     LobbyMatchPeer local{};
     LobbyMatchPeer host{};
     bool foundLocal = false;
@@ -847,8 +853,14 @@ bool LobbyClient::syncPrematchManifest(const QList<LobbyMatchPeer>& peers, int l
                 << "cheats" << static_cast<qulonglong>(cheatCount)
                 << "peers" << pendingAcks.size();
 
+        const qint64 hostSyncDeadlineMs = QDateTime::currentMSecsSinceEpoch() + kPrematchSyncTimeoutMs;
         while (!pendingAcks.isEmpty())
         {
+            if (QDateTime::currentMSecsSinceEpoch() > hostSyncDeadlineMs)
+            {
+                error = QStringLiteral("Pre-match sync timed out — a player didn't respond (missing ROM or blocked connection).");
+                return false;
+            }
             QCoreApplication::processEvents(QEventLoop::AllEvents, 10);
             for (const auto& peer : peers)
             {
@@ -910,8 +922,14 @@ bool LobbyClient::syncPrematchManifest(const QList<LobbyMatchPeer>& peers, int l
             << "hostEndpoint" << hostEndpoint.first.toString()
             << hostEndpoint.second;
 
+    const qint64 clientSyncDeadlineMs = QDateTime::currentMSecsSinceEpoch() + kPrematchSyncTimeoutMs;
     for (;;)
     {
+        if (QDateTime::currentMSecsSinceEpoch() > clientSyncDeadlineMs)
+        {
+            error = QStringLiteral("Pre-match sync timed out — never heard from the host.");
+            return false;
+        }
         QCoreApplication::processEvents(QEventLoop::AllEvents, 10);
         if (!m_udp->waitForReadyRead(50))
             continue;
@@ -1150,6 +1168,17 @@ void LobbyClient::kickFromRoom(quint64 userId)
     QJsonObject d;
     d["userId"] = QJsonValue(qint64(userId));
     sendEnvelope("ROOM_KICK", d);
+}
+
+void LobbyClient::swapSeats(int slotA, int slotB)
+{
+    QJsonObject d;
+    d["slotA"] = slotA;
+    d["slotB"] = slotB;
+    // Host-only; the server validates (host, state == "waiting", valid slots),
+    // swaps the two seats and rebroadcasts ROOM_STATE so every seated client
+    // re-renders with the new P1-P4 order.
+    sendEnvelope("ROOM_SWAP_SLOTS", d);
 }
 
 void LobbyClient::requestPingProbe(quint64 targetUserId)

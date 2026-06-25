@@ -47,8 +47,6 @@
 #include <QStackedWidget>
 #include <QTreeWidget>
 #include <QHeaderView>
-#include <QTabWidget>
-#include <QTabBar>
 #include <QTextEdit>
 #include <QLineEdit>
 #include <QJsonArray>
@@ -56,6 +54,7 @@
 #include <QLabel>
 #include <QFrame>
 #include <QComboBox>
+#include <QCompleter>
 #include <QCheckBox>
 #include <QSettings>
 #include <QMessageBox>
@@ -64,6 +63,12 @@
 #include <QShowEvent>
 #include <QCloseEvent>
 #include <QMouseEvent>
+#include <QDrag>
+#include <QMimeData>
+#include <QDragEnterEvent>
+#include <QDragMoveEvent>
+#include <QDropEvent>
+#include <QPixmap>
 #include <QTimer>
 #include <QFont>
 #include <QUrl>
@@ -106,39 +111,6 @@ void setAutoComboLabel(QComboBox* combo, int resolved)
     if (idx >= 0) combo->setItemText(idx, QStringLiteral("Auto (%1 f)").arg(resolved));
 }
 
-// Tab bar where every tab is half the column wide: one tab → 50% (the right
-// half stays empty), two tabs → 50% each = 100%. So the "Lobby" tab keeps the
-// same width whether or not a "Room" tab is present. Never narrower than the
-// tab's own content, so labels never clip on a very narrow column.
-class HalfWidthTabBar : public QTabBar
-{
-public:
-    using QTabBar::QTabBar;
-protected:
-    QSize tabSizeHint(int index) const override
-    {
-        QSize hint = QTabBar::tabSizeHint(index);
-        const int avail = parentWidget() ? parentWidget()->width() : width();
-        if (avail > 0)
-            hint.setWidth(qMax(hint.width(), avail / 2));
-        return hint;
-    }
-};
-
-// QTabWidget that installs the HalfWidthTabBar. setTabBar()/tabBar() are
-// protected on QTabWidget, so the custom bar has to be wired up from inside a
-// subclass rather than after construction.
-class ChatTabWidget : public QTabWidget
-{
-public:
-    explicit ChatTabWidget(QWidget* parent = nullptr) : QTabWidget(parent)
-    {
-        auto* bar = new HalfWidthTabBar(this);
-        bar->setExpanding(false);   // a lone tab must stay 50%, not stretch
-        bar->setDrawBase(false);    // no full-width base line under the tabs
-        setTabBar(bar);
-    }
-};
 } // namespace
 
 // ──────────────────────────────────────────────────────────────────────
@@ -150,6 +122,9 @@ namespace
 {
     const char* const CHANNEL_LOBBY = "lobby";
     const char* const CHANNEL_ROOM  = "room";
+
+    // MIME type carrying the dragged seat's slot during a host reorder drag.
+    const char* const kSeatMime = "application/x-rmgk-seat-slot";
 
     constexpr int MARGIN_OUTER       = 8;   // dialog/column outside padding
     constexpr int MARGIN_GROUP       = 10;  // banner / accent-frame content inset
@@ -376,11 +351,13 @@ RollbackLobbyDialog::RollbackLobbyDialog(QWidget* parent)
     m_broadcastDrainTimer->setInterval(80);
     connect(m_broadcastDrainTimer, &QTimer::timeout, this, &RollbackLobbyDialog::onBroadcastDrainTick);
 
-    // 5 s cadence is a balance: fast enough that the displayed ping tracks
-    // real conditions, slow enough that we're not flooding peers' anchor
-    // sockets. Stays stopped until a room is entered.
+    // 3 s cadence is a balance: fast enough that the displayed ping tracks real
+    // conditions, slow enough that we're not flooding peers' anchor sockets. The
+    // *first* ping for a peer no longer waits on this tick — onRoomStateChanged
+    // fires an immediate probe the moment a peer is seated. Stays stopped until a
+    // room is entered.
     m_pingProbeTimer = new QTimer(this);
-    m_pingProbeTimer->setInterval(5'000);
+    m_pingProbeTimer->setInterval(3'000);
     connect(m_pingProbeTimer, &QTimer::timeout, this, &RollbackLobbyDialog::onPingProbeTick);
 }
 
@@ -670,6 +647,30 @@ QWidget* RollbackLobbyDialog::buildBrowseView()
     m_browseRomCombo = new QComboBox(this);
     m_browseRomCombo->setObjectName("BrowseRomCombo");
     m_browseRomCombo->setSizeAdjustPolicy(QComboBox::AdjustToContents);
+    // Searchable: type to filter (substring, case-insensitive) or scroll the
+    // full list. NoInsert keeps typed text from being added as a bogus entry.
+    m_browseRomCombo->setEditable(true);
+    m_browseRomCombo->setInsertPolicy(QComboBox::NoInsert);
+    if (auto* comp = m_browseRomCombo->completer())
+    {
+        comp->setCompletionMode(QCompleter::PopupCompletion);
+        comp->setFilterMode(Qt::MatchContains);
+        comp->setCaseSensitivity(Qt::CaseInsensitive);
+    }
+    // Remember the last game picked here — Create Room and Quick Match both key
+    // off this combo, so persisting on selection (not just on Create) means the
+    // choice survives across sessions however the user proceeds. populateBrowseRoms
+    // blocks signals while restoring, so this never fires for the restore itself.
+    connect(m_browseRomCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
+            this, [this](int idx) {
+                if (idx < 0 || !m_browseRomCombo->isEnabled()) return;
+                const QString name = m_browseRomCombo->itemText(idx);
+                if (name.isEmpty()) return;
+                QSettings s;
+                s.beginGroup("Lobby/CreateRoom");
+                s.setValue("Rom", name);
+                s.endGroup();
+            });
     gameRow->addWidget(gameLbl, 0);
     gameRow->addWidget(m_browseRomCombo, 1);
     lay->addLayout(gameRow);
@@ -921,6 +922,9 @@ QWidget* RollbackLobbyDialog::buildInRoomView()
     lay->addWidget(seatsHeader);
 
     auto* seatsBox = new QWidget(this);
+    m_seatsBox = seatsBox;
+    seatsBox->setAcceptDrops(true);      // host reorder: drop a seat onto another
+    seatsBox->installEventFilter(this);  // handles DragEnter/Move/Drop
     auto* seatsLay = new QVBoxLayout(seatsBox);
     seatsLay->setContentsMargins(0, SPACING_TIGHT, 0, 0);
     seatsLay->setSpacing(SPACING_TIGHT);
@@ -932,7 +936,33 @@ QWidget* RollbackLobbyDialog::buildInRoomView()
     }
     lay->addWidget(seatsBox);
 
-    lay->addStretch(1);
+    // ── Room chat — sits directly below the seats, with its own input. The
+    //    lobby chat stays in the dedicated middle column. ──
+    auto* roomChatHeader = new QLabel("ROOM CHAT", this);
+    roomChatHeader->setProperty("class", "SectionHeader");
+    roomChatHeader->setContentsMargins(0, SPACING_DEFAULT, 0, 0);
+    lay->addWidget(roomChatHeader);
+
+    auto* roomChatCard = new QFrame(this);
+    roomChatCard->setObjectName("LobbyCard");
+    auto* roomChatLay = new QVBoxLayout(roomChatCard);
+    roomChatLay->setContentsMargins(SPACING_DEFAULT, SPACING_DEFAULT, SPACING_DEFAULT, SPACING_DEFAULT);
+    roomChatLay->setSpacing(SPACING_DEFAULT);
+
+    m_chatViewRoom = new QTextEdit(roomChatCard);
+    m_chatViewRoom->setReadOnly(true);
+    m_chatViewRoom->setLineWrapMode(QTextEdit::WidgetWidth);
+    m_chatViewRoom->setFrameShape(QFrame::NoFrame);
+    roomChatLay->addWidget(m_chatViewRoom, 1);
+
+    m_roomChatInput = new QLineEdit(roomChatCard);
+    m_roomChatInput->setPlaceholderText("Message the room…");
+    m_roomChatInput->setEnabled(false);
+    m_roomChatInput->setMinimumHeight(BUTTON_MIN_HEIGHT);
+    connect(m_roomChatInput, &QLineEdit::returnPressed, this, &RollbackLobbyDialog::onRoomChatSendClicked);
+    roomChatLay->addWidget(m_roomChatInput);
+
+    lay->addWidget(roomChatCard, 1);   // expands to fill between seats and actions
 
     // ── Action bar ──
     auto* actionRow = new QHBoxLayout;
@@ -950,7 +980,7 @@ QWidget* RollbackLobbyDialog::buildInRoomView()
     m_dropBtn = new QPushButton("Drop Game", this);
     m_dropBtn->setObjectName("DropBtn");
     m_dropBtn->setEnabled(false);
-    m_dropBtn->setMinimumHeight(BUTTON_MIN_HEIGHT);
+    m_dropBtn->setMinimumHeight(HERO_BUTTON_HEIGHT);
     m_dropBtn->setAutoDefault(false);
     m_dropBtn->setDefault(false);
     m_dropBtn->setCursor(Qt::PointingHandCursor);
@@ -959,7 +989,7 @@ QWidget* RollbackLobbyDialog::buildInRoomView()
 
     m_leaveBtn = new QPushButton("Leave Room", this);
     m_leaveBtn->setObjectName("LeaveBtn");
-    m_leaveBtn->setMinimumHeight(BUTTON_MIN_HEIGHT);
+    m_leaveBtn->setMinimumHeight(HERO_BUTTON_HEIGHT);
     m_leaveBtn->setAutoDefault(false);
     m_leaveBtn->setDefault(false);
     m_leaveBtn->setCursor(Qt::PointingHandCursor);
@@ -988,6 +1018,20 @@ void RollbackLobbyDialog::buildSeatRow(SeatRow& s, int slotIdx, QWidget* parent)
     auto* lay = new QHBoxLayout(s.row);
     lay->setContentsMargins(MARGIN_GROUP, SPACING_DEFAULT, SPACING_DEFAULT, SPACING_DEFAULT);
     lay->setSpacing(SPACING_DEFAULT);
+
+    // Drag grip — only shown to the host while the room is waiting (toggled in
+    // onRoomStateChanged). Dragging it onto another seat swaps the two players.
+    // A hidden widget reclaims its layout space, so non-host seats stay flush.
+    s.dragHandle = new QLabel(QStringLiteral("⋮⋮"), s.row);
+    s.dragHandle->setObjectName("SeatDragHandle");
+    s.dragHandle->setFixedWidth(14);
+    s.dragHandle->setAlignment(Qt::AlignCenter);
+    s.dragHandle->setForegroundRole(QPalette::PlaceholderText); // subtle grip
+    s.dragHandle->setCursor(Qt::OpenHandCursor);
+    s.dragHandle->setToolTip(QStringLiteral("Drag onto another seat to swap players"));
+    s.dragHandle->setVisible(false);
+    s.dragHandle->installEventFilter(this);
+    lay->addWidget(s.dragHandle);
 
     // Filled/empty dot — single glyph, tinted with the player's accent when
     // filled (set in renderSeatFilled), muted grey when empty.
@@ -1138,14 +1182,17 @@ void RollbackLobbyDialog::renderSeatFilled(SeatRow& s, const QString& username, 
 
 QWidget* RollbackLobbyDialog::buildChatColumn()
 {
-    // The tab labels ("Lobby" / "Room") already convey the column's identity;
-    // a borderless rounded card frame matches the players list and the P2P
-    // hosting screen. documentMode keeps the tabs flat so they don't double-
-    // border against the card edge.
+    // Lobby chat only — room chat lives below the seats in the in-room view.
+    // A bold header labels the column (it used to be a tab) and the chat sits
+    // in the same rounded card as the players list.
     auto* col = new QWidget(this);
     auto* lay = new QVBoxLayout(col);
     lay->setContentsMargins(MARGIN_OUTER, MARGIN_OUTER, MARGIN_OUTER, MARGIN_OUTER);
     lay->setSpacing(SPACING_DEFAULT);
+
+    auto* header = new QLabel("LOBBY CHAT", this);
+    header->setProperty("class", "SectionHeader");
+    lay->addWidget(header);
 
     auto* card = new QFrame(col);
     card->setObjectName("LobbyCard");
@@ -1153,22 +1200,14 @@ QWidget* RollbackLobbyDialog::buildChatColumn()
     cardLay->setContentsMargins(SPACING_DEFAULT, SPACING_DEFAULT, SPACING_DEFAULT, SPACING_DEFAULT);
     cardLay->setSpacing(SPACING_DEFAULT);
 
-    // ChatTabWidget installs the HalfWidthTabBar internally (setTabBar is
-    // protected). Each tab is half the column wide: one tab → 50%, two → 100%.
-    m_chatTabs = new ChatTabWidget(card);
-    m_chatTabs->setObjectName("ChatTabs");
-    m_chatTabs->setDocumentMode(true);
-
     m_chatViewLobby = new QTextEdit(card);
     m_chatViewLobby->setReadOnly(true);
     m_chatViewLobby->setLineWrapMode(QTextEdit::WidgetWidth);
     m_chatViewLobby->setFrameShape(QFrame::NoFrame);
-    m_chatTabs->addTab(m_chatViewLobby, "Lobby");
-
-    cardLay->addWidget(m_chatTabs, 1);
+    cardLay->addWidget(m_chatViewLobby, 1);
 
     m_chatInput = new QLineEdit(card);
-    m_chatInput->setPlaceholderText("Type a message and press Enter…");
+    m_chatInput->setPlaceholderText("Message the lobby…");
     m_chatInput->setEnabled(false);
     m_chatInput->setMinimumHeight(BUTTON_MIN_HEIGHT);
     connect(m_chatInput, &QLineEdit::returnPressed, this, &RollbackLobbyDialog::onChatSendClicked);
@@ -1229,6 +1268,20 @@ void RollbackLobbyDialog::applyStylesheet()
     const QString border = dark ? QStringLiteral("rgba(255,255,255,0.18)")
                                 : QStringLiteral("palette(mid)");
 
+    // Disabled controls need a *readable* grey on dark themes — palette(mid) is
+    // near-invisible against the dark base (you can't see a non-host's combos or
+    // the "No ROMs" picker). Light mode keeps palette(mid), which already reads.
+    const QString disabledText = dark ? QStringLiteral("rgba(255,255,255,0.45)")
+                                      : QStringLiteral("palette(mid)");
+
+    // Selected-row highlight for the lobby tables. Styling ::item makes Qt fall
+    // back to a near-white selection that's unreadable on dark themes, so set an
+    // explicit blue wash + readable text for each theme.
+    const QString selBg   = dark ? QStringLiteral("rgba(0,120,215,0.55)")
+                                 : QStringLiteral("rgba(0,120,215,0.22)");
+    const QString selText = dark ? QStringLiteral("#ffffff")
+                                 : QStringLiteral("palette(text)");
+
     // Banner accent — soft blue tint that reads on both light and dark themes.
     const QString bannerBg = dark
         ? QStringLiteral("rgba(0, 120, 215, 0.18)")
@@ -1246,7 +1299,13 @@ void RollbackLobbyDialog::applyStylesheet()
     const QString comboArrow = QString(":/icons/%1/svg/arrow-down-s-line.svg")
         .arg(dark ? "white" : "black");
 
-    const QString qss = QString(
+    // Drop Game is destructive (it ends the match), so it gets a caution-red
+    // secondary treatment — same size as the others, set apart by color, not
+    // size. Leave Room stays neutral; Start Game is the filled-blue primary.
+    const QString cautionRed  = dark ? QStringLiteral("#ef6b68") : QStringLiteral("#c0392b");
+    const QString cautionSoft = tintRgba(cautionRed, dark ? 0.18 : 0.10);
+
+    QString qss = QString(
         // Marquee — faint accent header band with a hairline divider.
         "QFrame#LobbyMarquee {"
         "  background-color: %5;"
@@ -1285,46 +1344,6 @@ void RollbackLobbyDialog::applyStylesheet()
         "QTreeWidget#RoomsTree QHeaderView::section:last,"
         " QTreeWidget#MatchesTree QHeaderView::section:last {"
         "  border-right: none;"
-        "}"
-
-        // Chat tabs — flat underline style (no surrounding bar / boxed tabs).
-        // Each tab is half the column wide via HalfWidthTabBar.
-        "QTabWidget#ChatTabs::pane {"
-        "  border: none;"
-        "  background: transparent;"
-        "}"
-        "QTabWidget#ChatTabs QTabBar {"
-        "  background: transparent;"
-        "  qproperty-drawBase: 0;"
-        "}"
-        // Both tabs read as tabs (subtle neutral fill); the active one is
-        // accented with a blue fill, text and underline. Only the *outer*
-        // corners round — the two tabs share a flat seam in the middle (first
-        // tab rounds top-left, last rounds top-right, a lone tab rounds both).
-        "QTabWidget#ChatTabs QTabBar::tab {"
-        "  background: rgba(127, 127, 127, 0.12);"
-        "  border: none;"
-        "  border-bottom: 2px solid transparent;"
-        "  border-top-left-radius: 0px;"
-        "  border-top-right-radius: 0px;"
-        "  padding: 5px 10px;"
-        "  margin: 0px;"
-        "  color: palette(text);"
-        "}"
-        "QTabWidget#ChatTabs QTabBar::tab:first { border-top-left-radius: 6px; }"
-        "QTabWidget#ChatTabs QTabBar::tab:last { border-top-right-radius: 6px; }"
-        "QTabWidget#ChatTabs QTabBar::tab:only-one {"
-        "  border-top-left-radius: 6px;"
-        "  border-top-right-radius: 6px;"
-        "}"
-        "QTabWidget#ChatTabs QTabBar::tab:hover {"
-        "  background: rgba(127, 127, 127, 0.20);"
-        "}"
-        "QTabWidget#ChatTabs QTabBar::tab:selected {"
-        "  color: %4;"
-        "  background: %5;"
-        "  border-bottom: 2px solid %4;"
-        "  font-weight: 600;"
         "}"
 
         // Section headers — bold uppercase label with a hairline divider
@@ -1395,6 +1414,24 @@ void RollbackLobbyDialog::applyStylesheet()
         "  color: palette(mid);"
         "}"
 
+        // Drop Game — caution variant of the secondary style (destructive).
+        "QPushButton#DropBtn {"
+        "  color: %7;"
+        "  border-color: %7;"
+        "}"
+        "QPushButton#DropBtn:hover {"
+        "  color: %7;"
+        "  border-color: %7;"
+        "  background-color: %8;"
+        "}"
+        "QPushButton#DropBtn:pressed {"
+        "  background-color: %8;"
+        "}"
+        "QPushButton#DropBtn:disabled {"
+        "  color: palette(mid);"
+        "  border-color: %1;"
+        "}"
+
         // Session-setting combos — rounded, themed border (P2P style).
         "QComboBox#LobbyCombo, QComboBox#BrowseRomCombo {"
         "  border: 1px solid %1;"
@@ -1403,10 +1440,26 @@ void RollbackLobbyDialog::applyStylesheet()
         "  padding: 3px 8px;"
         "  min-height: 22px;"
         "}"
+        // The browse combo is editable (searchable); strip the embedded line
+        // edit's own frame/background so it sits flush inside the combo border.
+        "QComboBox#BrowseRomCombo QLineEdit {"
+        "  border: none;"
+        "  background: transparent;"
+        "  padding: 0px;"
+        "  color: palette(text);"
+        "  selection-background-color: palette(highlight);"
+        "}"
         "QComboBox#LobbyCombo:focus, QComboBox#BrowseRomCombo:focus {"
         "  border-color: palette(highlight);"
         "}"
-        "QComboBox#LobbyCombo:disabled { color: palette(mid); }"
+        "QComboBox#LobbyCombo:disabled, QComboBox#BrowseRomCombo:disabled {"
+        "  color: %9;"
+        "}"
+        // Editable browse combo: the embedded line edit's own color rule would
+        // otherwise win, so dim it explicitly when disabled too.
+        "QComboBox#BrowseRomCombo QLineEdit:disabled {"
+        "  color: %9;"
+        "}"
         "QComboBox#LobbyCombo::drop-down, QComboBox#BrowseRomCombo::drop-down {"
         "  subcontrol-origin: padding;"
         "  subcontrol-position: top right;"
@@ -1440,7 +1493,20 @@ void RollbackLobbyDialog::applyStylesheet()
         "QPushButton#SeatKickButton:pressed {"
         "  background-color: rgba(208, 72, 72, 0.20);"
         "}"
-    ).arg(border, bannerBg, bannerBorder, brandAccent, marqueeBg, comboArrow);
+    ).arg(border, bannerBg, bannerBorder, brandAccent, marqueeBg, comboArrow,
+          cautionRed, cautionSoft, disabledText);
+
+    // Appended separately: the block above already uses the 9-arg arg() limit.
+    // A bare :selected covers both focused and unfocused selection, so the row
+    // stays readable after focus moves (e.g. right after a double-click to join).
+    qss += QString(
+        "QTreeWidget#RoomsTree::item:selected,"
+        " QTreeWidget#MatchesTree::item:selected,"
+        " QTreeWidget#PlayersTree::item:selected {"
+        "  background-color: %1;"
+        "  color: %2;"
+        "}"
+    ).arg(selBg, selText);
 
     setStyleSheet(qss);
 }
@@ -1508,6 +1574,22 @@ void RollbackLobbyDialog::populateBrowseRoms()
     m_browseRomCombo->blockSignals(false);
 }
 
+QVariantMap RollbackLobbyDialog::selectedBrowseRom() const
+{
+    if (!m_browseRomCombo || !m_browseRomCombo->isEnabled())
+        return {};
+    QVariantMap data = m_browseRomCombo->currentData().toMap();
+    // Editable combo: if the user typed an exact name but didn't commit it (no
+    // index change), currentData() is stale — fall back to matching the text.
+    if (data.value("md5").toString().isEmpty())
+    {
+        const int idx = m_browseRomCombo->findText(m_browseRomCombo->currentText());
+        if (idx >= 0)
+            data = m_browseRomCombo->itemData(idx).toMap();
+    }
+    return data;
+}
+
 // ──────────────────────────────────────────────────────────────────────
 //  Show / close
 // ──────────────────────────────────────────────────────────────────────
@@ -1543,8 +1625,117 @@ bool RollbackLobbyDialog::eventFilter(QObject* watched, QEvent* event)
         auto* me = static_cast<QMouseEvent*>(event);
         if (!m_playersTree->itemAt(me->position().toPoint()))
             m_playersTree->clearSelection();
+        return QDialog::eventFilter(watched, event);
     }
+
+    // ── Seat reorder: start a drag from a seat's grip handle ──
+    if (m_canReorderSeats)
+    {
+        for (auto& s : m_seats)
+        {
+            if (!s.dragHandle || watched != s.dragHandle)
+                continue;
+            if (event->type() == QEvent::MouseButtonPress)
+            {
+                auto* me = static_cast<QMouseEvent*>(event);
+                if (me->button() == Qt::LeftButton && s.userId != 0)
+                {
+                    m_seatDragStartPos = me->globalPosition().toPoint();
+                    m_seatDragSlot     = s.slot;
+                }
+                return true;
+            }
+            if (event->type() == QEvent::MouseButtonRelease)
+            {
+                m_seatDragSlot = 0;
+                return true;
+            }
+            if (event->type() == QEvent::MouseMove)
+            {
+                auto* me = static_cast<QMouseEvent*>(event);
+                if ((me->buttons() & Qt::LeftButton) && m_seatDragSlot != 0 &&
+                    (me->globalPosition().toPoint() - m_seatDragStartPos).manhattanLength()
+                        >= QApplication::startDragDistance())
+                {
+                    const int slot = m_seatDragSlot;
+                    m_seatDragSlot = 0;
+                    startSeatDrag(slot, s.row);
+                }
+                return true;
+            }
+        }
+    }
+
+    // ── Seat reorder: accept the drop and ask the server to swap ──
+    if (m_seatsBox && watched == m_seatsBox)
+    {
+        if (event->type() == QEvent::DragEnter || event->type() == QEvent::DragMove)
+        {
+            auto* de = static_cast<QDragMoveEvent*>(event);
+            if (de->mimeData() && de->mimeData()->hasFormat(kSeatMime))
+            {
+                de->acceptProposedAction();
+                return true;
+            }
+        }
+        else if (event->type() == QEvent::Drop)
+        {
+            auto* de = static_cast<QDropEvent*>(event);
+            if (de->mimeData() && de->mimeData()->hasFormat(kSeatMime))
+            {
+                const int from = de->mimeData()->data(kSeatMime).toInt();
+                const int to   = seatSlotAtPos(de->position().toPoint());
+                if (m_client && m_canReorderSeats && from >= 1 && to >= 1 && from != to)
+                    m_client->swapSeats(from, to);
+                de->acceptProposedAction();
+                return true;
+            }
+        }
+    }
+
     return QDialog::eventFilter(watched, event);
+}
+
+void RollbackLobbyDialog::startSeatDrag(int slot, QWidget* card)
+{
+    if (slot < 1 || !card)
+        return;
+    auto* drag = new QDrag(this);
+    auto* mime = new QMimeData();
+    mime->setData(kSeatMime, QByteArray::number(slot));
+    drag->setMimeData(mime);
+    // Carry a snapshot of the seat card under the cursor for feedback.
+    const QPixmap pm = card->grab();
+    if (!pm.isNull())
+    {
+        drag->setPixmap(pm);
+        drag->setHotSpot(QPoint(pm.width() / 8, pm.height() / 2));
+    }
+    drag->exec(Qt::MoveAction);
+}
+
+int RollbackLobbyDialog::seatSlotAtPos(const QPoint& pos) const
+{
+    // pos is in m_seatsBox coordinates (the drop target). Seat cards are its
+    // direct children, so their geometry() is in the same space.
+    for (const auto& s : m_seats)
+    {
+        if (s.row && s.row->isVisible() && s.row->geometry().contains(pos))
+            return s.slot;
+    }
+    return 0;
+}
+
+QString RollbackLobbyDialog::localRomPathForMd5(const QString& md5) const
+{
+    if (md5.isEmpty())
+        return QString();
+    for (auto it = m_roms.constBegin(); it != m_roms.constEnd(); ++it)
+    {
+        if (QString::fromStdString(it.value().MD5).compare(md5, Qt::CaseInsensitive) == 0)
+            return it.key();
+    }
+    return QString();
 }
 
 QString RollbackLobbyDialog::prefillUsername() const
@@ -1683,14 +1874,8 @@ void RollbackLobbyDialog::onClientStateChanged(LobbyClient::ConnectionState s)
         m_quickMatchActive = false;
         if (m_quickMatchBtn) m_quickMatchBtn->setText("⚡  Quick Match");
 
-        if (m_chatViewRoom)
-        {
-            const int idx = m_chatTabs->indexOf(m_chatViewRoom);
-            if (idx >= 0) m_chatTabs->removeTab(idx);
-            m_chatViewRoom->deleteLater();
-            m_chatViewRoom = nullptr;
-        }
-        m_chatTabs->setCurrentWidget(m_chatViewLobby);
+        if (m_chatViewRoom) m_chatViewRoom->clear();
+        if (m_roomChatInput) m_roomChatInput->setEnabled(false);
         switchToRoomsView();
     }
     updateServerMeta();
@@ -2037,18 +2222,19 @@ void RollbackLobbyDialog::onCreateRoomClicked()
         m_createRoomDialog->activateWindow();
         return;
     }
-    // Open Create Room on the game chosen in the browse picker. CreateRoomDialog
-    // seeds its ROM from this key (findText on identical display names).
-    if (m_browseRomCombo && m_browseRomCombo->isEnabled() &&
-        !m_browseRomCombo->currentText().isEmpty())
+    // The room's game is whatever is selected in the lobby's shared picker — the
+    // same source Quick Match uses. Require a real pick before opening the form.
+    const QVariantMap romData = selectedBrowseRom();
+    const QString romName = romData.value("name").toString();
+    const QString romMd5  = romData.value("md5").toString();
+    if (romMd5.isEmpty())
     {
-        QSettings s;
-        s.beginGroup("Lobby/CreateRoom");
-        s.setValue("Rom", m_browseRomCombo->currentText());
-        s.endGroup();
+        QMessageBox::information(this, "Select a game",
+            "Pick a game from the dropdown before creating a room.");
+        return;
     }
 
-    m_createRoomDialog = new CreateRoomDialog(m_username, m_roms, this);
+    m_createRoomDialog = new CreateRoomDialog(m_username, romName, romMd5, this);
     connect(m_createRoomDialog, &CreateRoomDialog::createRequested,
             this, &RollbackLobbyDialog::onRoomCreateRequested);
     connect(m_createRoomDialog, &QDialog::finished, this, [this](int) {
@@ -2133,20 +2319,11 @@ void RollbackLobbyDialog::enterRoom(quint64 roomId, const QString& greetingChatL
     m_knownSeatedUsers.clear();
     m_roomSeatsSeen = false;
 
-    if (!m_chatViewRoom)
-    {
-        m_chatViewRoom = new QTextEdit(this);
-        m_chatViewRoom->setReadOnly(true);
-        m_chatViewRoom->setLineWrapMode(QTextEdit::WidgetWidth);
-        m_chatViewRoom->setFrameShape(QFrame::NoFrame);
-        m_chatTabs->addTab(m_chatViewRoom, "Room");
-    }
-    else
-    {
-        // Fresh room, fresh chat — never carry the previous room's messages in.
-        m_chatViewRoom->clear();
-    }
-    m_chatTabs->setCurrentWidget(m_chatViewRoom);
+    // Fresh room, fresh chat — never carry the previous room's messages in.
+    // The room chat widget lives in the in-room view (below the seats) and
+    // persists; just clear it and enable its input.
+    if (m_chatViewRoom) m_chatViewRoom->clear();
+    if (m_roomChatInput) m_roomChatInput->setEnabled(true);
     switchToInRoomView();
 
     if (m_createRoomBtn) m_createRoomBtn->setEnabled(false);
@@ -2155,20 +2332,19 @@ void RollbackLobbyDialog::enterRoom(quint64 roomId, const QString& greetingChatL
     updateInRoomBanner();
 
     if (!greetingChatLine.isEmpty())
-        appendChatLine(CHANNEL_LOBBY, greetingChatLine);
+        appendChatLine(CHANNEL_ROOM, greetingChatLine);
 
     // Start measuring actual round-trip to seated peers. Seat assignments
-    // populate via the follow-up ROOM_STATE message; the first tick fires
-    // 5 s after entry which gives that state plenty of time to arrive.
+    // populate via the follow-up ROOM_STATE message, which fires its own
+    // immediate probe per newly-seated peer; this timer just refreshes them.
     if (m_pingProbeTimer && !m_pingProbeTimer->isActive())
         m_pingProbeTimer->start();
 
-    // The regular cadence is 5 s, but a Quick Match auto-starts after a short
-    // warmup — too soon for that first tick. Kick one early probe (~1.2 s, once
-    // ROOM_STATE has populated the seats) so ping shows promptly and the host's
-    // Auto delay resolves before the match begins. Harmless in an empty room:
-    // onPingProbeTick skips self / unseated slots.
-    QTimer::singleShot(1200, this, &RollbackLobbyDialog::onPingProbeTick);
+    // Backstop in case ROOM_STATE seats arrive in a shape that didn't trigger a
+    // per-peer probe — kick one sweep shortly after entry so ping shows promptly
+    // and the host's Auto delay resolves before the match begins. Harmless in an
+    // empty room: onPingProbeTick skips self / unseated slots.
+    QTimer::singleShot(600, this, &RollbackLobbyDialog::onPingProbeTick);
 }
 
 void RollbackLobbyDialog::onRoomDoubleClicked(QTreeWidgetItem* item, int /*column*/)
@@ -2200,6 +2376,19 @@ void RollbackLobbyDialog::onRoomDoubleClicked(QTreeWidgetItem* item, int /*colum
             QMessageBox::information(this, "Match in progress",
                 "That room is already playing — try another or wait for it to finish.");
         }
+        return;
+    }
+
+    // Don't join a room whose ROM we don't have. Otherwise we'd commit, make the
+    // other players wait, then fail pre-match sync — which used to hang the whole
+    // client. Matched by MD5, the same check onMatchBegin uses, so passing here
+    // guarantees the ROM resolves at match start too.
+    if (!summary.romMd5.isEmpty() && localRomPathForMd5(summary.romMd5).isEmpty())
+    {
+        QMessageBox::warning(this, "ROM not found",
+            QString("You don't have the ROM for \"%1\" (%2).\n\n"
+                    "Add it to your ROM directory and refresh the list, then try again.")
+                .arg(summary.name, summary.romName));
         return;
     }
 
@@ -2432,6 +2621,16 @@ void RollbackLobbyDialog::onRoomStateChanged(const QJsonObject& roomState)
         }
     }
 
+    // Seat reorder is host-only and pre-match. Show the drag grip on occupied,
+    // visible seats so the host can drag one onto another to swap them.
+    m_canReorderSeats = iAmHost && (state == "waiting");
+    for (int i = 0; i < 4; ++i)
+    {
+        if (m_seats[i].dragHandle)
+            m_seats[i].dragHandle->setVisible(
+                m_canReorderSeats && i < maxPlayers && m_seats[i].userId != 0);
+    }
+
     // Flash + chime when a *new* player takes a seat. Compare this ROOM_STATE's
     // seated set against the last one; any id that's newly present (and isn't us)
     // is a join. The first ROOM_STATE after entering a room just seeds the set —
@@ -2443,32 +2642,64 @@ void RollbackLobbyDialog::onRoomStateChanged(const QJsonObject& roomState)
             const quint64 uid = static_cast<quint64>(v.toObject().value("userId").toDouble());
             if (uid != 0) currentSeated.insert(uid);
         }
-        if (m_roomSeatsSeen)
+        const quint64 selfId = m_client->selfUserId();
+        bool sawNewPeer = false;
+        for (const quint64 uid : currentSeated)
         {
-            const quint64 selfId = m_client->selfUserId();
-            for (const quint64 uid : currentSeated)
-            {
-                if (uid != selfId && !m_knownSeatedUsers.contains(uid))
-                {
-                    notifyPlayerJoined();
-                    break; // one alert covers a batch of simultaneous joins
-                }
-            }
+            if (uid == selfId || m_knownSeatedUsers.contains(uid))
+                continue;
+            // Probe a newly-seated peer immediately so their ping appears within
+            // an RTT instead of waiting on the next probe tick — and so the host's
+            // Auto delay resolves from real ping before the match begins.
+            if (m_client) m_client->requestPingProbe(uid);
+            sawNewPeer = true;
         }
+        // Chime only once we've settled in: the first ROOM_STATE's occupants were
+        // already here, so they don't count as joins.
+        if (m_roomSeatsSeen && sawNewPeer)
+            notifyPlayerJoined();
         m_knownSeatedUsers = currentSeated;
         m_roomSeatsSeen = true;
     }
 
-    // Host can start whenever there are at least 2 seated players — no ready
-    // gate. Disabled mid-match (state != waiting) so the host can't start a
-    // second match on top of a live one.
-    const int seated = players.size();
-    const bool canStart = (state == "waiting") && seated >= 2;
-    m_startBtn->setEnabled(iAmHost && canStart);
+    // Start button gating (host-only): waiting, 2+ seated, ping from everyone.
+    refreshStartButton();
+}
+
+void RollbackLobbyDialog::refreshStartButton()
+{
+    if (!m_startBtn)
+        return;
+
+    const quint64 selfId = m_client ? m_client->selfUserId() : 0;
+    const bool iAmHost = (m_client && m_currentRoomHostId == selfId);
+    const bool waiting = (m_currentRoomState == "waiting");
+
+    int seated = 0;
+    int peersAwaitingPing = 0;
+    for (const auto& s : m_seats)
+    {
+        if (s.userId == 0)
+            continue;
+        ++seated;
+        // We never ping ourselves; every *other* seated player needs a measured
+        // ping before the host may start, so the match opens on real latency
+        // (and the Auto frame-delay has resolved from it).
+        if (s.userId != selfId && m_client && m_client->measuredPingMs(s.userId) < 0)
+            ++peersAwaitingPing;
+    }
+
+    const bool enoughPlayers = seated >= 2;
+    const bool pingsReady    = (peersAwaitingPing == 0);
+    const bool canStart      = iAmHost && waiting && enoughPlayers && pingsReady;
+
+    m_startBtn->setEnabled(canStart);
     m_startBtn->setToolTip(
-        !iAmHost ? "Only the host can start the game."
-                 : (canStart ? "" : (seated < 2 ? "Need at least 2 players to start."
-                                                : "Already in a match.")));
+        !iAmHost         ? QStringLiteral("Only the host can start the game.")
+        : !waiting       ? QStringLiteral("Already in a match.")
+        : !enoughPlayers ? QStringLiteral("Need at least 2 players to start.")
+        : !pingsReady    ? QStringLiteral("Measuring ping to all players…")
+                         : QString());
 }
 
 void RollbackLobbyDialog::onDropGameClicked()
@@ -2607,6 +2838,9 @@ void RollbackLobbyDialog::onPingMeasured(quint64 userId, int rttMs)
     // only acts when we're the host of a waiting room with Auto selected.
     if (m_delayAuto)
         applyHostRoomSettings(false);
+
+    // A peer's first ping may be what unblocks the host's Start button.
+    refreshStartButton();
 }
 
 int RollbackLobbyDialog::worstSeatPingMs() const
@@ -2687,14 +2921,8 @@ void RollbackLobbyDialog::onRoomLeft(const QString& reason)
 
     if (m_client) m_client->reopenUdpAnchor();
 
-    if (m_chatViewRoom)
-    {
-        const int idx = m_chatTabs->indexOf(m_chatViewRoom);
-        if (idx >= 0) m_chatTabs->removeTab(idx);
-        m_chatViewRoom->deleteLater();
-        m_chatViewRoom = nullptr;
-    }
-    m_chatTabs->setCurrentWidget(m_chatViewLobby);
+    if (m_chatViewRoom) m_chatViewRoom->clear();
+    if (m_roomChatInput) m_roomChatInput->setEnabled(false);
 
     switchToRoomsView();
     if (m_startBtn) m_startBtn->setEnabled(false);
@@ -2725,13 +2953,17 @@ void RollbackLobbyDialog::onChatSendClicked()
 {
     const QString text = m_chatInput->text().trimmed();
     if (text.isEmpty()) return;
-
-    QString channel = CHANNEL_LOBBY;
-    if (m_chatViewRoom && m_chatTabs->currentWidget() == m_chatViewRoom)
-        channel = CHANNEL_ROOM;
-
-    m_client->sendChat(channel, text);
+    m_client->sendChat(CHANNEL_LOBBY, text);
     m_chatInput->clear();
+}
+
+void RollbackLobbyDialog::onRoomChatSendClicked()
+{
+    if (!m_roomChatInput) return;
+    const QString text = m_roomChatInput->text().trimmed();
+    if (text.isEmpty()) return;
+    m_client->sendChat(CHANNEL_ROOM, text);
+    m_roomChatInput->clear();
 }
 
 void RollbackLobbyDialog::onChatMessageReceived(const LobbyClient::ChatMessage& msg)
@@ -2811,7 +3043,7 @@ void RollbackLobbyDialog::onQuickMatchClicked()
             return;
         }
 
-        const QVariantMap romData = m_browseRomCombo ? m_browseRomCombo->currentData().toMap() : QVariantMap();
+        const QVariantMap romData = selectedBrowseRom();
         const QString romName = romData.value("name").toString();
         const QString romMd5  = romData.value("md5").toString();
         if (romMd5.isEmpty())
@@ -2959,6 +3191,34 @@ void RollbackLobbyDialog::onSpectateFailed(quint64 matchId, const QString& reaso
     emit spectateStreamClosed(reason);
 }
 
+void RollbackLobbyDialog::abortMatchStart(const QString& reason)
+{
+    if (!reason.isEmpty())
+    {
+        appendChatSystemLine(CHANNEL_ROOM, reason);
+        CoreAddCallbackMessage(CoreDebugMessageType::Error, reason.toUtf8().constData());
+    }
+    applyRoomStateBadge("Pre-match start failed", QString(statusColors().fail));
+
+    const quint64 matchId = m_currentMatchId;
+    m_awaitingEmulationStart = false;
+    m_currentMatchId = 0;
+
+    // Cancel any launch the MainWindow may already be spinning up, and tell the
+    // server the match is over so the room flips back to "waiting" for everyone
+    // (a follow-up ROOM_STATE re-enables Start and clears the badge).
+    emit closeMatchRequested();
+    if (matchId != 0 && m_client)
+        m_client->reportMatchFinished(matchId);
+
+    if (m_dropBtn) m_dropBtn->setEnabled(false);
+
+    // No-op while the anchor is still open (these failures all happen before
+    // releaseUdpAnchor); guards the rare path where it was already torn down so
+    // ping probing keeps working without a relaunch.
+    if (m_client) m_client->reopenUdpAnchor();
+}
+
 void RollbackLobbyDialog::onMatchBegin(quint64 matchId, const QList<LobbyClient::LobbyMatchPeer>& peers)
 {
     const QString line = QString("Match #%1 starting with %2 player(s)").arg(matchId).arg(peers.size());
@@ -3034,7 +3294,7 @@ void RollbackLobbyDialog::onMatchBegin(quint64 matchId, const QList<LobbyClient:
     }
     if (!foundLocal)
     {
-        appendChatSystemLine(CHANNEL_ROOM, "MATCH_BEGIN missing local peer - aborting");
+        abortMatchStart("Match start failed: missing local peer.");
         return;
     }
 
@@ -3109,7 +3369,7 @@ void RollbackLobbyDialog::onMatchBegin(quint64 matchId, const QList<LobbyClient:
 
     if (remotePeers.isEmpty())
     {
-        appendChatSystemLine(CHANNEL_ROOM, "MATCH_BEGIN missing remote peer - aborting");
+        abortMatchStart("Match start failed: missing remote peer.");
         return;
     }
 
@@ -3119,23 +3379,10 @@ void RollbackLobbyDialog::onMatchBegin(quint64 matchId, const QList<LobbyClient:
     // mapping so GekkoNet's first frame doesn't have to eat the handshake.
     m_client->punchPeerEndpoints(peers);
 
-    QString localRomFile;
-    for (auto it = m_roms.constBegin(); it != m_roms.constEnd(); ++it)
-    {
-        if (QString::fromStdString(it.value().MD5).compare(m_currentRoomMd5, Qt::CaseInsensitive) == 0)
-        {
-            localRomFile = it.key();
-            break;
-        }
-    }
-
+    const QString localRomFile = localRomPathForMd5(m_currentRoomMd5);
     if (localRomFile.isEmpty())
     {
-        const QString message = QString("Pre-match sync failed: local ROM not found for %1").arg(m_currentRoomGame);
-        appendChatSystemLine(CHANNEL_ROOM, message);
-        CoreAddCallbackMessage(CoreDebugMessageType::Error, message.toUtf8().constData());
-        m_awaitingEmulationStart = false;
-        applyRoomStateBadge("Pre-match sync failed", QString(statusColors().fail));
+        abortMatchStart(QString("Match start failed: you don't have the ROM for %1.").arg(m_currentRoomGame));
         return;
     }
 
@@ -3143,13 +3390,7 @@ void RollbackLobbyDialog::onMatchBegin(quint64 matchId, const QList<LobbyClient:
     QString prematchError;
     if (!m_client->syncPrematchManifest(peers, local.slot, localRomFile, prematchError))
     {
-        const QString message = prematchError.isEmpty()
-            ? QStringLiteral("Pre-match sync failed.")
-            : prematchError;
-        appendChatSystemLine(CHANNEL_ROOM, message);
-        CoreAddCallbackMessage(CoreDebugMessageType::Error, message.toUtf8().constData());
-        m_awaitingEmulationStart = false;
-        applyRoomStateBadge("Pre-match sync failed", QString(statusColors().fail));
+        abortMatchStart(prematchError.isEmpty() ? QStringLiteral("Pre-match sync failed.") : prematchError);
         return;
     }
     appendChatSystemLine(CHANNEL_ROOM, "Pre-match sync complete.");

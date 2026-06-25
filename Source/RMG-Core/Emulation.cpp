@@ -837,6 +837,17 @@ CORE_EXPORT bool CoreStartEmulation(std::filesystem::path n64rom, std::filesyste
             {
                 error += m64p::Core.ErrorMessage(m64p_ret);
             }
+
+            // A plugin fatal error at startup is almost always the video plugin
+            // failing to initialize — most often an OpenGL version / driver
+            // problem (the raw message is opaque). Point the user at the cause.
+            if (error.find("plugin function returned a fatal error") != std::string::npos)
+            {
+                error += "  This usually means the graphics plugin couldn't start — "
+                         "often an outdated or unsupported graphics driver (GLideN64 needs "
+                         "OpenGL 3.3+). Update your GPU driver, or pick a different video "
+                         "plugin in Settings.";
+            }
         }
     }
 

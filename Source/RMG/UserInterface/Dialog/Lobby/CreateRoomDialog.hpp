@@ -11,12 +11,8 @@
 
 #include <QDialog>
 #include <QString>
-#include <QMap>
-
-#include <RMG-Core/RomSettings.hpp>
 
 class QLineEdit;
-class QComboBox;
 class QSpinBox;
 class QCheckBox;
 class QPushButton;
@@ -34,8 +30,10 @@ class CreateRoomDialog : public QDialog
     Q_OBJECT
 
 public:
+    // The game is chosen in the lobby's shared picker and passed in here; this
+    // dialog shows it read-only and reports it back via romName()/romMd5().
     CreateRoomDialog(const QString& defaultUsername,
-                     const QMap<QString, CoreRomSettings>& roms,
+                     const QString& gameName, const QString& gameMd5,
                      QWidget* parent = nullptr);
     ~CreateRoomDialog() override = default;
 
@@ -70,14 +68,13 @@ private slots:
 
 private:
     void buildUi(const QString& defaultUsername);
-    void populateRoms(const QMap<QString, CoreRomSettings>& roms);
     void loadDefaults();
     void saveDefaults();
     void setFormEnabled(bool enabled);
 
     // UI — delay/prediction spinners live in the in-room view now, not here.
     QLineEdit*   m_nameEdit       = nullptr;
-    QComboBox*   m_romCombo       = nullptr;
+    QLabel*      m_gameLabel      = nullptr;   // read-only game from the lobby picker
     QSpinBox*    m_maxPlayersSpin = nullptr;
     QCheckBox*   m_passwordCheck  = nullptr;
     QLineEdit*   m_passwordEdit   = nullptr;
