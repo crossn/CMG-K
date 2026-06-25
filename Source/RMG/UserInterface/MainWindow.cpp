@@ -4815,13 +4815,14 @@ void MainWindow::on_Rollback_SessionRequested(QString gameName, QString remoteAd
 // LOBBY| branch and uses GekkoNet's built-in UDP transport instead of
 // the n02 P2P transport (which the lobby never initializes).
 // remotePeers contains N-1 entries, each pre-formatted as "<slot>,<ip>,<port>".
-void MainWindow::on_Lobby_SessionRequested(QString gameName, QStringList remotePeers, int localPort, int localPlayer, int frameDelay, int predictionWindow)
+void MainWindow::on_Lobby_SessionRequested(QString gameName, QString romFile, QStringList remotePeers, int localPort, int localPlayer, int frameDelay, int predictionWindow)
 {
     {
-        char buf[640];
+        char buf[768];
         std::snprintf(buf, sizeof(buf),
-            "Lobby→LobbySession: game='%s' peers=%d (%s) localPort=%d slot=%d delay=%d pred=%d emuRunning=%d launchActive=%d",
+            "Lobby→LobbySession: game='%s' rom='%s' peers=%d (%s) localPort=%d slot=%d delay=%d pred=%d emuRunning=%d launchActive=%d",
             gameName.toUtf8().constData(),
+            romFile.toUtf8().constData(),
             int(remotePeers.size()),
             remotePeers.join("; ").toUtf8().constData(),
             localPort, localPlayer, frameDelay, predictionWindow,
@@ -4830,7 +4831,13 @@ void MainWindow::on_Lobby_SessionRequested(QString gameName, QStringList remoteP
         CoreAddCallbackMessage(CoreDebugMessageType::Info, buf);
     }
 
-    QString romFile = this->findRomByName(gameName);
+    // The lobby resolved romFile from the room's MD5 (localRomPathForMd5), so it
+    // points at the byte-identical ROM every seat verified they have — including
+    // romhacks absent from the database, where findRomByName(gameName) fails
+    // because the display name is the file's name, not the GoodName it matches.
+    // Fall back to the name lookup only if the path somehow arrived empty.
+    if (romFile.isEmpty())
+        romFile = this->findRomByName(gameName);
     if (romFile.isEmpty())
     {
         this->showErrorMessage("ROM Not Found",
@@ -4866,9 +4873,9 @@ void MainWindow::on_Lobby_SessionRequested(QString gameName, QStringList remoteP
             "Lobby→LobbySession: emulation thread running — stopping and retrying");
         CoreStopEmulation();
         QTimer::singleShot(50, this,
-            [this, gameName, remotePeers, localPort, localPlayer, frameDelay, predictionWindow]()
+            [this, gameName, romFile, remotePeers, localPort, localPlayer, frameDelay, predictionWindow]()
             {
-                this->on_Lobby_SessionRequested(gameName, remotePeers, localPort, localPlayer, frameDelay, predictionWindow);
+                this->on_Lobby_SessionRequested(gameName, romFile, remotePeers, localPort, localPlayer, frameDelay, predictionWindow);
             });
         return;
     }

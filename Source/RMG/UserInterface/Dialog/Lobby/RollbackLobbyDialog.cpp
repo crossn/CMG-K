@@ -3440,12 +3440,13 @@ void RollbackLobbyDialog::onMatchBegin(quint64 matchId, const QList<LobbyClient:
     // GekkoNet attempts to bind it. 100ms is plenty on Windows for an UDP
     // socket teardown to complete; without this delay the bind races.
     const QString gameName  = m_currentRoomGame;
+    const QString romFile   = localRomFile; // resolved above by MD5 — robust for off-database ROMs
     const int localPortInt  = int(localPort);
     const int slot          = local.slot;
     const int delay         = m_currentRoomDelay;
     const int prediction    = m_currentRoomPrediction;
-    QTimer::singleShot(100, this, [this, gameName, remotePeers, localPortInt, slot, delay, prediction]() {
-        emit matchReady(gameName, remotePeers, localPortInt, slot, delay, prediction);
+    QTimer::singleShot(100, this, [this, gameName, romFile, remotePeers, localPortInt, slot, delay, prediction]() {
+        emit matchReady(gameName, romFile, remotePeers, localPortInt, slot, delay, prediction);
     });
 }
 

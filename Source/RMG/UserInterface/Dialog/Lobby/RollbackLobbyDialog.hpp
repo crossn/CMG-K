@@ -75,8 +75,10 @@ public:
 signals:
     // Fired when the server has issued MATCH_BEGIN. Each entry in remotePeers
     // is pre-formatted as "<slot>,<ip>,<port>" — matches the LOBBY| address
-    // peer-entry format consumed by CoreStartEmulation.
-    void matchReady(QString gameName, QStringList remotePeers,
+    // peer-entry format consumed by CoreStartEmulation. romFile is the local
+    // ROM path resolved by MD5 (not by name) so ROMs absent from the database
+    // — where name matching fails — still launch; gameName is for display only.
+    void matchReady(QString gameName, QString romFile, QStringList remotePeers,
                     int localPort, int localPlayer,
                     int frameDelay, int predictionWindow);
 
