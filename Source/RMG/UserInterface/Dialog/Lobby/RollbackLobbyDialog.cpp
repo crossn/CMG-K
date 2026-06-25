@@ -679,7 +679,7 @@ QWidget* RollbackLobbyDialog::buildBrowseView()
                 if (idx < 0 || !m_browseRomCombo->isEnabled()) return;
                 const QString name = m_browseRomCombo->itemText(idx);
                 if (name.isEmpty()) return;
-                QSettings s;
+                QSettings s("RMG-K", "n02");
                 s.beginGroup("Lobby/CreateRoom");
                 s.setValue("Rom", name);
                 s.endGroup();
@@ -1574,7 +1574,7 @@ void RollbackLobbyDialog::populateBrowseRoms()
     }
 
     // Restore the last-used selection (shared with Create Room via QSettings).
-    QSettings s;
+    QSettings s("RMG-K", "n02");
     s.beginGroup("Lobby/CreateRoom");
     const QString preferred = s.value("Rom").toString();
     s.endGroup();
@@ -1755,7 +1755,7 @@ QString RollbackLobbyDialog::prefillUsername() const
 {
     // Prefer a previously saved lobby name, then the Kaillera username, then the
     // OS username. Conform whatever we pick to the lobby's allowed charset/length.
-    QSettings s;
+    QSettings s("RMG-K", "n02");
     QString name = s.value("Lobby/Username").toString().trimmed();
 
     if (name.isEmpty())
@@ -1841,7 +1841,7 @@ void RollbackLobbyDialog::onConnectClicked()
     if (m_userLabel) m_userLabel->setText(QString("User: %1").arg(m_username));
 
     // Remember it so the field pre-fills next time.
-    QSettings s;
+    QSettings s("RMG-K", "n02");
     s.setValue("Lobby/Username", m_username);
 
     if (m_connectButton) m_connectButton->setEnabled(false);
@@ -2908,7 +2908,7 @@ void RollbackLobbyDialog::applyHostRoomSettings(bool force)
     // Persist the concrete resolved values (never the Auto sentinel 0) so
     // CreateRoomDialog seeds a valid delay/prediction for the next room. Pacing
     // also rides the engine setting so a freshly created room defaults to it.
-    QSettings s;
+    QSettings s("RMG-K", "n02");
     s.beginGroup("Lobby/CreateRoom");
     s.setValue("Delay",      effDelay);
     s.setValue("Prediction", effPred);

@@ -102,13 +102,13 @@ void LobbyConnectDialog::onConnect()
 
 void LobbyConnectDialog::loadSettings()
 {
-    QSettings s;
+    QSettings s("RMG-K", "n02");
     m_usernameEdit->setText(s.value("Lobby/Username").toString());
 }
 
 void LobbyConnectDialog::saveSettings()
 {
-    QSettings s;
+    QSettings s("RMG-K", "n02");
     s.setValue("Lobby/Username", m_username);
 }
 

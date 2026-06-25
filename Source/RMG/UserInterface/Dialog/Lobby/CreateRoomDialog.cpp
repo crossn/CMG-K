@@ -184,7 +184,7 @@ void CreateRoomDialog::setFormEnabled(bool enabled)
 
 void CreateRoomDialog::loadDefaults()
 {
-    QSettings s;
+    QSettings s("RMG-K", "n02");
     s.beginGroup("Lobby/CreateRoom");
     if (s.contains("MaxPlayers")) m_maxPlayersSpin->setValue(s.value("MaxPlayers").toInt());
     // Seed the initial delay/prediction from the last in-room values the
@@ -196,7 +196,7 @@ void CreateRoomDialog::loadDefaults()
 
 void CreateRoomDialog::saveDefaults()
 {
-    QSettings s;
+    QSettings s("RMG-K", "n02");
     s.beginGroup("Lobby/CreateRoom");
     // The game selection is persisted by the lobby's shared picker, not here.
     s.setValue("MaxPlayers", m_maxPlayers);
