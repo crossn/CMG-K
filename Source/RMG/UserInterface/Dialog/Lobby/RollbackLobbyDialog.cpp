@@ -243,6 +243,19 @@ namespace
         return c.fail;
     }
 
+    // Friendly label for an authoritative *room* state. Distinct from
+    // stateGlyph(), which maps per-user presence states ("playing", "in_room",
+    // …); the room state machine uses a different vocabulary ("waiting",
+    // "starting", "in_game", "finished") that stateGlyph would pass through raw.
+    QString roomStateLabel(const QString& state)
+    {
+        if (state == "waiting")  return "Waiting";
+        if (state == "starting") return "Starting";
+        if (state == "in_game")  return "In Game";
+        if (state == "finished") return "Finished";
+        return state;
+    }
+
     // Color for a presence/room state string (the values stateGlyph maps).
     QString stateHex(const QString& state, bool dark)
     {
@@ -2508,7 +2521,7 @@ void RollbackLobbyDialog::onRoomStateChanged(const QJsonObject& roomState)
     m_roomSubtitle->setText(QString("Hosted by %1  ·  %2 players max")
                                 .arg(hostName).arg(maxPlayers));
 
-    applyRoomStateBadge(stateGlyph(state), stateHex(state, isDarkTheme()));
+    applyRoomStateBadge(roomStateLabel(state), stateHex(state, isDarkTheme()));
 
     const QJsonArray players = roomState.value("players").toArray();
     QStringList metaParts;
@@ -2731,6 +2744,13 @@ void RollbackLobbyDialog::notifyEmulationStarted()
     if (!m_awaitingEmulationStart) return;
     m_awaitingEmulationStart = false;
     m_emulationActive = true;
+
+    // Emulation is live now, so retire the "Connecting…" transient that
+    // onMatchBegin painted over the badge. The room is in_game on the server;
+    // mirror that authoritative state (don't assume — read m_currentRoomState).
+    applyRoomStateBadge(roomStateLabel(m_currentRoomState),
+                        stateHex(m_currentRoomState, isDarkTheme()));
+
     if (m_currentMatchId == 0) return;
 
     {
