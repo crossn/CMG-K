@@ -168,6 +168,7 @@ class MainWindow : public QMainWindow, private Ui::MainWindow
 
     int     ui_SpectateLiveFrame   = 0;     // broadcaster's live krec frame (fast-forward target)
     bool    ui_SpectateFastForward = false; // true while headless-catching-up to the live edge
+    bool    ui_SpectateBannerPending = false; // 1 video-on tick to bake the "buffering" banner in before going headless
     // Lazily creates rollbackLobbyDialog and wires its signals (once).
     void ensureRollbackLobbyDialog();
     // Creates the KailleraSessionManager + callback wiring if absent. Shared by

@@ -71,6 +71,9 @@ static bool        l_KailleraPortLabelsEnabled = false;
 static int         l_KailleraPortLabelPlayerCount = 0;
 static std::array<std::string, 4> l_KailleraPortLabelPlayerNames;
 static constexpr std::array<float, 4> l_KailleraPortLabelCenterOffset720p = { 19.0f, 0.0f, -19.0f, -70.0f };
+// Big centered banner (e.g. "Stream is buffering...") drawn over everything while
+// a spectator fast-forwards toward a broadcast's live edge. Empty = hidden.
+static std::string l_CenterMessage;
 
 static float OnScreenDisplayEaseOutCubic(float t)
 {
@@ -284,6 +287,46 @@ static void OnScreenDisplayRenderKailleraPortLabels(void)
     ImGui::PopStyleColor(2);
 }
 
+// A large message box centered on screen, drawn over everything else. Used for
+// the spectate "Stream is buffering..." banner during fast-forward catch-up.
+static void OnScreenDisplayRenderCenterMessage(void)
+{
+    if (l_CenterMessage.empty())
+    {
+        return;
+    }
+
+    ImGuiIO& io = ImGui::GetIO();
+    // Size relative to the 4:3 content height, matching the port-label math so it
+    // scales with the window. Larger multiplier than port labels — this is a hero
+    // banner, not a per-port tag.
+    float contentHeight = io.DisplaySize.y;
+    if (io.DisplaySize.x <= io.DisplaySize.y * (4.0f / 3.0f))
+        contentHeight = io.DisplaySize.x * (3.0f / 4.0f);
+    const float baseScale = std::max(1.0f, contentHeight / 240.0f);
+    const float fontScale = (baseScale * 9.0f) / (l_BaseFontSize * std::max(l_MessageScale, 0.1f));
+    const ImVec2 padding(16.0f * baseScale, 11.0f * baseScale);
+
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.0f, 0.0f, 0.0f, 0.66f));
+    ImGui::PushStyleColor(ImGuiCol_Text,     ImVec4(l_TextRed, l_TextGreen, l_TextBlue, 1.0f));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, padding);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 8.0f * baseScale);
+
+    ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.5f),
+                            ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+    ImGui::Begin("Stream Buffering Banner", nullptr,
+        ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoDecoration |
+        ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_NoNav |
+        ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoFocusOnAppearing);
+    ImGui::SetWindowFontScale(fontScale);
+    ImGui::Text("%s", l_CenterMessage.c_str());
+    ImGui::SetWindowFontScale(1.0f);
+    ImGui::End();
+
+    ImGui::PopStyleVar(2);
+    ImGui::PopStyleColor(2);
+}
+
 //
 // Exported Functions
 //
@@ -325,6 +368,7 @@ void OnScreenDisplayShutdown(void)
     l_KailleraChatEnabled = true;
     l_KailleraPortLabelPlayerCount = 0;
     l_KailleraPortLabelPlayerNames = {};
+    l_CenterMessage.clear();
     l_Initialized     = false;
     l_RenderingPaused = false;
 }
@@ -549,6 +593,11 @@ void OnScreenDisplayClearKailleraPortLabels(void)
     l_KailleraPortLabelPlayerNames = {};
 }
 
+void OnScreenDisplaySetCenterMessage(const std::string& message)
+{
+    l_CenterMessage = message;
+}
+
 void OnScreenDisplayRender(void)
 {
     if (!l_Initialized || l_RenderingPaused)
@@ -602,7 +651,8 @@ void OnScreenDisplayRender(void)
     }
 
     const bool hasPortLabels = l_KailleraPortLabelsEnabled && l_KailleraPortLabelPlayerCount > 0;
-    const bool hasMessages = l_Enabled && (hasVisibleQueueMessage || l_InputPromptActive || hasPortLabels);
+    const bool hasCenterMessage = !l_CenterMessage.empty();
+    const bool hasMessages = l_Enabled && (hasVisibleQueueMessage || l_InputPromptActive || hasPortLabels || hasCenterMessage);
 
     if (!hasMessages)
     {
@@ -745,6 +795,7 @@ void OnScreenDisplayRender(void)
     ImGui::PopStyleColor(2);
 
     OnScreenDisplayRenderKailleraPortLabels();
+    OnScreenDisplayRenderCenterMessage();
 
     ImGui::Render();
 

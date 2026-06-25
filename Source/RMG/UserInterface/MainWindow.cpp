@@ -3474,32 +3474,46 @@ void MainWindow::timerEvent(QTimerEvent *event)
 
             if (wantFastForward)
             {
-                // Fast-forward the buffered krec up to the broadcaster's live
-                // edge. Drop video+audio (headless) so rendering can't cap the
-                // rate, but keep PACING ON and drive the core's speed limiter —
-                // that's the mechanism that actually advances frames faster.
-                // (Dropping the pacing flag skips the limiter but, in practice,
-                // does NOT run uncapped — it crawls at ~1x, so the whole backlog
-                // took realtime to drain.) Speed is capped at the core's 1000%
-                // (10x) max; scale to the gap so a big backlog drains at full
-                // tilt and eases off as we approach the edge.
+                // Fast-forward the buffered krec up to the broadcaster's live edge.
+                // We catch up HEADLESS (video off) so rendering can't cap the rate,
+                // keeping PACING ON and driving the core's speed limiter at its
+                // 1000% (10x) cap — that's the mechanism that actually advances
+                // frames faster (dropping the pacing flag skips the limiter but in
+                // practice crawls at ~1x). The OSD only draws on a presented frame,
+                // so to show the "buffering" banner during the headless stretch we
+                // bake it in first: on entry, set the banner and run ONE video-on
+                // tick so it gets presented onto the framebuffer; the next tick
+                // drops to headless and that frame (banner included) stays frozen
+                // on screen while we drain — exactly how the port labels persist.
                 if (!this->ui_SpectateFastForward)
                 {
-                    CoreSetFrameOutput(CoreFrameOutput_Input | CoreFrameOutput_Pacing);
+                    OnScreenDisplaySetCenterMessage("Stream is buffering...");
+                    CoreSetFrameOutput(CoreFrameOutput_Video | CoreFrameOutput_Pacing | CoreFrameOutput_Input);
                     this->ui_SpectateFastForward = true;
+                    this->ui_SpectateBannerPending = true;
                 }
-                const int speed = behind > 900 ? 1000   // far behind: 10x
-                                : behind > 300 ? 500    // 5x
-                                :                200;   // near the edge: 2x
-                if (CoreGetSpeedFactor() != speed)
-                    CoreSetSpeedFactor(speed);
+                else if (this->ui_SpectateBannerPending)
+                {
+                    // Banner has been presented at least once now — freeze it by
+                    // dropping to headless for the rest of the catch-up.
+                    CoreSetFrameOutput(CoreFrameOutput_Input | CoreFrameOutput_Pacing);
+                    this->ui_SpectateBannerPending = false;
+                }
+                // Flat-out at 10x until caught up — no taper near the edge. A
+                // spectator is data-bound: it can't pass the live edge (it idles
+                // once the buffer runs dry), so there's nothing to overshoot.
+                if (CoreGetSpeedFactor() != 1000)
+                    CoreSetSpeedFactor(1000);
             }
             else if (this->ui_SpectateFastForward)
             {
-                // Reached the live edge — resume rendering at realtime.
+                // Reached the live edge — clear the banner and resume rendering at
+                // realtime; the next presented frame drops the banner and goes live.
+                OnScreenDisplaySetCenterMessage("");
                 CoreSetFrameOutput(CoreFrameOutput_All);
                 CoreSetSpeedFactor(100);
                 this->ui_SpectateFastForward = false;
+                this->ui_SpectateBannerPending = false;
             }
         }
     }
@@ -4264,6 +4278,9 @@ void MainWindow::stopLobbySpectate()
         this->killTimer(this->ui_SpectateTimerId);
         this->ui_SpectateTimerId = 0;
     }
+    this->ui_SpectateFastForward = false;
+    this->ui_SpectateBannerPending = false;
+    OnScreenDisplaySetCenterMessage(""); // clear the buffering banner if we stop mid-catch-up
     CoreSetSpeedFactor(100);
     CoreSetFrameOutput(CoreFrameOutput_All); // undo any headless catch-up state
     n02::playbackStopStream();
