@@ -4905,6 +4905,14 @@ void MainWindow::on_Lobby_SessionRequested(QString gameName, QStringList remoteP
                            localPlayer, int(remotePeers.size()) + 1);
     }
 
+#ifdef _WIN32
+    // Label the OSD ports with the seated players' usernames. The lobby's
+    // onMatchBegin captured them (slot-indexed) into recording_player_names; the
+    // Kaillera and direct-rollback paths set the labels the same way, but this
+    // lobby path was missing it — so port labels never appeared in lobby matches.
+    OnScreenDisplaySetKailleraPortLabels(int(remotePeers.size()) + 1, GetLiveKailleraPortLabelNames());
+#endif
+
     this->emulationThread->SetLobbyNetplay(remotePeers, localPort, localPlayer, frameDelay, predictionWindow);
     this->launchEmulationThread(romFile, "", false, -1, true);
 }
