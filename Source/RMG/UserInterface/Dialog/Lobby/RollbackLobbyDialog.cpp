@@ -355,6 +355,7 @@ RollbackLobbyDialog::RollbackLobbyDialog(QWidget* parent)
     connect(m_client, &LobbyClient::pingProbeMeasured,    this, &RollbackLobbyDialog::onPingMeasured);
     connect(m_client, &LobbyClient::spectateBegan,        this, &RollbackLobbyDialog::onSpectateBegan);
     connect(m_client, &LobbyClient::spectateData,         this, &RollbackLobbyDialog::onSpectateData);
+    connect(m_client, &LobbyClient::spectateKeyframe,     this, &RollbackLobbyDialog::onSpectateKeyframe);
     connect(m_client, &LobbyClient::spectateEnded,        this, &RollbackLobbyDialog::onSpectateEnded);
     connect(m_client, &LobbyClient::spectateFailed,       this, &RollbackLobbyDialog::onSpectateFailed);
 
@@ -3107,6 +3108,7 @@ void RollbackLobbyDialog::startBroadcast(quint64 matchId)
     if (m_broadcasting) return;
     m_broadcasting = true;
     m_broadcastMatchId = matchId;
+    m_lastKeyframeRequestMs = 0; // request the first keyframe on the next drain tick
     {
         QMutexLocker lock(&m_broadcastMutex);
         m_broadcastBuf.clear();
@@ -3149,16 +3151,48 @@ void RollbackLobbyDialog::onBroadcastDrainTick()
     QByteArray chunk;
     {
         QMutexLocker lock(&m_broadcastMutex);
-        if (m_broadcastBuf.isEmpty()) return;
         chunk = m_broadcastBuf;   // COW share
         m_broadcastBuf.clear();   // detaches m_broadcastBuf, leaving chunk intact
     }
-    if (m_broadcastMatchId != 0)
+    if (m_broadcastMatchId == 0)
+        return;
+
+    if (!chunk.isEmpty())
     {
         // Stamp the broadcaster's live krec frame so spectators know the live
         // edge and can fast-forward to it. The drained chunk carries records up
         // to ~this frame, so it's the right "after this chunk" live position.
         m_client->sendBroadcastData(m_broadcastMatchId, chunk, n02::recordingFrameCount());
+    }
+
+    // Periodic savestate keyframe: ask the engine for one at a fixed interval (it
+    // snapshots + holds it until confirmed against rollback), then poll for the
+    // result and upload it so late spectators can jump near the live edge instead
+    // of replaying from frame 0. Runs even when no krec chunk drained this tick.
+    //
+    // EXPERIMENT (2026-06-29): keyframes disabled to measure pure replay-from-frame-0.
+    // With no keyframe uploaded, the server falls back to streaming the full spool from
+    // frame 0 (broadcast.go spectateStart), so the spectator replays the whole match
+    // (deterministic — boot-replay RNG is correct) and fast-forwards. Tests whether
+    // video-on catch-up is fast enough to make keyframes unnecessary. Flip to re-enable.
+    constexpr bool kSpectateKeyframesEnabled = false;
+    if (kSpectateKeyframesEnabled)
+    {
+        const qint64 kKeyframeIntervalMs = 60000; // ~once a minute (knob)
+        const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
+        if (m_lastKeyframeRequestMs == 0 || nowMs - m_lastKeyframeRequestMs >= kKeyframeIntervalMs)
+        {
+            rmgk_gekko::request_keyframe();
+            m_lastKeyframeRequestMs = nowMs;
+        }
+        std::vector<unsigned char> kf;
+        int kfFrame = -1;
+        if (rmgk_gekko::take_keyframe(kf, kfFrame) && !kf.empty() && kfFrame >= 0)
+        {
+            m_client->sendBroadcastKeyframe(m_broadcastMatchId,
+                QByteArray(reinterpret_cast<const char*>(kf.data()), static_cast<int>(kf.size())),
+                kfFrame);
+        }
     }
 }
 
@@ -3168,6 +3202,7 @@ void RollbackLobbyDialog::beginSpectate(quint64 matchId, const QString& gameName
 {
     if (m_spectatingMatchId != 0) return; // already spectating
     m_spectatingMatchId = matchId;
+    m_spectateStreamArmed = false; // wait for this subscribe's SPECTATE_BEGIN before accepting data
     m_client->startSpectate(matchId);
     emit spectateLaunch(matchId, gameName);
     appendChatSystemLine(CHANNEL_LOBBY, "Connecting to live replay…");
@@ -3178,18 +3213,30 @@ void RollbackLobbyDialog::stopSpectating()
     if (m_spectatingMatchId == 0) return;
     m_client->stopSpectate(m_spectatingMatchId);
     m_spectatingMatchId = 0;
+    m_spectateStreamArmed = false;
 }
 
 void RollbackLobbyDialog::onSpectateBegan(quint64 matchId)
 {
     if (matchId != m_spectatingMatchId) return;
+    // The session boundary: everything on the wire before this is leftover from a
+    // prior watch of this same match. Arm the stream now; keyframe + tail follow.
+    m_spectateStreamArmed = true;
     appendChatSystemLine(CHANNEL_LOBBY, "Watching — buffering the match…");
 }
 
 void RollbackLobbyDialog::onSpectateData(quint64 matchId, const QByteArray& bytes, int liveFrame)
 {
     if (matchId != m_spectatingMatchId) return;
+    if (!m_spectateStreamArmed) return; // stale chunk from a previous watch — drop it
     emit spectateStreamData(bytes, liveFrame);
+}
+
+void RollbackLobbyDialog::onSpectateKeyframe(quint64 matchId, int frame, const QByteArray& savestate)
+{
+    if (matchId != m_spectatingMatchId) return;
+    if (!m_spectateStreamArmed) return; // stale keyframe from a previous watch — drop it
+    emit spectateStreamKeyframe(frame, savestate);
 }
 
 void RollbackLobbyDialog::onSpectateEnded(quint64 matchId, const QString& reason)

@@ -392,6 +392,7 @@ void LobbyClient::handleEnvelope(const QJsonObject& env)
     else if (type == "QUICK_MATCH_STATUS")   handleQuickMatchStatus(data);
     else if (type == "SPECTATE_BEGIN")       handleSpectateBegin(data);
     else if (type == "SPECTATE_DATA")        handleSpectateData(data);
+    else if (type == "SPECTATE_KEYFRAME")    handleSpectateKeyframe(data);
     else if (type == "SPECTATE_END")         handleSpectateEnd(data);
     else if (type == "SPECTATE_FAIL")        handleSpectateFail(data);
     else qDebug() << "lobby: unknown message type" << type;
@@ -642,6 +643,47 @@ void LobbyClient::handleSpectateData(const QJsonObject& data)
     const int liveFrame = data.value("frame").toInt();
     if (!raw.isEmpty())
         emit spectateData(matchId, raw, liveFrame);
+}
+
+void LobbyClient::handleSpectateKeyframe(const QJsonObject& data)
+{
+    const quint64 matchId = static_cast<quint64>(data.value("matchId").toDouble());
+    const int frame      = data.value("frame").toInt();
+    const int chunkIndex = data.value("chunkIndex").toInt();
+    const int chunkCount = data.value("chunkCount").toInt();
+    const QByteArray raw = QByteArray::fromBase64(data.value("data").toString().toLatin1());
+    if (chunkCount <= 0 || chunkIndex < 0 || chunkIndex >= chunkCount)
+        return;
+
+    // (Re)start reassembly when a new keyframe appears. Chunks arrive in order over
+    // the WS, but track per-index seen flags so a stray/duplicate can't corrupt it.
+    if (m_kfRecvFrame != frame || m_kfRecvCount != chunkCount || m_kfRecvChunkSeen.size() != chunkCount)
+    {
+        m_kfRecvFrame = frame;
+        m_kfRecvCount = chunkCount;
+        m_kfRecvGot = 0;
+        m_kfRecvBuf.clear();
+        m_kfRecvChunkSeen = QList<bool>();
+        for (int i = 0; i < chunkCount; i++)
+            m_kfRecvChunkSeen.append(false);
+    }
+    if (!m_kfRecvChunkSeen[chunkIndex])
+    {
+        m_kfRecvChunkSeen[chunkIndex] = true;
+        m_kfRecvBuf.append(raw); // in-order append (server sends chunks sequentially)
+        m_kfRecvGot++;
+    }
+    if (m_kfRecvGot < m_kfRecvCount)
+        return;
+
+    const QByteArray full = m_kfRecvBuf;
+    const int doneFrame = m_kfRecvFrame;
+    m_kfRecvFrame = -1;
+    m_kfRecvCount = 0;
+    m_kfRecvGot = 0;
+    m_kfRecvBuf.clear();
+    m_kfRecvChunkSeen = QList<bool>();
+    emit spectateKeyframe(matchId, doneFrame, full);
 }
 
 void LobbyClient::handleSpectateEnd(const QJsonObject& data)
@@ -1227,6 +1269,29 @@ void LobbyClient::sendBroadcastData(quint64 matchId, const QByteArray& chunk, in
     d["data"]    = QString::fromLatin1(chunk.toBase64());
     d["frame"]   = liveFrame; // broadcaster's live krec frame after this chunk
     sendEnvelope("BROADCAST_DATA", d);
+}
+
+void LobbyClient::sendBroadcastKeyframe(quint64 matchId, const QByteArray& savestate, int frame)
+{
+    if (savestate.isEmpty())
+        return;
+    // Split into chunks so each BROADCAST_KEYFRAME message stays under the server's
+    // 1 MiB read limit (savestate is multi-MB even compressed). ~512 KiB raw per
+    // chunk → ~683 KiB base64, comfortably under the limit.
+    const int chunkBytes = 512 * 1024;
+    const int total = static_cast<int>((savestate.size() + chunkBytes - 1) / chunkBytes);
+    for (int i = 0; i < total; i++)
+    {
+        const int start = i * chunkBytes;
+        const int len = qMin(chunkBytes, static_cast<int>(savestate.size()) - start);
+        QJsonObject d;
+        d["matchId"]    = QJsonValue(qint64(matchId));
+        d["frame"]      = frame;
+        d["chunkIndex"] = i;
+        d["chunkCount"] = total;
+        d["data"]       = QString::fromLatin1(savestate.mid(start, len).toBase64());
+        sendEnvelope("BROADCAST_KEYFRAME", d);
+    }
 }
 
 void LobbyClient::sendBroadcastEnd(quint64 matchId)

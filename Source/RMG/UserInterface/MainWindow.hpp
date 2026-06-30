@@ -169,6 +169,12 @@ class MainWindow : public QMainWindow, private Ui::MainWindow
     int     ui_SpectateLiveFrame   = 0;     // broadcaster's live krec frame (fast-forward target)
     bool    ui_SpectateFastForward = false; // true while headless-catching-up to the live edge
     bool    ui_SpectateBannerPending = false; // 1 video-on tick to bake the "buffering" banner in before going headless
+    // Catch-up loading-bar estimator (reset each time fast-forward engages).
+    int     ui_SpectateInitialBehind = 1;   // backlog (frames) when this catch-up started
+    double  ui_SpectateCatchupRate   = 0.0; // smoothed gap-closing rate (frames/sec)
+    int     ui_SpectateRateLastBehind = 0;  // "behind" at the last rate sample
+    qint64  ui_SpectateRateLastMs     = 0;  // wall-clock of the last rate sample
+    QString ui_SpectateSavedTitle;          // window title to restore after catch-up (bar lives in the title while headless)
     // Lazily creates rollbackLobbyDialog and wires its signals (once).
     void ensureRollbackLobbyDialog();
     // Creates the KailleraSessionManager + callback wiring if absent. Shared by
@@ -326,6 +332,7 @@ class MainWindow : public QMainWindow, private Ui::MainWindow
     void on_Lobby_SessionRequested(QString gameName, QString romFile, QStringList remotePeers, int localPort, int localPlayer, int frameDelay, int predictionWindow);
     void on_Lobby_SpectateLaunch(quint64 matchId, QString gameName);
     void on_Lobby_SpectateData(QByteArray bytes, int liveFrame);
+    void on_Lobby_SpectateKeyframe(int frame, QByteArray savestate);
     void on_Lobby_SpectateClosed(QString reason);
     void on_RomBrowser_RomListRefreshFinished(bool canceled);
 #endif

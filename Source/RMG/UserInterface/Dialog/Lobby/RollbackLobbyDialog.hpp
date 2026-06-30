@@ -94,6 +94,9 @@ signals:
     // broadcast match, feed it krec bytes as they arrive, and tear it down.
     void spectateLaunch(quint64 matchId, QString gameName);
     void spectateStreamData(QByteArray bytes, int liveFrame);
+    // A savestate keyframe (raw bytes) the spectator should restore at frame before
+    // replaying the krec tail, so catch-up is bounded regardless of match length.
+    void spectateStreamKeyframe(int frame, QByteArray savestate);
     void spectateStreamClosed(QString reason);
 
 protected:
@@ -141,6 +144,7 @@ private slots:
     // Spectator: server stream callbacks.
     void onSpectateBegan(quint64 matchId);
     void onSpectateData(quint64 matchId, const QByteArray& bytes, int liveFrame);
+    void onSpectateKeyframe(quint64 matchId, int frame, const QByteArray& savestate);
     void onSpectateEnded(quint64 matchId, const QString& reason);
     void onSpectateFailed(quint64 matchId, const QString& reason);
 
@@ -332,10 +336,20 @@ private:
     QByteArray m_broadcastBuf;
     bool       m_broadcasting   = false;
     quint64    m_broadcastMatchId = 0;
+    // Wall-clock of the last savestate-keyframe request (0 = request one now). The
+    // drain tick requests a keyframe at a fixed interval and polls for the result.
+    qint64     m_lastKeyframeRequestMs = 0;
 
     // Non-zero while this client is spectating a broadcast match (the match id
     // we asked the server to stream). Cleared when the spectate session ends.
     quint64    m_spectatingMatchId = 0;
+    // Session boundary guard. The persistent lobby socket can still deliver krec
+    // chunks from a PREVIOUS watch of the same match after we re-subscribe (same
+    // matchId, so they'd otherwise pass the filter and corrupt the new replay).
+    // The server always sends SPECTATE_BEGIN first on a fresh subscribe, after all
+    // the stale data on the wire — so we drop every keyframe/data message until we
+    // see the BEGIN for the current subscribe. Reset false in beginSpectate.
+    bool       m_spectateStreamArmed = false;
 
     // Seat rows (always 4 — slots beyond maxPlayers are hidden)
     SeatRow    m_seats[4];

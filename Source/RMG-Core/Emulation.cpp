@@ -23,10 +23,15 @@
 #include "File.hpp"
 #include "Rom.hpp"
 #include "rmgk_gekko.hpp"
+#include "n02_client.h"
 
 #include "m64p/Api.hpp"
 
 #include <cstdlib>
+#include <cstdint>
+#include <cstdio>
+#include <mutex>
+#include <sstream>
 #include <vector>
 
 // Windows/POSIX dynamic loading
@@ -255,6 +260,37 @@ static void FrameCallback(unsigned int frameIndex)
 #endif
 }
 
+// Spectate keyframe restore: a savestate the spectator must load before consuming any
+// recorded input, so its replay starts from the broadcaster's snapshot (frame F) rather
+// than boot. Staged from the UI thread (CoreStageSpectateKeyframe); loaded exactly once
+// on the emulation thread in the PIF sync below — the rollback load is synchronous, so it
+// must run on the emulation thread, not cross-thread from the UI.
+static std::mutex          s_SpectateKeyframeMutex;
+static std::vector<unsigned char> s_SpectateKeyframeBuf;
+static int                 s_SpectateKeyframeFrame = -1;
+static bool                s_SpectateKeyframeStaged = false;
+static bool                s_SpectateKeyframeLoaded = false;
+
+// Spectate keyframe divergence probe (diagnostic): after loading a keyframe, hash the
+// just-restored state (= the broadcaster's S(frame)) and the state at the start of each
+// of the next frames the spectator replays, dumping them to <prefix>_spectate.log so
+// they can be diffed against the broadcaster's per-frame host probe to find the first
+// divergent frame. All probe state below is touched only on the emulation thread.
+// -1 = inactive; 1..N = how many replayed frames still to hash.
+static int                 s_SpectateProbeSeq = -1;
+static int                 s_SpectateProbeFrameBase = -1;
+static std::vector<unsigned char> s_SpectateProbeScratch;
+// Diagnostic: hash of the spectator's state at the moment the deferred keyframe load was
+// staged (pre-jump). Compared at seq 0 to tell "load never drained" (resaved==prejump)
+// from "load landed" (resaved==kfbuf).
+static uint64_t            s_SpectatePreJumpHash = 0;
+// Companion to the state probe: logs the actual controller input the spectator APPLIES
+// each frame after the keyframe load, so it can be diffed against the broadcaster's
+// recorded krec input per frame. Tells us whether the boundary divergence is an input
+// misalignment (inputs differ / are shifted) or hidden state (inputs identical but the
+// state still forks). -1 = inactive; 0..N = frames applied since load.
+static int                 s_SpectateInputProbeCount = -1;
+
 // Kaillera PIF sync callback (called from mupen64plus-core after netplay sync)
 static void KailleraPifSyncCallback(struct pif* pif)
 {
@@ -274,6 +310,12 @@ static void KailleraPifSyncCallback(struct pif* pif)
         return; // Invalid player number
     }
 
+    // Playback/spectate has no local player: every player's input comes from the krec.
+    // In this mode we must NEVER read or inject this machine's physical controller —
+    // doing so was overriding the recorded input with the viewer's idle joystick and
+    // desyncing the replay. Live netplay (false) still submits the local controller.
+    const bool inPlayback = CoreIsKailleraPlaybackMode();
+
     // Check if this is a controller read command for channel 0 (local player)
     // We only want to sync on actual input reads, not status queries or other commands
     bool isControllerRead = (pif_channel_has_command(pif->channels[0]) &&
@@ -285,13 +327,136 @@ static void KailleraPifSyncCallback(struct pif* pif)
         // First controller read this frame - read local input and sync with Kaillera
         s_SyncedThisFrame = true;  // Mark as synced BEFORE calling Kaillera
 
-        // Read 4-byte controller response from local controller
-        // N64 controller format: [buttons_hi][buttons_lo][x_axis][y_axis]
-        uint8_t* rx = pif->channels[0].rx_buf;
-        uint32_t local_input = (rx[0] << 24) | (rx[1] << 16) | (rx[2] << 8) | rx[3];
+        // Spectate keyframe restore: the first controller read after a keyframe is
+        // staged, jump to the broadcaster's snapshot (frame F) before consuming any
+        // recorded input. The load must NOT happen synchronously here — this runs inside
+        // an SI DMA (dma_si_read -> update_pif_ram -> sync callback), and a full machine
+        // load mid-SI / mid-dynarec-block leaves the half-finished SI completion and the
+        // rest of the current block running on top of the restored state, desyncing at
+        // F+1. Instead defer it: the core performs the load at its next safe interrupt
+        // boundary (gen_interrupt), exactly like a normal savestate load, then the game
+        // re-dispatches cleanly from the restored PC and frame F's own read consumes
+        // krec[F]. (One controller poll per frame is assumed: gen_interrupt fires between
+        // this pre-load read and the next read, so the load is done by then.)
+        {
+            std::lock_guard<std::mutex> kfLock(s_SpectateKeyframeMutex);
+            // Wait until the krec tail has actually arrived (>=1 indexed input record)
+            // before loading. The server slices the tail to start at the keyframe frame F,
+            // so frameIndex[0] IS frame F; if we loaded before the tail arrived we'd have
+            // nothing to realign the reader to. Until then player_MPV idles at the live
+            // edge (returns 0, consumes nothing), so no krec is wasted by waiting.
+            if (s_SpectateKeyframeStaged && !s_SpectateKeyframeLoaded && !s_SpectateKeyframeBuf.empty() &&
+                n02::playbackGetTotalFrames() > 0) {
+                CoreRollbackState kfState{};
+                kfState.buffer = s_SpectateKeyframeBuf.data();
+                kfState.len    = static_cast<int>(s_SpectateKeyframeBuf.size());
+                kfState.frame  = s_SpectateKeyframeFrame;
+                const bool deferOk = CoreRollbackLoadGameStateDeferred(kfState);
+                s_SpectateKeyframeLoaded = true;
 
+                // Realign the krec reader to frame F. The ROM boot polls controllers and
+                // consumes krec records before this load lands, advancing pos past F; seek
+                // back to index 0 (= frame F) so the first post-load read consumes krec[F],
+                // not a later record. This is the actual fix for the post-keyframe desync:
+                // the load restored frame F's state correctly, but the inputs were shifted.
+                const bool seekOk = n02::playbackSeekToFrame(0);
+
+                // Arm the verification probe. seq 0 = the first post-load read (frame F),
+                // which re-saves the just-restored state and should match the broadcaster's
+                // frame-F hash; seq k = after k replayed frames.
+                s_SpectateProbeFrameBase = s_SpectateKeyframeFrame;
+                s_SpectateProbeScratch.assign(s_SpectateKeyframeBuf.size() + 65536, 0);
+                s_SpectateProbeSeq = 0;
+
+                // Capture the pre-jump state hash (the load is deferred, so the machine is
+                // still on its own timeline right now). At seq 0 we compare the re-saved
+                // hash to BOTH this and the keyframe buffer: resaved==prejump => the load
+                // never drained; resaved==kfbuf => it landed cleanly.
+                s_SpectatePreJumpHash = 0;
+                {
+                    CoreRollbackState pj{};
+                    if (CoreRollbackSaveGameStateInto(pj, s_SpectateProbeScratch.data(),
+                                                      static_cast<int>(s_SpectateProbeScratch.size()),
+                                                      s_SpectateKeyframeFrame)) {
+                        s_SpectatePreJumpHash = rmgk_gekko::hash_bytes(pj.buffer,
+                                                    static_cast<size_t>(pj.len));
+                    }
+                    std::ostringstream sc;
+                    sc << "spectate_stage frame=" << s_SpectateKeyframeFrame
+                       << " kflen=" << s_SpectateKeyframeBuf.size()
+                       << " prejump_hash=" << std::hex << s_SpectatePreJumpHash << std::dec
+                       << " tail_frames=" << n02::playbackGetTotalFrames()
+                       << " defer_ok=" << (deferOk ? 1 : 0)
+                       << " seek_ok=" << (seekOk ? 1 : 0);
+                    rmgk_gekko::write_spectate_probe(sc.str());
+                }
+                s_SpectateInputProbeCount = 0;
+
+                // Don't consume a krec record on this pre-load read; clear the per-frame
+                // sync flag so frame F's own read (after the deferred load lands) consumes
+                // krec[F].
+                s_SyncedThisFrame = false;
+                return;
+            }
+        }
+
+        // Divergence probe seq 1..N: each subsequent frame's first controller read runs
+        // at the start of that frame, i.e. AFTER the previous frame fully advanced — so
+        // re-saving here fingerprints the spectator's state at the start of replayed
+        // frame (base + seq), comparable to the broadcaster's host probe for that frame.
+        // A mismatch starting at base+1 means the very first replayed input is wrong
+        // (boundary alignment); a mismatch only after many clean frames means a slow
+        // reseed from state the savestate doesn't carry.
+        if (s_SpectateProbeSeq >= 0 && s_SpectateProbeSeq <= 30) {
+            const int probeFrame = s_SpectateProbeFrameBase + s_SpectateProbeSeq;
+            CoreRollbackState probe{};
+            if (CoreRollbackSaveGameStateInto(probe, s_SpectateProbeScratch.data(),
+                                              static_cast<int>(s_SpectateProbeScratch.size()), probeFrame)) {
+                const uint64_t h = rmgk_gekko::hash_bytes(probe.buffer, static_cast<size_t>(probe.len));
+                std::ostringstream stream;
+                stream << "spectate_probe side=spec frame=" << probeFrame
+                       << " hash=" << std::hex << h << std::dec
+                       << " len=" << probe.len;
+                rmgk_gekko::write_spectate_probe(stream.str());
+
+                // DECISIVE load-landed check: seq 0 is the first read after the deferred
+                // keyframe load should have drained at gen_interrupt. If the load landed,
+                // re-saving here reproduces the keyframe buffer byte-for-byte (Phase 1
+                // idempotency), so resaved_hash == kfbuf_hash. If they differ, the load
+                // never executed (the spectator is still on its own boot/replay timeline).
+                if (s_SpectateProbeSeq == 0) {
+                    uint64_t kfHash = 0; size_t kfLen = 0;
+                    {
+                        std::lock_guard<std::mutex> kfLock(s_SpectateKeyframeMutex);
+                        kfLen = s_SpectateKeyframeBuf.size();
+                        if (kfLen > 0)
+                            kfHash = rmgk_gekko::hash_bytes(s_SpectateKeyframeBuf.data(), kfLen);
+                    }
+                    const char* verdict = (kfLen > 0 && kfHash == h) ? "landed"
+                                        : (h == s_SpectatePreJumpHash)  ? "NOT_DRAINED"
+                                        : "other";
+                    std::ostringstream lc;
+                    lc << "spectate_loadcheck frame=" << probeFrame
+                       << " kfbuf_hash=" << std::hex << kfHash
+                       << " resaved_hash=" << h
+                       << " prejump_hash=" << s_SpectatePreJumpHash << std::dec
+                       << " kflen=" << kfLen << " resavedlen=" << probe.len
+                       << " verdict=" << verdict;
+                    rmgk_gekko::write_spectate_probe(lc.str());
+                }
+            }
+            s_SpectateProbeSeq++;
+        }
+
+        // Live netplay submits THIS client's local controller in slot 0 and gets back
+        // all players' synced inputs. In playback/spectate slot 0 must stay zero so the
+        // krec fully populates the buffer — reading the local controller here is what
+        // drove the spectator's P1 with the viewer's joystick.
         uint32_t sync_buffer[MAX_PLAYERS] = {0};
-        sync_buffer[0] = local_input;
+        if (!inPlayback) {
+            uint8_t* rx = pif->channels[0].rx_buf;
+            sync_buffer[0] = (rx[0] << 24) | (rx[1] << 16) | (rx[2] << 8) | rx[3];
+        }
 
         // Synchronize with Kaillera - this must be called exactly ONCE per emulator frame
         int ret = CoreModifyKailleraPlayValues(sync_buffer, sizeof(uint32_t));
@@ -314,17 +479,39 @@ static void KailleraPifSyncCallback(struct pif* pif)
         }
 
         if (ret == 0) {
-            // Frame delay period - n02 returns 0 while buffering initial frames
-            // Use cached input from previous sync (or zeros if none yet)
-            return;
-        }
+            // No fresh synced input this frame. Live netplay: frame-delay buffering —
+            // return and let the previous cached input stand. Playback/spectate: the
+            // next krec record hasn't arrived yet (live edge); do NOT return, because the
+            // viewer's physical controller is still sitting in PIF RAM and would drive
+            // this frame. Fall through so the PIF write re-applies the last cached krec
+            // input (or forced neutral) instead of the local controller.
+            if (!inPlayback) {
+                return;
+            }
+        } else {
+            int num_received = ret / sizeof(uint32_t);
 
-        int num_received = ret / sizeof(uint32_t);
+            // Cache synced results for subsequent polls this frame and for writing to PIF
+            s_CachedNumReceived = num_received;
+            for (int i = 0; i < MAX_PLAYERS; i++) {
+                s_CachedSyncBuffer[i] = sync_buffer[i];
+            }
 
-        // Cache synced results for subsequent polls this frame and for writing to PIF
-        s_CachedNumReceived = num_received;
-        for (int i = 0; i < MAX_PLAYERS; i++) {
-            s_CachedSyncBuffer[i] = sync_buffer[i];
+            // Spectate input probe: log the input the spectator actually applies this
+            // frame so it lines up with the broadcaster's recorded krec bytes.
+            if (s_SpectateInputProbeCount >= 0 && s_SpectateInputProbeCount <= 30 && num_received > 0) {
+                std::ostringstream istream;
+                istream << "spectate_input side=spec frame=" << (s_SpectateProbeFrameBase + s_SpectateInputProbeCount)
+                        << " mode=" << n02::getActiveMode()
+                        << " ipb=" << (inPlayback ? 1 : 0);
+                for (int p = 0; p < num_received && p < 2; p++) {
+                    char buf[16];
+                    snprintf(buf, sizeof(buf), " p%d=%08x", p, s_CachedSyncBuffer[p]);
+                    istream << buf;
+                }
+                rmgk_gekko::write_spectate_probe(istream.str());
+                s_SpectateInputProbeCount++;
+            }
         }
     }
 
@@ -363,6 +550,13 @@ static void KailleraPifSyncCallback(struct pif* pif)
                     rx[2] = (s_CachedSyncBuffer[i] >> 8) & 0xFF;
                     rx[3] = s_CachedSyncBuffer[i] & 0xFF;
                 }
+                else if (inPlayback && pif->channels[i].rx_buf != NULL) {
+                    // Playback with no synced krec input yet: force neutral so the
+                    // viewer's local controller (already written here by the input
+                    // plugin) can never drive the replay.
+                    uint8_t* rx = pif->channels[i].rx_buf;
+                    rx[0] = rx[1] = rx[2] = rx[3] = 0;
+                }
             }
             else if (cmd == JCMD_PAK_READ && pif->channels[i].rx_buf != NULL) {
                 // No controller pak present
@@ -375,6 +569,34 @@ static void KailleraPifSyncCallback(struct pif* pif)
         }
     }
 #endif // NETPLAY
+}
+
+CORE_EXPORT void CoreStageSpectateKeyframe(const unsigned char* data, int len, int frame)
+{
+    // UI thread: stage a savestate for the spectator's emulation to restore on its
+    // emulation thread before the first recorded input is consumed (see the PIF sync
+    // callback). Stage BEFORE the spectate emulation starts so the load wins the race.
+    std::lock_guard<std::mutex> lock(s_SpectateKeyframeMutex);
+    if (data != nullptr && len > 0)
+        s_SpectateKeyframeBuf.assign(data, data + len);
+    else
+        s_SpectateKeyframeBuf.clear();
+    s_SpectateKeyframeFrame  = frame;
+    s_SpectateKeyframeStaged = (data != nullptr && len > 0);
+    s_SpectateKeyframeLoaded = false;
+}
+
+CORE_EXPORT void CoreClearSpectateKeyframe(void)
+{
+    std::lock_guard<std::mutex> lock(s_SpectateKeyframeMutex);
+    s_SpectateKeyframeBuf.clear();
+    s_SpectateKeyframeFrame  = -1;
+    s_SpectateKeyframeStaged = false;
+    s_SpectateKeyframeLoaded = false;
+    // Disarm the divergence probe so a partial window can't fire into a later session.
+    s_SpectateProbeSeq        = -1;
+    s_SpectateProbeFrameBase  = -1;
+    s_SpectateInputProbeCount = -1;
 }
 
 //

@@ -701,6 +701,16 @@ void gen_interrupt(struct r4300_core* r4300)
             return;
         }
 
+        /* Spectate keyframe deferred load: same safe point as a normal savestate load —
+         * restore the rollback buffer here (between blocks, no SI/DMA in flight) and
+         * return, so the CPU re-dispatches cleanly from the restored PC. */
+        if (savestates_has_pending_rollback_load())
+        {
+            DebugMessage(M64MSG_INFO, "RMGK-DEFER: deferred rollback load drained");
+            savestates_run_pending_rollback_load();
+            return;
+        }
+
         if (r4300->reset_hard_job)
         {
             call_interrupt_handler(&r4300->cp0, 11);

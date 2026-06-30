@@ -3452,17 +3452,15 @@ void MainWindow::timerEvent(QTimerEvent *event)
                 this->stopLobbySpectate();
                 return;
             }
-            // Fast-forward toward the live edge, then settle at realtime so the
-            // spectator sits ~1.5 s behind the broadcaster.
-            //
-            // Target = the broadcaster-stamped live frame (authoritative). Until
-            // the first stamp arrives, fall back to the local received edge.
-            const int liveFrame = this->ui_SpectateLiveFrame > 0
-                ? this->ui_SpectateLiveFrame
-                : n02::playbackGetTotalFrames();
-            const int settle   = 90;  // once catching up, stop ~1.5 s behind live
+            // Fast-forward while there's buffered krec ahead of us, then settle near
+            // the buffered/live edge. We measure "behind" as buffered-but-unplayed
+            // frames (LOCAL to this stream) rather than the broadcaster's global live
+            // frame: in the keyframe path the krec tail starts at the keyframe frame,
+            // so the global stamp is far ahead of our local numbering and would never
+            // let us settle. Local buffered-remaining is correct for both paths.
+            const int settle   = 90;  // once catching up, stop ~1.5 s behind the edge
             const int reengage = 240; // but don't RE-start catch-up until ~4 s behind
-            const int behind   = liveFrame - n02::playbackGetCurrentFrame();
+            const int behind   = n02::playbackGetTotalFrames() - n02::playbackGetCurrentFrame();
 
             // Hysteresis: engage catch-up only when we're well behind, then run
             // until we're close. Without the gap, normal live-stream jitter near
@@ -3474,42 +3472,71 @@ void MainWindow::timerEvent(QTimerEvent *event)
 
             if (wantFastForward)
             {
-                // Fast-forward the buffered krec up to the broadcaster's live edge.
-                // We catch up HEADLESS (video off) so rendering can't cap the rate,
-                // keeping PACING ON and driving the core's speed limiter at its
-                // 1000% (10x) cap — that's the mechanism that actually advances
-                // frames faster (dropping the pacing flag skips the limiter but in
-                // practice crawls at ~1x). The OSD only draws on a presented frame,
-                // so to show the "buffering" banner during the headless stretch we
-                // bake it in first: on entry, set the banner and run ONE video-on
-                // tick so it gets presented onto the framebuffer; the next tick
-                // drops to headless and that frame (banner included) stays frozen
-                // on screen while we drain — exactly how the port labels persist.
+                // Fully headless catch-up (video off) — max speed, and headless boot-replay
+                // stays in sync. The OSD can't paint without a presented frame, so the
+                // loading bar lives in the WINDOW TITLE instead (set on the UI thread below,
+                // which runs regardless of whether the emulator presents anything).
+                const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
                 if (!this->ui_SpectateFastForward)
                 {
-                    OnScreenDisplaySetCenterMessage("Stream is buffering...");
-                    CoreSetFrameOutput(CoreFrameOutput_Video | CoreFrameOutput_Pacing | CoreFrameOutput_Input);
                     this->ui_SpectateFastForward = true;
-                    this->ui_SpectateBannerPending = true;
-                }
-                else if (this->ui_SpectateBannerPending)
-                {
-                    // Banner has been presented at least once now — freeze it by
-                    // dropping to headless for the rest of the catch-up.
-                    CoreSetFrameOutput(CoreFrameOutput_Input | CoreFrameOutput_Pacing);
                     this->ui_SpectateBannerPending = false;
+                    // Arm the loading-bar estimator + remember the title to restore.
+                    this->ui_SpectateInitialBehind  = behind > 1 ? behind : 1;
+                    this->ui_SpectateCatchupRate    = 0.0;
+                    this->ui_SpectateRateLastBehind = behind;
+                    this->ui_SpectateRateLastMs     = nowMs;
+                    this->ui_SpectateSavedTitle     = this->windowTitle();
                 }
-                // Flat-out at 10x until caught up — no taper near the edge. A
-                // spectator is data-bound: it can't pass the live edge (it idles
-                // once the buffer runs dry), so there's nothing to overshoot.
+                CoreSetFrameOutput(CoreFrameOutput_Pacing | CoreFrameOutput_Input); // headless (no Video)
+                // Flat-out until caught up — no taper near the edge. A spectator is
+                // data-bound: it can't pass the live edge (it idles once the buffer
+                // runs dry), so there's nothing to overshoot.
                 if (CoreGetSpeedFactor() != 1000)
                     CoreSetSpeedFactor(1000);
+
+                // Loading bar + ETA. The live edge grows while we catch up, so we
+                // estimate from how fast "behind" is actually shrinking (sampled ~10/s
+                // so the per-sample frame delta is meaningful), not an assumed speed
+                // multiplier. Progress is against the backlog we started this run with.
+                if (nowMs - this->ui_SpectateRateLastMs >= 100)
+                {
+                    const double dtSec  = (nowMs - this->ui_SpectateRateLastMs) / 1000.0;
+                    const double inst   = (this->ui_SpectateRateLastBehind - behind) / dtSec;
+                    this->ui_SpectateCatchupRate = (this->ui_SpectateCatchupRate <= 0.0)
+                        ? inst
+                        : (0.6 * this->ui_SpectateCatchupRate + 0.4 * inst);
+                    this->ui_SpectateRateLastBehind = behind;
+                    this->ui_SpectateRateLastMs     = nowMs;
+                }
+
+                // Progress over the backlog from start (initialBehind) down to the settle
+                // point, so it fills to 100% exactly as catch-up completes.
+                const int span = this->ui_SpectateInitialBehind - settle;
+                int pct = (span > 0)
+                    ? static_cast<int>(100.0 * (this->ui_SpectateInitialBehind - behind) / span)
+                    : 100;
+                if (pct < 0) pct = 0;
+                if (pct > 100) pct = 100;
+                constexpr int barW = 18;
+                const int filled = pct * barW / 100;
+                std::string msg = "Catching up  [" + std::string(filled, '#') +
+                                  std::string(barW - filled, '-') + "]  " + std::to_string(pct) + "%";
+                if (this->ui_SpectateCatchupRate > 1.0)
+                {
+                    const int rate   = static_cast<int>(this->ui_SpectateCatchupRate);
+                    const int etaSec = (behind + rate - 1) / rate; // ceil(behind/rate)
+                    msg += "  ~" + std::to_string(etaSec) + "s";
+                }
+                // Bar goes in the title (UI thread) so it updates even with zero presents.
+                this->setWindowTitle(QString::fromStdString(msg));
             }
             else if (this->ui_SpectateFastForward)
             {
-                // Reached the live edge — clear the banner and resume rendering at
-                // realtime; the next presented frame drops the banner and goes live.
+                // Reached the live edge — restore the title, resume rendering at realtime;
+                // the next presented frame goes live.
                 OnScreenDisplaySetCenterMessage("");
+                this->setWindowTitle(this->ui_SpectateSavedTitle);
                 CoreSetFrameOutput(CoreFrameOutput_All);
                 CoreSetSpeedFactor(100);
                 this->ui_SpectateFastForward = false;
@@ -4227,6 +4254,7 @@ void MainWindow::on_Lobby_SpectateLaunch(quint64 matchId, QString gameName)
     this->ui_SpectateMatchId   = matchId;
     this->ui_SpectateLiveFrame = 0; // updated from broadcaster-stamped SPECTATE_DATA
     this->ui_SpectateNamesShown = false; // set once the krec header arrives
+    CoreClearSpectateKeyframe(); // drop any stale keyframe from a previous spectate
 
     // ~60 Hz: drive the playback state machine + fast-forward.
     if (this->ui_SpectateTimerId == 0)
@@ -4259,6 +4287,21 @@ void MainWindow::on_Lobby_SpectateData(QByteArray bytes, int liveFrame)
 #endif
 }
 
+void MainWindow::on_Lobby_SpectateKeyframe(int frame, QByteArray savestate)
+{
+    if (!this->ui_SpectateActive || savestate.isEmpty() || frame < 0)
+    {
+        return;
+    }
+    // Stage the broadcaster's savestate so the spectator's emulation restores it (on
+    // its emulation thread) before consuming the first krec input. This arrives ahead
+    // of the SPECTATE_DATA krec tail (which starts at this frame), so it's staged
+    // before the emulation even starts — the load wins the race against the first poll
+    // and the replay continues from frame F's state instead of boot.
+    CoreStageSpectateKeyframe(reinterpret_cast<const unsigned char*>(savestate.constData()),
+                              static_cast<int>(savestate.size()), frame);
+}
+
 void MainWindow::on_Lobby_SpectateClosed(QString reason)
 {
     (void)reason;
@@ -4278,8 +4321,11 @@ void MainWindow::stopLobbySpectate()
         this->killTimer(this->ui_SpectateTimerId);
         this->ui_SpectateTimerId = 0;
     }
+    if (this->ui_SpectateFastForward) // stopped mid-catch-up — put the title back
+        this->setWindowTitle(this->ui_SpectateSavedTitle);
     this->ui_SpectateFastForward = false;
     this->ui_SpectateBannerPending = false;
+    CoreClearSpectateKeyframe(); // drop any staged keyframe
     OnScreenDisplaySetCenterMessage(""); // clear the buffering banner if we stop mid-catch-up
     CoreSetSpeedFactor(100);
     CoreSetFrameOutput(CoreFrameOutput_All); // undo any headless catch-up state
@@ -4716,6 +4762,8 @@ void MainWindow::ensureRollbackLobbyDialog()
             this, &MainWindow::on_Lobby_SpectateLaunch);
     connect(this->rollbackLobbyDialog, &Dialog::RollbackLobbyDialog::spectateStreamData,
             this, &MainWindow::on_Lobby_SpectateData);
+    connect(this->rollbackLobbyDialog, &Dialog::RollbackLobbyDialog::spectateStreamKeyframe,
+            this, &MainWindow::on_Lobby_SpectateKeyframe);
     connect(this->rollbackLobbyDialog, &Dialog::RollbackLobbyDialog::spectateStreamClosed,
             this, &MainWindow::on_Lobby_SpectateClosed);
 }
