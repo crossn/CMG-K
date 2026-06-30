@@ -611,6 +611,26 @@ static bool VidExt_OglSetup(int screenMode)
         return false;
     }
 
+    // Some drivers hand back a *valid* context at a lower version than requested
+    // (outdated AMD/Intel drivers, Microsoft Basic Render Driver, Remote Desktop,
+    // VMs). GLideN64 needs desktop OpenGL 3.3+; on a lower context it fails later
+    // with an opaque PLUGIN_FAIL, so catch it here and name the actual version.
+    {
+        const QSurfaceFormat actualFormat = (*l_OGLWidget)->GetContext()->format();
+        if (actualFormat.renderableType() != QSurfaceFormat::OpenGLES &&
+            (actualFormat.majorVersion() < 3 ||
+             (actualFormat.majorVersion() == 3 && actualFormat.minorVersion() < 3)))
+        {
+            const QString msg = QString(
+                "Your GPU/driver provides only OpenGL %1.%2, but the graphics plugin "
+                "needs OpenGL 3.3 or newer. Update your graphics driver — outdated AMD/Intel "
+                "drivers, Remote Desktop, and virtual machines commonly cause this.")
+                .arg(actualFormat.majorVersion()).arg(actualFormat.minorVersion());
+            CoreAddCallbackMessage(CoreDebugMessageType::Error, msg.toUtf8().constData());
+            return false;
+        }
+    }
+
     l_OpenGLInitialized = true;
     return true;
 }

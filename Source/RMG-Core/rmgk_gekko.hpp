@@ -15,6 +15,7 @@
 
 #include <cstdint>
 #include <string>
+#include <vector>
 
 // Describes one remote peer in a lobby-driven session. Each non-local
 // slot needs its own endpoint — GekkoNet's gekko_add_actor takes a
@@ -63,6 +64,30 @@ class rmgk_gekko
     static void set_debug_frame_output(int flags);
     static bool debug_run_frame_with_inputs(const uint32_t* inputs, int players, int flags);
     static bool toggle_client_input_replay();
+
+    // --- Spectate keyframe capture (broadcaster side) ---
+    // Ask the engine to capture a savestate "keyframe" for the broadcast/spectate
+    // feature. Thread-safe; the snapshot is taken on the emulation thread for the
+    // current live frame, then HELD until the recording confirms that frame (flushes
+    // it to the krec, past the rollback horizon) with no rollback having touched it
+    // since — so the savestate is guaranteed to match the confirmed krec a spectator
+    // will replay from. A no-op if there's no active session.
+    static void request_keyframe();
+    // Thread-safe (call from the UI thread): if a confirmed keyframe is ready, move
+    // its raw savestate bytes into out, set frame to its krec frame index, and return
+    // true (clearing the ready slot). Returns false if none is ready.
+    static bool take_keyframe(std::vector<unsigned char>& out, int& frame);
+
+    // --- Spectate keyframe divergence probe (diagnostic) ---
+    // FNV-1a 64-bit content hash over raw bytes — a real fingerprint of a rollback
+    // state buffer. The core's own rollback "checksum" field is a stub (always 0), so
+    // we hash the bytes ourselves. Shared so the broadcaster and spectator hash
+    // identically; comparing the two pinpoints where a spectate replay diverges.
+    static uint64_t hash_bytes(const unsigned char* data, size_t len);
+    // Append one line to <prefix>_spectate.log (a sibling of the GekkoNet log),
+    // UNCONDITIONALLY (independent of the verbose-log toggle, since the spectator is
+    // never in a GekkoNet session). Thread-safe.
+    static void write_spectate_probe(const std::string& message);
 };
 
 #endif // RMGK_GEKKO_HPP

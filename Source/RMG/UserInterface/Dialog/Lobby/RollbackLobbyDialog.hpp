@@ -18,6 +18,8 @@
 #include <QStringList>
 #include <QByteArray>
 #include <QMutex>
+#include <QPoint>
+#include <QVariant>
 
 #include <RMG-Core/RomSettings.hpp>
 
@@ -29,7 +31,6 @@ class QTextEdit;
 class QLineEdit;
 class QPushButton;
 class QSplitter;
-class QTabWidget;
 class QStackedWidget;
 class QComboBox;
 class QCheckBox;
@@ -74,8 +75,10 @@ public:
 signals:
     // Fired when the server has issued MATCH_BEGIN. Each entry in remotePeers
     // is pre-formatted as "<slot>,<ip>,<port>" — matches the LOBBY| address
-    // peer-entry format consumed by CoreStartEmulation.
-    void matchReady(QString gameName, QStringList remotePeers,
+    // peer-entry format consumed by CoreStartEmulation. romFile is the local
+    // ROM path resolved by MD5 (not by name) so ROMs absent from the database
+    // — where name matching fails — still launch; gameName is for display only.
+    void matchReady(QString gameName, QString romFile, QStringList remotePeers,
                     int localPort, int localPlayer,
                     int frameDelay, int predictionWindow);
 
@@ -91,11 +94,17 @@ signals:
     // broadcast match, feed it krec bytes as they arrive, and tear it down.
     void spectateLaunch(quint64 matchId, QString gameName);
     void spectateStreamData(QByteArray bytes, int liveFrame);
+    // A savestate keyframe (raw bytes) the spectator should restore at frame before
+    // replaying the krec tail, so catch-up is bounded regardless of match length.
+    void spectateStreamKeyframe(int frame, QByteArray savestate);
     void spectateStreamClosed(QString reason);
 
 protected:
     void showEvent(QShowEvent* event) override;
     void closeEvent(QCloseEvent* event) override;
+    // Clears the players-list selection when the user clicks empty space in it,
+    // so a highlighted name can be dismissed by clicking off it.
+    bool eventFilter(QObject* watched, QEvent* event) override;
 
 private slots:
     void onConnectClicked();
@@ -135,10 +144,12 @@ private slots:
     // Spectator: server stream callbacks.
     void onSpectateBegan(quint64 matchId);
     void onSpectateData(quint64 matchId, const QByteArray& bytes, int liveFrame);
+    void onSpectateKeyframe(quint64 matchId, int frame, const QByteArray& savestate);
     void onSpectateEnded(quint64 matchId, const QString& reason);
     void onSpectateFailed(quint64 matchId, const QString& reason);
 
     void onChatSendClicked();
+    void onRoomChatSendClicked();
     void onChatMessageReceived(const LobbyClient::ChatMessage& msg);
     void onMatchBegin(quint64 matchId, const QList<LobbyClient::LobbyMatchPeer>& peers);
 
@@ -162,6 +173,12 @@ private:
     // Repopulate the browse-view ROM picker from m_roms (RMG-K library).
     void     populateBrowseRoms();
 
+    // Resolve the game selected in the (editable) browse picker to its item data
+    // {name, md5, file}. Falls back to matching the typed text to an item, so a
+    // typed-but-not-committed entry still resolves. Shared by Quick Match and
+    // Create Room. Empty map when nothing valid is selected.
+    QVariantMap selectedBrowseRom() const;
+
     // Swap the top-level stack between the connect screen and the live lobby.
     void     showConnectView(const QString& statusMessage = QString());
     void     showLobbyView();
@@ -184,6 +201,9 @@ private:
     void    switchToInRoomView();
     void    enterRoom(quint64 roomId, const QString& greetingChatLine);
     void    updateStatusIndicator(LobbyClient::ConnectionState s);
+    // Render the in-room state label as a colored pill (Waiting / Connecting /
+    // In Game / failure). colorHex drives both the text and the soft fill.
+    void    applyRoomStateBadge(const QString& text, const QString& colorHex);
     void    updateServerMeta();
     void    updateInRoomBanner();   // refresh "you're in: X" banner in browse view
 
@@ -210,6 +230,7 @@ private:
     struct SeatRow
     {
         QWidget* row       = nullptr;
+        QLabel*  dragHandle = nullptr;    // ⋮⋮ — host-only drag grip (reorder)
         QLabel*  dotLabel  = nullptr;     // ● filled, ○ empty
         QLabel*  slotLabel = nullptr;     // "P1"
         QLabel*  nameLabel = nullptr;     // username or "Waiting…"
@@ -217,11 +238,35 @@ private:
         QPushButton* kickButton = nullptr; // ✕ — host-only, removes the seated player
         bool     isHost    = false;
         quint64  userId    = 0;           // seated user, 0 when empty
+        int      slot      = 0;           // 1-4, drives the per-player accent color
     };
     void buildSeatRow(SeatRow& row, int slotIdx, QWidget* parent);
     void renderSeatEmpty(SeatRow& row);
     void renderSeatFilled(SeatRow& row, const QString& username, bool isHost,
                           bool isSelf, int pingMs, bool canKick);
+
+    // Seat reorder (host, waiting): a seat's drag handle starts a QDrag carrying
+    // its slot; the seats container handles the drop and asks the server to swap.
+    void startSeatDrag(int slot, QWidget* card);
+    int  seatSlotAtPos(const QPoint& pos) const;
+
+    // Returns the local ROM path whose MD5 matches `md5` (case-insensitive), or
+    // empty if the user doesn't have that ROM. Gates joining a room and resolves
+    // the ROM at match start so both use identical matching.
+    QString localRomPathForMd5(const QString& md5) const;
+
+    // Cleanly abort a match that failed before emulation started (ROM missing or
+    // pre-match sync failed/timed out): reset await state, tell the server the
+    // match is over so the room returns to "waiting", reopen the ping anchor,
+    // and surface `reason` in room chat. Prevents the dialog from getting stuck
+    // on "Connecting…" with a half-started match.
+    void abortMatchStart(const QString& reason);
+
+    // Enable the host's Start button only once the room is startable: waiting,
+    // 2+ players seated, AND a ping measured for every seated peer. Re-run from
+    // both onRoomStateChanged (seats change) and onPingMeasured (ping lands),
+    // since pings arrive asynchronously after seats populate.
+    void refreshStartButton();
 
     LobbyClient* m_client = nullptr;
 
@@ -234,6 +279,7 @@ private:
     // ── Marquee bar ──
     QFrame*  m_marquee     = nullptr;
     QLabel*  m_brandLabel  = nullptr;
+    QFrame*  m_statusPill  = nullptr;   // rounded pill holding the LED + text
     QLabel*  m_statusLed   = nullptr;
     QLabel*  m_statusText  = nullptr;
     QLabel*  m_serverMeta  = nullptr;
@@ -245,10 +291,10 @@ private:
     QTreeWidget* m_roomsTree     = nullptr;
     QTreeWidget* m_matchesTree   = nullptr;
     QTimer*      m_matchDurationTimer = nullptr;
-    QTabWidget*  m_chatTabs      = nullptr;
     QTextEdit*   m_chatViewLobby = nullptr;
-    QTextEdit*   m_chatViewRoom  = nullptr; // nullptr when not in a room
-    QLineEdit*   m_chatInput     = nullptr;
+    QTextEdit*   m_chatViewRoom  = nullptr; // room chat, shown in the in-room view
+    QLineEdit*   m_chatInput     = nullptr; // lobby chat input (middle column)
+    QLineEdit*   m_roomChatInput = nullptr; // room chat input (below the seats)
 
     // ── Stacked browse / in-room view ──
     QStackedWidget* m_roomsStack = nullptr;
@@ -290,13 +336,27 @@ private:
     QByteArray m_broadcastBuf;
     bool       m_broadcasting   = false;
     quint64    m_broadcastMatchId = 0;
+    // Wall-clock of the last savestate-keyframe request (0 = request one now). The
+    // drain tick requests a keyframe at a fixed interval and polls for the result.
+    qint64     m_lastKeyframeRequestMs = 0;
 
     // Non-zero while this client is spectating a broadcast match (the match id
     // we asked the server to stream). Cleared when the spectate session ends.
     quint64    m_spectatingMatchId = 0;
+    // Session boundary guard. The persistent lobby socket can still deliver krec
+    // chunks from a PREVIOUS watch of the same match after we re-subscribe (same
+    // matchId, so they'd otherwise pass the filter and corrupt the new replay).
+    // The server always sends SPECTATE_BEGIN first on a fresh subscribe, after all
+    // the stale data on the wire — so we drop every keyframe/data message until we
+    // see the BEGIN for the current subscribe. Reset false in beginSpectate.
+    bool       m_spectateStreamArmed = false;
 
     // Seat rows (always 4 — slots beyond maxPlayers are hidden)
     SeatRow    m_seats[4];
+    QWidget*   m_seatsBox        = nullptr; // container that accepts seat drops
+    bool       m_canReorderSeats = false;   // host && room waiting
+    QPoint     m_seatDragStartPos;          // press point, to clear the drag threshold
+    int        m_seatDragSlot    = 0;       // slot being dragged (0 = none)
 
     // Drives PING_PROBE_REQUEST → UDP PROBE → PROBE_REPLY refresh cycle for
     // each peer seated in the current room. Started when a room is entered,

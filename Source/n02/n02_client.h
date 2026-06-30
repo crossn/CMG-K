@@ -48,6 +48,13 @@ void recordingWriteInputs(const void* values, int size);
 // onto the broadcast stream so spectators can fast-forward to it.
 int recordingFrameCount();
 
+// Queue a chat line to be embedded in the open recording as a 0x08 record. Safe
+// to call from any thread; the line is written into the krec on the emulation
+// thread just before the next input frame, and is a no-op when nothing is
+// recording. Lets the lobby — whose room chat arrives off the frame loop — carry
+// chat through to spectators and saved replays. nick/msg are length-bounded.
+void recordingQueueChat(const char* nick, const char* msg);
+
 // Open a new .krec recording for a session that bypasses n02's game-start
 // callback (the GekkoNet rollback lobby path). Closes any open recording first,
 // then writes a KRC1 header — but only when n02_kaillera_recording_enabled is
@@ -175,6 +182,15 @@ int playbackGetCurrentFrame();
 
 // Get the total number of frames in the loaded recording
 int playbackGetTotalFrames();
+
+// True once a streamed recording's header has been parsed — at which point the
+// game name, player count, and player names (in the recording_player_names
+// global) are available. Lets a live spectator know when it can label the OSD
+// ports from the krec header.
+bool playbackHeaderReady();
+
+// Player count from the parsed playback header (0 until playbackHeaderReady()).
+int playbackNumPlayers();
 
 } // namespace n02
 

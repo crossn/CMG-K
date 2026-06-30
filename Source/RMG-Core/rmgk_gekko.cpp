@@ -32,6 +32,7 @@
 #include <atomic>
 #include <chrono>
 #include <ctime>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <exception>
@@ -198,6 +199,34 @@ long long g_GekkoLastLoadStateUs = 0;
 long long g_GekkoLastSaveStateUs = 0;
 long long g_GekkoLastRunFrameUs = 0;
 long long g_GekkoLastPendingSaveUs = 0;
+
+// --- Spectate keyframe capture-and-hold (broadcaster side) ---
+// The UI requests a keyframe; we snapshot the live frame's state, then HOLD it until
+// the recording confirms that frame (flushes it to the krec, past the rollback
+// horizon) with no rollback having touched frame <= it since the snapshot. Only then
+// is it a state a spectator can restore and replay the confirmed krec from without
+// desyncing. The snapshot is taken right after the live frame's input is latched into
+// PIF RAM, so its "next" input to apply is the following frame — hence the replay
+// frame the spectator starts at is the captured frame + this offset. We snapshot via
+// GekkoNet's own per-frame save (the safe VI-boundary point), whose state is "before
+// frame F's input" — the rollback load+replay convention — so the spectator replays
+// from frame F itself (offset 0). If testing reveals a 1-frame misalignment, nudge this.
+constexpr int kKeyframeReplayFrameOffset = 0;
+std::atomic<bool> g_GekkoKeyframeRequested{false};
+bool g_GekkoKeyframePending = false;
+int  g_GekkoKeyframePendingLiveFrame = -1; // the live frame F we snapshotted (confirm when flushed)
+std::vector<unsigned char> g_GekkoKeyframePendingBuf;
+std::mutex g_GekkoKeyframeReadyMutex;
+bool g_GekkoKeyframeReady = false;
+int  g_GekkoKeyframeReadyFrame = -1; // krec frame the spectator replays from (F + offset)
+std::vector<unsigned char> g_GekkoKeyframeReadyBuf;
+
+// Spectate keyframe divergence probe (diagnostic): once a keyframe is captured, log a
+// content hash of the broadcaster's confirmed state for the keyframe frame and the next
+// kSpectateProbeWindow frames, so they can be diffed against the spectator's replayed-
+// state hashes (see Emulation.cpp) to find the first divergent frame. -1 = inactive.
+constexpr int kSpectateProbeWindow = 30;
+int g_GekkoSpectateProbeStartFrame = -1;
 rmgk_gekko::InputProvider g_GekkoDebugInputProvider = nullptr;
 rmgk_gekko::FrameCallback g_GekkoDebugBeginFrame = nullptr;
 rmgk_gekko::FrameCallback g_GekkoDebugEndFrame = nullptr;
@@ -621,6 +650,56 @@ bool save_gekko_state(const PendingGekkoSave& save)
                << " checksum=" << static_cast<unsigned int>(state.checksum)
                << " elapsed_us=" << g_GekkoLastSaveStateUs;
         write_gekko_log(stream.str());
+    }
+
+    // Spectate keyframe: when the UI asked for one and we aren't already holding a snapshot,
+    // capture a FULL normal-format savestate of THIS frame (not GekkoNet's stripped rollback
+    // save in save.state). A cold spectator must load a complete state via the normal path;
+    // the rollback variant omits the TLB LUT and isn't zeroed (fine for a warm same-machine
+    // reload, wrong for a cold join). Taken here at the same frame-aligned VI boundary GekkoNet
+    // just saved at, so it stays aligned with the krec. The full save is read-only on the
+    // device and calls no plugins (verified in savestates_save_m64p), so it cannot disturb the
+    // live rollback. Core mallocs the buffer; we copy it out and free it. HOLD the snapshot —
+    // it's only committed once the recording flushes this frame to the krec without an
+    // intervening rollback, so the bytes match the confirmed krec a spectator replays.
+    if (g_GekkoKeyframeRequested.load(std::memory_order_relaxed) && !g_GekkoKeyframePending &&
+        save.frame >= 0 && state.len > 0 && save.state != nullptr)
+    {
+        CoreRollbackState fullState{};
+        if (CoreRollbackSaveFullStateInto(fullState, nullptr, 0, save.frame) &&
+            fullState.buffer != nullptr && fullState.len > 0)
+        {
+            g_GekkoKeyframePendingBuf.assign(fullState.buffer, fullState.buffer + fullState.len);
+            g_GekkoKeyframePendingLiveFrame = save.frame;
+            g_GekkoKeyframePending = true;
+            g_GekkoKeyframeRequested.store(false, std::memory_order_relaxed);
+            // Arm the divergence probe window for this keyframe's neighborhood.
+            g_GekkoSpectateProbeStartFrame = save.frame;
+            if (g_GekkoLogEnabled)
+            {
+                std::ostringstream stream;
+                stream << "keyframe snapshot frame=" << save.frame
+                       << " full_len=" << fullState.len << " rollback_len=" << state.len;
+                write_gekko_log(stream.str());
+            }
+        }
+        CoreRollbackFreeGameState(fullState);
+    }
+
+    // Spectate divergence probe (diagnostic): hash the broadcaster's confirmed state for
+    // the keyframe frame and the following frames so a spectator's replayed-state hashes
+    // can be diffed against them (see Emulation.cpp). Rollback can re-save a frame more
+    // than once; when reading the log, take the LAST hash logged per frame number.
+    if (g_GekkoSpectateProbeStartFrame >= 0 &&
+        save.frame >= g_GekkoSpectateProbeStartFrame &&
+        save.frame <= g_GekkoSpectateProbeStartFrame + kSpectateProbeWindow)
+    {
+        const uint64_t h = rmgk_gekko::hash_bytes(save.state, static_cast<size_t>(state.len));
+        std::ostringstream stream;
+        stream << "spectate_probe side=host frame=" << save.frame
+               << " hash=" << std::hex << h << std::dec
+               << " len=" << state.len;
+        rmgk_gekko::write_spectate_probe(stream.str());
     }
 
     return true;
@@ -1224,6 +1303,15 @@ int rollback_execute_begin_frame(void* userData)
             case GekkoLoadEvent:
                 summaryLoadCount++;
                 write_gekko_log("load_state begin");
+                // A rollback to frame <= a held keyframe means that frame may be
+                // re-simulated differently than we snapshotted — discard the pending
+                // keyframe so we never commit a state that diverges from the krec.
+                if (g_GekkoKeyframePending &&
+                    event->data.load.frame <= g_GekkoKeyframePendingLiveFrame)
+                {
+                    g_GekkoKeyframePending = false;
+                    write_gekko_log("keyframe discarded reason=rollback");
+                }
                 if (!load_gekko_state(event))
                 {
                     return 0;
@@ -2010,6 +2098,18 @@ CORE_EXPORT void rmgk_gekko::close_session()
     g_GekkoMaxObservedFrame = -1;
     g_GekkoExecuting.store(false, std::memory_order_relaxed);
     g_GekkoPendingSaves.clear();
+    // Reset spectate keyframe capture state for the next session.
+    g_GekkoKeyframeRequested.store(false, std::memory_order_relaxed);
+    g_GekkoKeyframePending = false;
+    g_GekkoKeyframePendingLiveFrame = -1;
+    g_GekkoKeyframePendingBuf.clear();
+    g_GekkoSpectateProbeStartFrame = -1;
+    {
+        std::lock_guard<std::mutex> lock(g_GekkoKeyframeReadyMutex);
+        g_GekkoKeyframeReady = false;
+        g_GekkoKeyframeReadyFrame = -1;
+        g_GekkoKeyframeReadyBuf.clear();
+    }
     g_GekkoDebugInputProvider = nullptr;
     g_GekkoDebugBeginFrame = nullptr;
     g_GekkoDebugEndFrame = nullptr;
@@ -2152,6 +2252,65 @@ CORE_EXPORT bool rmgk_gekko::synchronize_input(void* values, int size, int playe
                     break;
                 }
                 n02::recordingWriteInputs(it->second.data(), static_cast<int>(it->second.size()));
+                // Spectate input probe: log the confirmed krec input per frame (the exact
+                // bytes a spectator must replay) so it can be diffed against the
+                // spectator's applied input — revealing whether the boundary divergence is
+                // an input misalignment or hidden state.
+                if (g_GekkoSpectateProbeStartFrame >= 0 &&
+                    it->first >= g_GekkoSpectateProbeStartFrame &&
+                    it->first <= g_GekkoSpectateProbeStartFrame + kSpectateProbeWindow &&
+                    g_GekkoInputSize >= 4)
+                {
+                    // Label by krec RECORD INDEX (not the GekkoNet frame) so it shares the
+                    // spectator's coordinate system — the spectator counts records from 0.
+                    // The record for this frame was just written above, so its 0-based index
+                    // is recordingFrameCount() - 1.
+                    const int hostRecordIdx = n02::recordingFrameCount() - 1;
+                    std::ostringstream istream;
+                    istream << "spectate_input side=host frame=" << hostRecordIdx
+                            << " gekko=" << it->first;
+                    const std::vector<unsigned char>& in = it->second;
+                    const int players = static_cast<int>(in.size()) / g_GekkoInputSize;
+                    for (int p = 0; p < players && p < 2; p++)
+                    {
+                        const size_t off = static_cast<size_t>(p) * g_GekkoInputSize;
+                        char buf[32];
+                        snprintf(buf, sizeof(buf), " p%d=%02x%02x%02x%02x", p,
+                                 in[off], in[off + 1], in[off + 2], in[off + 3]);
+                        istream << buf;
+                    }
+                    rmgk_gekko::write_spectate_probe(istream.str());
+                }
+                // Confirm a held keyframe once its frame has flushed to the krec: it's
+                // now past the rollback horizon and survived any rollback (else the
+                // Load handler would have discarded it), so the snapshot matches the
+                // confirmed krec. Hand it to the UI thread to compress + upload.
+                if (g_GekkoKeyframePending && it->first == g_GekkoKeyframePendingLiveFrame)
+                {
+                    {
+                        std::lock_guard<std::mutex> lock(g_GekkoKeyframeReadyMutex);
+                        g_GekkoKeyframeReadyBuf = g_GekkoKeyframePendingBuf;
+                        // The spectator restores at the krec RECORD INDEX, not the GekkoNet
+                        // frame: the server (krecFrameOffset) and the spectator's frameIndex
+                        // both count 0x12 records from 0, but recording starts ~N frames into
+                        // the match (handshake/rollback-horizon warmup), so record_index =
+                        // gekko_frame - N. recordingWriteInputs just wrote THIS frame's record
+                        // (line above), so its 0-based index is recordingFrameCount() - 1.
+                        // Sending the gekko frame instead shifted the spectator's inputs by N.
+                        g_GekkoKeyframeReadyFrame =
+                            n02::recordingFrameCount() - 1 + kKeyframeReplayFrameOffset;
+                        g_GekkoKeyframeReady = true;
+                    }
+                    g_GekkoKeyframePending = false;
+                    if (g_GekkoLogEnabled)
+                    {
+                        std::ostringstream stream;
+                        stream << "keyframe confirmed live_frame=" << g_GekkoKeyframePendingLiveFrame
+                               << " replay_frame=" << g_GekkoKeyframeReadyFrame
+                               << " len=" << g_GekkoKeyframeReadyBuf.size();
+                        write_gekko_log(stream.str());
+                    }
+                }
                 g_GekkoFrameInputBuffer.erase(it);
             }
         }
@@ -2163,6 +2322,53 @@ CORE_EXPORT bool rmgk_gekko::synchronize_input(void* values, int size, int playe
     (void)size;
     (void)players;
     return true;
+}
+
+CORE_EXPORT void rmgk_gekko::request_keyframe()
+{
+    // Just arm the request; the emulation thread snapshots at its next save and
+    // commits once confirmed (see save_gekko_state + the recording flush).
+    g_GekkoKeyframeRequested.store(true, std::memory_order_relaxed);
+}
+
+CORE_EXPORT bool rmgk_gekko::take_keyframe(std::vector<unsigned char>& out, int& frame)
+{
+    std::lock_guard<std::mutex> lock(g_GekkoKeyframeReadyMutex);
+    if (!g_GekkoKeyframeReady)
+    {
+        return false;
+    }
+    out = std::move(g_GekkoKeyframeReadyBuf);
+    g_GekkoKeyframeReadyBuf.clear();
+    frame = g_GekkoKeyframeReadyFrame;
+    g_GekkoKeyframeReady = false;
+    return true;
+}
+
+CORE_EXPORT uint64_t rmgk_gekko::hash_bytes(const unsigned char* data, size_t len)
+{
+    uint64_t h = 1469598103934665603ull; // FNV-1a 64-bit offset basis
+    if (data != nullptr)
+    {
+        for (size_t i = 0; i < len; i++)
+        {
+            h ^= static_cast<uint64_t>(data[i]);
+            h *= 1099511628211ull; // FNV-1a 64-bit prime
+        }
+    }
+    return h;
+}
+
+CORE_EXPORT void rmgk_gekko::write_spectate_probe(const std::string& message)
+{
+    std::lock_guard<std::mutex> lock(g_GekkoLogMutex);
+    get_gekko_log_path(); // side effect: ensures g_GekkoLogPrefix / g_GekkoLogDirectory are set
+    const std::string filename = g_GekkoLogPrefix + "_spectate.log";
+    const std::filesystem::path path = g_GekkoLogDirectory.empty()
+        ? std::filesystem::path(filename)
+        : g_GekkoLogDirectory / filename;
+    std::ofstream file(path, std::ios::out | std::ios::app);
+    file << message << "\n";
 }
 
 CORE_EXPORT void rmgk_gekko::set_debug_hooks(InputProvider inputProvider, FrameCallback beginFrame, FrameCallback endFrame, void* userData)

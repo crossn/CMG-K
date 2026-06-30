@@ -156,13 +156,25 @@ class MainWindow : public QMainWindow, private Ui::MainWindow
     bool ui_RollbackLivePumpActive = false;
     bool ui_RollbackNetplayRoomActive = false;
     bool ui_RollbackNetplayLaunchActive = false;
+    // Bounds the "stop the old game, retry in 50ms" relaunch loop so a previous
+    // emulation that refuses to stop can't spin forever (hung background game).
+    int  ui_RollbackRelaunchAttempts = 0;
     // Spectating a broadcast match via streaming krec playback (distinct from the
     // lobby *match* flow above — the spectator runs playback, not GekkoNet).
     bool    ui_SpectateActive  = false;
     quint64 ui_SpectateMatchId = 0;
     int     ui_SpectateTimerId = 0;
+    bool    ui_SpectateNamesShown = false; // OSD port labels set from krec header
+
     int     ui_SpectateLiveFrame   = 0;     // broadcaster's live krec frame (fast-forward target)
     bool    ui_SpectateFastForward = false; // true while headless-catching-up to the live edge
+    bool    ui_SpectateBannerPending = false; // 1 video-on tick to bake the "buffering" banner in before going headless
+    // Catch-up loading-bar estimator (reset each time fast-forward engages).
+    int     ui_SpectateInitialBehind = 1;   // backlog (frames) when this catch-up started
+    double  ui_SpectateCatchupRate   = 0.0; // smoothed gap-closing rate (frames/sec)
+    int     ui_SpectateRateLastBehind = 0;  // "behind" at the last rate sample
+    qint64  ui_SpectateRateLastMs     = 0;  // wall-clock of the last rate sample
+    QString ui_SpectateSavedTitle;          // window title to restore after catch-up (bar lives in the title while headless)
     // Lazily creates rollbackLobbyDialog and wires its signals (once).
     void ensureRollbackLobbyDialog();
     // Creates the KailleraSessionManager + callback wiring if absent. Shared by
@@ -317,9 +329,10 @@ class MainWindow : public QMainWindow, private Ui::MainWindow
     void on_Kaillera_GameEnded(void);
     void on_Kaillera_RecordingFileClosed(void);
     void on_Rollback_SessionRequested(QString gameName, QString remoteAddress, int localPort, int remotePort, int localPlayer, int frameDelay, int predictionWindow);
-    void on_Lobby_SessionRequested(QString gameName, QStringList remotePeers, int localPort, int localPlayer, int frameDelay, int predictionWindow);
+    void on_Lobby_SessionRequested(QString gameName, QString romFile, QStringList remotePeers, int localPort, int localPlayer, int frameDelay, int predictionWindow);
     void on_Lobby_SpectateLaunch(quint64 matchId, QString gameName);
     void on_Lobby_SpectateData(QByteArray bytes, int liveFrame);
+    void on_Lobby_SpectateKeyframe(int frame, QByteArray savestate);
     void on_Lobby_SpectateClosed(QString reason);
     void on_RomBrowser_RomListRefreshFinished(bool canceled);
 #endif

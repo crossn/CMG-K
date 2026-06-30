@@ -124,6 +124,10 @@ public:
     void startRoom();
     void kickFromRoom(quint64 userId);
 
+    // Host-only: swap two seats (P1-P4) to re-order players before the match.
+    // Server validates (host, waiting, valid slots) and rebroadcasts ROOM_STATE.
+    void swapSeats(int slotA, int slotB);
+
     // Host-only: change the room's rollback delay / prediction / pacing. The
     // *Auto flags tell the server whether delay/prediction are host-Auto-driven
     // so non-hosts can mirror the host's label (pacing has no Auto). Server must
@@ -152,6 +156,9 @@ public:
     // Broadcast (one player streams the live match's .krec up to the server).
     void sendBroadcastBegin(quint64 matchId);
     void sendBroadcastData(quint64 matchId, const QByteArray& chunk, int liveFrame); // raw krec bytes (base64'd) + broadcaster's live frame
+    // Upload a savestate keyframe (already compressed) for frame F. Split into chunks
+    // so each message stays under the server's per-message read limit.
+    void sendBroadcastKeyframe(quint64 matchId, const QByteArray& savestate, int frame);
     void sendBroadcastEnd(quint64 matchId);
 
     // Spectate (pull a broadcast match's krec stream back down).
@@ -203,6 +210,9 @@ signals:
     // Spectate stream (server → spectator). data carries decoded krec bytes.
     void spectateBegan(quint64 matchId);
     void spectateData(quint64 matchId, const QByteArray& data, int liveFrame);
+    // A reassembled savestate keyframe (still compressed) the spectator should restore
+    // at frame, before replaying the krec tail that follows in spectateData.
+    void spectateKeyframe(quint64 matchId, int frame, const QByteArray& savestate);
     void spectateEnded(quint64 matchId, const QString& reason);
     void spectateFailed(quint64 matchId, const QString& reason);
 
@@ -242,6 +252,7 @@ private:
     void handleQuickMatchStatus(const QJsonObject& data);
     void handleSpectateBegin(const QJsonObject& data);
     void handleSpectateData(const QJsonObject& data);
+    void handleSpectateKeyframe(const QJsonObject& data);
     void handleSpectateEnd(const QJsonObject& data);
     void handleSpectateFail(const QJsonObject& data);
 
@@ -259,6 +270,13 @@ private:
     QTimer* m_heartbeatTimer = nullptr;
     QTimer* m_udpKeepaliveTimer = nullptr;
     bool m_inPrematchSync = false;
+
+    // Incoming spectate keyframe reassembly (chunked SPECTATE_KEYFRAME messages).
+    int        m_kfRecvFrame = -1;
+    int        m_kfRecvCount = 0;
+    int        m_kfRecvGot = 0;
+    QByteArray m_kfRecvBuf;
+    QList<bool> m_kfRecvChunkSeen;
 
     // Pending HELLO context
     QString m_pendingUsername;

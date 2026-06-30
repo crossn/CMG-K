@@ -3452,34 +3452,95 @@ void MainWindow::timerEvent(QTimerEvent *event)
                 this->stopLobbySpectate();
                 return;
             }
-            // Fast-forward toward the live edge, then settle at realtime so the
-            // spectator sits ~1.5 s behind the broadcaster.
-            //
-            // Target = the broadcaster-stamped live frame (authoritative). Until
-            // the first stamp arrives, fall back to the local received edge.
-            const int liveFrame = this->ui_SpectateLiveFrame > 0
-                ? this->ui_SpectateLiveFrame
-                : n02::playbackGetTotalFrames();
-            const int target = 90; // ~1.5 s behind live
-            const int behind = liveFrame - n02::playbackGetCurrentFrame();
+            // Fast-forward while there's buffered krec ahead of us, then settle near
+            // the buffered/live edge. We measure "behind" as buffered-but-unplayed
+            // frames (LOCAL to this stream) rather than the broadcaster's global live
+            // frame: in the keyframe path the krec tail starts at the keyframe frame,
+            // so the global stamp is far ahead of our local numbering and would never
+            // let us settle. Local buffered-remaining is correct for both paths.
+            const int settle   = 90;  // once catching up, stop ~1.5 s behind the edge
+            const int reengage = 240; // but don't RE-start catch-up until ~4 s behind
+            const int behind   = n02::playbackGetTotalFrames() - n02::playbackGetCurrentFrame();
 
-            if (behind > target)
+            // Hysteresis: engage catch-up only when we're well behind, then run
+            // until we're close. Without the gap, normal live-stream jitter near
+            // the edge would flip the headless toggle on/off and flicker the
+            // screen. The initial join (behind = whole backlog) always engages.
+            const bool wantFastForward = this->ui_SpectateFastForward
+                ? (behind > settle)
+                : (behind > reengage);
+
+            if (wantFastForward)
             {
-                // Catch up headless: drop video/audio/pacing so the emulator
-                // runs uncapped (the krec still feeds via the PIF sync callback).
-                // Drains the backlog in ~1-2 s instead of crawling at rendered 5x.
+                // Fully headless catch-up (video off) — max speed, and headless boot-replay
+                // stays in sync. The OSD can't paint without a presented frame, so the
+                // loading bar lives in the WINDOW TITLE instead (set on the UI thread below,
+                // which runs regardless of whether the emulator presents anything).
+                const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
                 if (!this->ui_SpectateFastForward)
                 {
-                    CoreSetFrameOutput(CoreFrameOutput_Input);
                     this->ui_SpectateFastForward = true;
+                    this->ui_SpectateBannerPending = false;
+                    // Arm the loading-bar estimator + remember the title to restore.
+                    this->ui_SpectateInitialBehind  = behind > 1 ? behind : 1;
+                    this->ui_SpectateCatchupRate    = 0.0;
+                    this->ui_SpectateRateLastBehind = behind;
+                    this->ui_SpectateRateLastMs     = nowMs;
+                    this->ui_SpectateSavedTitle     = this->windowTitle();
                 }
+                CoreSetFrameOutput(CoreFrameOutput_Pacing | CoreFrameOutput_Input); // headless (no Video)
+                // Flat-out until caught up — no taper near the edge. A spectator is
+                // data-bound: it can't pass the live edge (it idles once the buffer
+                // runs dry), so there's nothing to overshoot.
+                if (CoreGetSpeedFactor() != 1000)
+                    CoreSetSpeedFactor(1000);
+
+                // Loading bar + ETA. The live edge grows while we catch up, so we
+                // estimate from how fast "behind" is actually shrinking (sampled ~10/s
+                // so the per-sample frame delta is meaningful), not an assumed speed
+                // multiplier. Progress is against the backlog we started this run with.
+                if (nowMs - this->ui_SpectateRateLastMs >= 100)
+                {
+                    const double dtSec  = (nowMs - this->ui_SpectateRateLastMs) / 1000.0;
+                    const double inst   = (this->ui_SpectateRateLastBehind - behind) / dtSec;
+                    this->ui_SpectateCatchupRate = (this->ui_SpectateCatchupRate <= 0.0)
+                        ? inst
+                        : (0.6 * this->ui_SpectateCatchupRate + 0.4 * inst);
+                    this->ui_SpectateRateLastBehind = behind;
+                    this->ui_SpectateRateLastMs     = nowMs;
+                }
+
+                // Progress over the backlog from start (initialBehind) down to the settle
+                // point, so it fills to 100% exactly as catch-up completes.
+                const int span = this->ui_SpectateInitialBehind - settle;
+                int pct = (span > 0)
+                    ? static_cast<int>(100.0 * (this->ui_SpectateInitialBehind - behind) / span)
+                    : 100;
+                if (pct < 0) pct = 0;
+                if (pct > 100) pct = 100;
+                constexpr int barW = 18;
+                const int filled = pct * barW / 100;
+                std::string msg = "Catching up  [" + std::string(filled, '#') +
+                                  std::string(barW - filled, '-') + "]  " + std::to_string(pct) + "%";
+                if (this->ui_SpectateCatchupRate > 1.0)
+                {
+                    const int rate   = static_cast<int>(this->ui_SpectateCatchupRate);
+                    const int etaSec = (behind + rate - 1) / rate; // ceil(behind/rate)
+                    msg += "  ~" + std::to_string(etaSec) + "s";
+                }
+                // Bar goes in the title (UI thread) so it updates even with zero presents.
+                this->setWindowTitle(QString::fromStdString(msg));
             }
             else if (this->ui_SpectateFastForward)
             {
-                // Reached the live edge — resume rendering at realtime.
+                // Reached the live edge — restore the title, resume rendering at realtime;
+                // the next presented frame goes live.
+                OnScreenDisplaySetCenterMessage("");
+                this->setWindowTitle(this->ui_SpectateSavedTitle);
                 CoreSetFrameOutput(CoreFrameOutput_All);
                 CoreSetSpeedFactor(100);
                 this->ui_SpectateFastForward = false;
+                this->ui_SpectateBannerPending = false;
             }
         }
     }
@@ -4192,6 +4253,8 @@ void MainWindow::on_Lobby_SpectateLaunch(quint64 matchId, QString gameName)
     this->ui_SpectateActive    = true;
     this->ui_SpectateMatchId   = matchId;
     this->ui_SpectateLiveFrame = 0; // updated from broadcaster-stamped SPECTATE_DATA
+    this->ui_SpectateNamesShown = false; // set once the krec header arrives
+    CoreClearSpectateKeyframe(); // drop any stale keyframe from a previous spectate
 
     // ~60 Hz: drive the playback state machine + fast-forward.
     if (this->ui_SpectateTimerId == 0)
@@ -4210,6 +4273,33 @@ void MainWindow::on_Lobby_SpectateData(QByteArray bytes, int liveFrame)
     if (liveFrame > this->ui_SpectateLiveFrame)
         this->ui_SpectateLiveFrame = liveFrame;
     n02::playbackAppendBytes(bytes.constData(), static_cast<int>(bytes.size()));
+
+#ifdef _WIN32
+    // The krec header carries the slot-ordered player names; once it has been
+    // parsed (synchronously, in playbackAppendBytes above), label the OSD ports
+    // from it exactly like a live match does. Names ride in the stream, not a
+    // side channel, so the slot order is authoritative.
+    if (!this->ui_SpectateNamesShown && n02::playbackHeaderReady())
+    {
+        OnScreenDisplaySetKailleraPortLabels(n02::playbackNumPlayers(), GetLiveKailleraPortLabelNames());
+        this->ui_SpectateNamesShown = true;
+    }
+#endif
+}
+
+void MainWindow::on_Lobby_SpectateKeyframe(int frame, QByteArray savestate)
+{
+    if (!this->ui_SpectateActive || savestate.isEmpty() || frame < 0)
+    {
+        return;
+    }
+    // Stage the broadcaster's savestate so the spectator's emulation restores it (on
+    // its emulation thread) before consuming the first krec input. This arrives ahead
+    // of the SPECTATE_DATA krec tail (which starts at this frame), so it's staged
+    // before the emulation even starts — the load wins the race against the first poll
+    // and the replay continues from frame F's state instead of boot.
+    CoreStageSpectateKeyframe(reinterpret_cast<const unsigned char*>(savestate.constData()),
+                              static_cast<int>(savestate.size()), frame);
 }
 
 void MainWindow::on_Lobby_SpectateClosed(QString reason)
@@ -4231,6 +4321,12 @@ void MainWindow::stopLobbySpectate()
         this->killTimer(this->ui_SpectateTimerId);
         this->ui_SpectateTimerId = 0;
     }
+    if (this->ui_SpectateFastForward) // stopped mid-catch-up — put the title back
+        this->setWindowTitle(this->ui_SpectateSavedTitle);
+    this->ui_SpectateFastForward = false;
+    this->ui_SpectateBannerPending = false;
+    CoreClearSpectateKeyframe(); // drop any staged keyframe
+    OnScreenDisplaySetCenterMessage(""); // clear the buffering banner if we stop mid-catch-up
     CoreSetSpeedFactor(100);
     CoreSetFrameOutput(CoreFrameOutput_All); // undo any headless catch-up state
     n02::playbackStopStream();
@@ -4666,6 +4762,8 @@ void MainWindow::ensureRollbackLobbyDialog()
             this, &MainWindow::on_Lobby_SpectateLaunch);
     connect(this->rollbackLobbyDialog, &Dialog::RollbackLobbyDialog::spectateStreamData,
             this, &MainWindow::on_Lobby_SpectateData);
+    connect(this->rollbackLobbyDialog, &Dialog::RollbackLobbyDialog::spectateStreamKeyframe,
+            this, &MainWindow::on_Lobby_SpectateKeyframe);
     connect(this->rollbackLobbyDialog, &Dialog::RollbackLobbyDialog::spectateStreamClosed,
             this, &MainWindow::on_Lobby_SpectateClosed);
 }
@@ -4802,13 +4900,14 @@ void MainWindow::on_Rollback_SessionRequested(QString gameName, QString remoteAd
 // LOBBY| branch and uses GekkoNet's built-in UDP transport instead of
 // the n02 P2P transport (which the lobby never initializes).
 // remotePeers contains N-1 entries, each pre-formatted as "<slot>,<ip>,<port>".
-void MainWindow::on_Lobby_SessionRequested(QString gameName, QStringList remotePeers, int localPort, int localPlayer, int frameDelay, int predictionWindow)
+void MainWindow::on_Lobby_SessionRequested(QString gameName, QString romFile, QStringList remotePeers, int localPort, int localPlayer, int frameDelay, int predictionWindow)
 {
     {
-        char buf[640];
+        char buf[768];
         std::snprintf(buf, sizeof(buf),
-            "Lobby→LobbySession: game='%s' peers=%d (%s) localPort=%d slot=%d delay=%d pred=%d emuRunning=%d launchActive=%d",
+            "Lobby→LobbySession: game='%s' rom='%s' peers=%d (%s) localPort=%d slot=%d delay=%d pred=%d emuRunning=%d launchActive=%d",
             gameName.toUtf8().constData(),
+            romFile.toUtf8().constData(),
             int(remotePeers.size()),
             remotePeers.join("; ").toUtf8().constData(),
             localPort, localPlayer, frameDelay, predictionWindow,
@@ -4817,26 +4916,55 @@ void MainWindow::on_Lobby_SessionRequested(QString gameName, QStringList remoteP
         CoreAddCallbackMessage(CoreDebugMessageType::Info, buf);
     }
 
-    QString romFile = this->findRomByName(gameName);
+    // The lobby resolved romFile from the room's MD5 (localRomPathForMd5), so it
+    // points at the byte-identical ROM every seat verified they have — including
+    // romhacks absent from the database, where findRomByName(gameName) fails
+    // because the display name is the file's name, not the GoodName it matches.
+    // Fall back to the name lookup only if the path somehow arrived empty.
+    if (romFile.isEmpty())
+        romFile = this->findRomByName(gameName);
     if (romFile.isEmpty())
     {
         this->showErrorMessage("ROM Not Found",
             "Could not find ROM: " + gameName + "\n\nPlease add it to your ROM directory and refresh the list.");
+        // The lobby flagged itself "awaiting emulation" before emitting
+        // matchReady; clear it so the room doesn't stay stuck on "Connecting…".
+#ifdef NETPLAY
+        if (this->rollbackLobbyDialog != nullptr)
+            this->rollbackLobbyDialog->notifyEmulationFinished();
+#endif
         return;
     }
 
     if (this->emulationThread->isRunning())
     {
+        // ~2 s of 50 ms retries. If the previous game still won't stop after
+        // that it's wedged; bail out gracefully rather than retry forever (which
+        // left a hung game running in the background).
+        if (++this->ui_RollbackRelaunchAttempts > 40)
+        {
+            this->ui_RollbackRelaunchAttempts = 0;
+            CoreAddCallbackMessage(CoreDebugMessageType::Error,
+                "Lobby→LobbySession: previous emulation won't stop — giving up to avoid a hung instance");
+            this->showErrorMessage("Couldn't start match",
+                "The previous game is still shutting down. Please wait a moment and try again.");
+#ifdef NETPLAY
+            if (this->rollbackLobbyDialog != nullptr)
+                this->rollbackLobbyDialog->notifyEmulationFinished();
+#endif
+            return;
+        }
         CoreAddCallbackMessage(CoreDebugMessageType::Info,
             "Lobby→LobbySession: emulation thread running — stopping and retrying");
         CoreStopEmulation();
         QTimer::singleShot(50, this,
-            [this, gameName, remotePeers, localPort, localPlayer, frameDelay, predictionWindow]()
+            [this, gameName, romFile, remotePeers, localPort, localPlayer, frameDelay, predictionWindow]()
             {
-                this->on_Lobby_SessionRequested(gameName, remotePeers, localPort, localPlayer, frameDelay, predictionWindow);
+                this->on_Lobby_SessionRequested(gameName, romFile, remotePeers, localPort, localPlayer, frameDelay, predictionWindow);
             });
         return;
     }
+    this->ui_RollbackRelaunchAttempts = 0;
 
     if (this->ui_RollbackNetplayLaunchActive)
     {
@@ -4868,6 +4996,14 @@ void MainWindow::on_Lobby_SessionRequested(QString gameName, QStringList remoteP
         n02::recordingOpen(recAppName.c_str(), gameName.toStdString().c_str(),
                            localPlayer, int(remotePeers.size()) + 1);
     }
+
+#ifdef _WIN32
+    // Label the OSD ports with the seated players' usernames. The lobby's
+    // onMatchBegin captured them (slot-indexed) into recording_player_names; the
+    // Kaillera and direct-rollback paths set the labels the same way, but this
+    // lobby path was missing it — so port labels never appeared in lobby matches.
+    OnScreenDisplaySetKailleraPortLabels(int(remotePeers.size()) + 1, GetLiveKailleraPortLabelNames());
+#endif
 
     this->emulationThread->SetLobbyNetplay(remotePeers, localPort, localPlayer, frameDelay, predictionWindow);
     this->launchEmulationThread(romFile, "", false, -1, true);
@@ -4931,6 +5067,11 @@ void MainWindow::on_Lobby_RoomChatReceived(QString nickname, QString message)
 
     nickname = nickname.trimmed();
     message = NormalizeOsdKailleraChatMessage(message);
+
+    // Carry room chat into the krec so broadcast spectators (and saved replays)
+    // see it too — a no-op unless a recording is open. The spectator's playback
+    // routes the embedded 0x08 record to its OSD like any other chat line.
+    n02::recordingQueueChat(nickname.toUtf8().constData(), message.toUtf8().constData());
 
     const std::string chatLine = "<" + nickname.toStdString() + "> " + message.toStdString();
     OnScreenDisplaySetKailleraChatMessage(chatLine);
