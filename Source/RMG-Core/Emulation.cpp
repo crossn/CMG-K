@@ -23,7 +23,9 @@
 #include "File.hpp"
 #include "Rom.hpp"
 #include "rmgk_gekko.hpp"
+#ifdef RMGK_HAVE_P2P_TRANSPORT
 #include "n02_client.h"
+#endif
 
 #include "m64p/Api.hpp"
 
@@ -345,6 +347,7 @@ static void KailleraPifSyncCallback(struct pif* pif)
             // so frameIndex[0] IS frame F; if we loaded before the tail arrived we'd have
             // nothing to realign the reader to. Until then player_MPV idles at the live
             // edge (returns 0, consumes nothing), so no krec is wasted by waiting.
+#ifdef RMGK_HAVE_P2P_TRANSPORT
             if (s_SpectateKeyframeStaged && !s_SpectateKeyframeLoaded && !s_SpectateKeyframeBuf.empty() &&
                 n02::playbackGetTotalFrames() > 0) {
                 CoreRollbackState kfState{};
@@ -398,6 +401,7 @@ static void KailleraPifSyncCallback(struct pif* pif)
                 s_SyncedThisFrame = false;
                 return;
             }
+#endif
         }
 
         // Divergence probe seq 1..N: each subsequent frame's first controller read runs
@@ -502,7 +506,9 @@ static void KailleraPifSyncCallback(struct pif* pif)
             if (s_SpectateInputProbeCount >= 0 && s_SpectateInputProbeCount <= 30 && num_received > 0) {
                 std::ostringstream istream;
                 istream << "spectate_input side=spec frame=" << (s_SpectateProbeFrameBase + s_SpectateInputProbeCount)
+#ifdef RMGK_HAVE_P2P_TRANSPORT
                         << " mode=" << n02::getActiveMode()
+#endif
                         << " ipb=" << (inPlayback ? 1 : 0);
                 for (int p = 0; p < num_received && p < 2; p++) {
                     char buf[16];
