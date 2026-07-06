@@ -109,8 +109,6 @@ static void pb_startGetKeysPolling(void);
 static void pb_stopGetKeysPolling(void);
 static void pb_mutexLockIo(void);
 static void pb_mutexUnlockIo(void);
-static void pb_mutexLockKeys(void);
-static void pb_mutexUnlockKeys(void);
 
 int pb_init(pb_debugFunc debugFn)
 {
@@ -255,7 +253,7 @@ int pb_romClosed(void)
 }
 
 
-#define GETKEYS_POLL_INTERVAL_MS 1
+#define GETKEYS_POLL_INTERVAL_MS 5
 #define GETKEYS_POLL_IDLE_MS 10 // This longer sleep is only when no channels are available
 
 struct cachedKeys {
@@ -263,7 +261,7 @@ struct cachedKeys {
 	int valid;
 };
 
-static struct cachedKeys g_cached_keys[MAX_CHANNELS] = { };
+static volatile struct cachedKeys g_cached_keys[MAX_CHANNELS] = { };
 static volatile int g_getKeys_polling = 0;
 static int g_getKeys_thread_running = 0;
 static int g_threading_initialized = 0;
@@ -342,25 +340,6 @@ static void pb_mutexUnlockIo(void)
 #endif
 }
 
-static void pb_mutexLockKeys(void)
-{
-	pb_threadingInit();
-#if defined(_WIN32)
-	EnterCriticalSection(&g_keys_mutex);
-#else
-	pthread_mutex_lock(&g_keys_mutex);
-#endif
-}
-
-static void pb_mutexUnlockKeys(void)
-{
-#if defined(_WIN32)
-	LeaveCriticalSection(&g_keys_mutex);
-#else
-	pthread_mutex_unlock(&g_keys_mutex);
-#endif
-}
-
 static int pb_pollGetKeysOnce(int Control, unsigned int *Keys)
 {
 	unsigned char command[7] = { 0x01, 0x04, 0x01, 0x00, 0x00, 0x00, 0x00 };
@@ -423,10 +402,8 @@ static PB_THREAD_RETURN pb_getKeysPollingThread(void *unused)
 		for (i=0; i<g_n_channels && i<MAX_CHANNELS && g_getKeys_polling; i++) {
 			unsigned int keys;
 			if (pb_pollGetKeysOnce(i, &keys)) {
-				pb_mutexLockKeys();
 				g_cached_keys[i].keys = keys;
 				g_cached_keys[i].valid = 1;
-				pb_mutexUnlockKeys();
 			}
 			polled = 1;
 		}
@@ -449,9 +426,7 @@ static void pb_startGetKeysPolling(void)
 		return;
 	}
 
-	pb_mutexLockKeys();
 	memset(g_cached_keys, 0, sizeof(g_cached_keys));
-	pb_mutexUnlockKeys();
 
 	g_getKeys_polling = 1;
 
@@ -583,12 +558,10 @@ int pb_getKeys(int Control, unsigned int *Keys)
 		return 0;
 	}
 
-	pb_mutexLockKeys();
 	valid = g_cached_keys[Control].valid;
 	if (valid) {
 		*Keys = g_cached_keys[Control].keys;
 	}
-	pb_mutexUnlockKeys();
 
 	return valid;
 }
