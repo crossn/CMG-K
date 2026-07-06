@@ -35,6 +35,13 @@
 
 #include <stdio.h>
 #include <string.h>
+
+#if defined(_WIN32)
+#include <windows.h>
+#else
+#include <pthread.h>
+#include <unistd.h>
+#endif
 #include "plugin_back.h"
 #include "gcn64.h"
 #include "gcn64lib.h"
@@ -96,9 +103,19 @@ static int g_n_channels = 0;
 
 static int pb_commandIsValid(int Control, unsigned char *Command);
 
+static void pb_threadingInit(void);
+static void pb_threadingShutdown(void);
+static void pb_startGetKeysPolling(void);
+static void pb_stopGetKeysPolling(void);
+static void pb_mutexLockIo(void);
+static void pb_mutexUnlockIo(void);
+static void pb_mutexLockKeys(void);
+static void pb_mutexUnlockKeys(void);
+
 int pb_init(pb_debugFunc debugFn)
 {
 	DebugMessage = debugFn;
+	pb_threadingInit();
 	gcn64_init(1);
 	return 0;
 }
@@ -106,6 +123,8 @@ int pb_init(pb_debugFunc debugFn)
 static void pb_freeAllAdapters(void)
 {
 	int i;
+
+	pb_stopGetKeysPolling();
 
 	for (i=0; i<g_n_adapters; i++) {
 		if (g_adapters[i].handle) {
@@ -125,6 +144,7 @@ static void pb_freeAllAdapters(void)
 int pb_shutdown(void)
 {
 	pb_freeAllAdapters();
+	pb_threadingShutdown();
 	gcn64_shutdown();
 
 	return 0;
@@ -214,12 +234,16 @@ int pb_romOpen(void)
 		}
 	}
 
+	pb_startGetKeysPolling();
+
 	return 0;
 }
 
 int pb_romClosed(void)
 {
 	int i;
+
+	pb_stopGetKeysPolling();
 
 	for (i=0; i<MAX_ADAPTERS; i++) {
 		if (g_adapters[i].handle) {
@@ -228,6 +252,245 @@ int pb_romClosed(void)
 	}
 
 	return 0;
+}
+
+
+#define GETKEYS_POLL_INTERVAL_MS 1
+#define GETKEYS_POLL_IDLE_MS 10 // This longer sleep is only when no channels are available
+
+struct cachedKeys {
+	unsigned int keys;
+	int valid;
+};
+
+static struct cachedKeys g_cached_keys[MAX_CHANNELS] = { };
+static volatile int g_getKeys_polling = 0;
+static int g_getKeys_thread_running = 0;
+static int g_threading_initialized = 0;
+
+#if defined(_WIN32)
+static CRITICAL_SECTION g_io_mutex;
+static CRITICAL_SECTION g_keys_mutex;
+static HANDLE g_getKeys_thread = NULL;
+#define PB_THREAD_RETURN DWORD WINAPI
+#else
+static pthread_mutex_t g_io_mutex;
+static pthread_mutex_t g_keys_mutex;
+static pthread_t g_getKeys_thread;
+#define PB_THREAD_RETURN void *
+#endif
+
+static void pb_sleepMs(int ms)
+{
+#if defined(_WIN32)
+	Sleep((DWORD)ms);
+#else
+	usleep(ms * 1000);
+#endif
+}
+
+static void pb_threadingInit(void)
+{
+	if (g_threading_initialized) {
+		return;
+	}
+
+#if defined(_WIN32)
+	InitializeCriticalSection(&g_io_mutex);
+	InitializeCriticalSection(&g_keys_mutex);
+#else
+	pthread_mutex_init(&g_io_mutex, NULL);
+	pthread_mutex_init(&g_keys_mutex, NULL);
+#endif
+	g_threading_initialized = 1;
+}
+
+static void pb_threadingShutdown(void)
+{
+	if (!g_threading_initialized) {
+		return;
+	}
+
+	pb_stopGetKeysPolling();
+
+#if defined(_WIN32)
+	DeleteCriticalSection(&g_io_mutex);
+	DeleteCriticalSection(&g_keys_mutex);
+#else
+	pthread_mutex_destroy(&g_io_mutex);
+	pthread_mutex_destroy(&g_keys_mutex);
+#endif
+	g_threading_initialized = 0;
+}
+
+static void pb_mutexLockIo(void)
+{
+	pb_threadingInit();
+#if defined(_WIN32)
+	EnterCriticalSection(&g_io_mutex);
+#else
+	pthread_mutex_lock(&g_io_mutex);
+#endif
+}
+
+static void pb_mutexUnlockIo(void)
+{
+#if defined(_WIN32)
+	LeaveCriticalSection(&g_io_mutex);
+#else
+	pthread_mutex_unlock(&g_io_mutex);
+#endif
+}
+
+static void pb_mutexLockKeys(void)
+{
+	pb_threadingInit();
+#if defined(_WIN32)
+	EnterCriticalSection(&g_keys_mutex);
+#else
+	pthread_mutex_lock(&g_keys_mutex);
+#endif
+}
+
+static void pb_mutexUnlockKeys(void)
+{
+#if defined(_WIN32)
+	LeaveCriticalSection(&g_keys_mutex);
+#else
+	pthread_mutex_unlock(&g_keys_mutex);
+#endif
+}
+
+static int pb_pollGetKeysOnce(int Control, unsigned int *Keys)
+{
+	unsigned char command[7] = { 0x01, 0x04, 0x01, 0x00, 0x00, 0x00, 0x00 };
+	unsigned char *rx = command + 3;
+	struct rawChannel *channel;
+	struct adapter *adap;
+	struct blockio_op bio;
+	int res;
+
+	if (!Keys) {
+		return 0;
+	}
+
+	*Keys = 0;
+
+	if (!pb_commandIsValid(Control, command)) {
+		return 0;
+	}
+
+	channel = &g_channels[Control];
+	adap = channel->adapter;
+	if (!adap || !adap->handle) {
+		return 0;
+	}
+
+	memset(&bio, 0, sizeof(bio));
+	bio.chn = channel->chn;
+	bio.tx_len = command[0] & BIO_RXTX_MASK;
+	bio.rx_len = command[1] & BIO_RXTX_MASK;
+	bio.tx_data = command + 2;
+	bio.rx_data = rx;
+
+	pb_mutexLockIo();
+	res = gcn64lib_blockIO(adap->handle, &bio, 1);
+	pb_mutexUnlockIo();
+
+	if (res != 0) {
+		return 0;
+	}
+
+	if ((bio.rx_len & (BIO_RX_LEN_TIMEDOUT | BIO_RX_LEN_PARTIAL)) || ((bio.rx_len & BIO_RXTX_MASK) < 4)) {
+		return 0;
+	}
+
+	*Keys = ((unsigned int)rx[0])
+		| ((unsigned int)rx[1] << 8)
+		| ((unsigned int)rx[2] << 16)
+		| ((unsigned int)rx[3] << 24);
+	return 1;
+}
+
+static PB_THREAD_RETURN pb_getKeysPollingThread(void *unused)
+{
+	int i;
+	(void)unused;
+
+	while (g_getKeys_polling) {
+		int polled = 0;
+
+		for (i=0; i<g_n_channels && i<MAX_CHANNELS && g_getKeys_polling; i++) {
+			unsigned int keys;
+			if (pb_pollGetKeysOnce(i, &keys)) {
+				pb_mutexLockKeys();
+				g_cached_keys[i].keys = keys;
+				g_cached_keys[i].valid = 1;
+				pb_mutexUnlockKeys();
+			}
+			polled = 1;
+		}
+
+		pb_sleepMs(polled ? GETKEYS_POLL_INTERVAL_MS : GETKEYS_POLL_IDLE_MS);
+	}
+
+#if defined(_WIN32)
+	return 0;
+#else
+	return NULL;
+#endif
+}
+
+static void pb_startGetKeysPolling(void)
+{
+	pb_threadingInit();
+
+	if (g_getKeys_thread_running) {
+		return;
+	}
+
+	pb_mutexLockKeys();
+	memset(g_cached_keys, 0, sizeof(g_cached_keys));
+	pb_mutexUnlockKeys();
+
+	g_getKeys_polling = 1;
+
+#if defined(_WIN32)
+	g_getKeys_thread = CreateThread(NULL, 0, pb_getKeysPollingThread, NULL, 0, NULL);
+	if (!g_getKeys_thread) {
+		g_getKeys_polling = 0;
+		DebugMessage(PB_MSG_ERROR, "Could not start GetKeys polling thread");
+		return;
+	}
+#else
+	if (pthread_create(&g_getKeys_thread, NULL, pb_getKeysPollingThread, NULL) != 0) {
+		g_getKeys_polling = 0;
+		DebugMessage(PB_MSG_ERROR, "Could not start GetKeys polling thread");
+		return;
+	}
+#endif
+
+	g_getKeys_thread_running = 1;
+}
+
+static void pb_stopGetKeysPolling(void)
+{
+	if (!g_getKeys_thread_running) {
+		g_getKeys_polling = 0;
+		return;
+	}
+
+	g_getKeys_polling = 0;
+
+#if defined(_WIN32)
+	WaitForSingleObject(g_getKeys_thread, INFINITE);
+	CloseHandle(g_getKeys_thread);
+	g_getKeys_thread = NULL;
+#else
+	pthread_join(g_getKeys_thread, NULL);
+#endif
+
+	g_getKeys_thread_running = 0;
 }
 
 #if defined(TIME_RAW_IO) || defined(TIME_COMMAND_TO_READ)
@@ -302,8 +565,13 @@ int pb_controllerCommand(int Control, unsigned char *Command)
 
 int pb_getKeys(int Control, unsigned int *Keys)
 {
+	/* This mirrors the normal controller status command used by the old
+	 * synchronous GetKeys path, but GetKeys now only uses it for validation.
+	 * The actual adapter IO is done continuously by the background polling
+	 * thread below.
+	 */
 	unsigned char command[7] = { 0x01, 0x04, 0x01, 0x00, 0x00, 0x00, 0x00 };
-	unsigned char *rx = command + 3;
+	int valid;
 
 	if (!Keys) {
 		return 0;
@@ -315,18 +583,14 @@ int pb_getKeys(int Control, unsigned int *Keys)
 		return 0;
 	}
 
-	pb_readController(Control, command);
-	pb_readController(-1, NULL);
-
-	if ((command[1] & (BIO_RX_LEN_TIMEDOUT | BIO_RX_LEN_PARTIAL)) || ((command[1] & BIO_RXTX_MASK) < 4)) {
-		return 0;
+	pb_mutexLockKeys();
+	valid = g_cached_keys[Control].valid;
+	if (valid) {
+		*Keys = g_cached_keys[Control].keys;
 	}
+	pb_mutexUnlockKeys();
 
-	*Keys = ((unsigned int)rx[0])
-		| ((unsigned int)rx[1] << 8)
-		| ((unsigned int)rx[2] << 16)
-		| ((unsigned int)rx[3] << 24);
-	return 1;
+	return valid;
 }
 
 static int pb_performIo(void)
@@ -361,7 +625,9 @@ static int pb_performIo(void)
 #ifdef TIME_RAW_IO
 		timing(1, NULL);
 #endif
+		pb_mutexLockIo();
 		res = gcn64lib_blockIO(adap->handle, biops, adap->n_ops);
+		pb_mutexUnlockIo();
 #ifdef TIME_RAW_IO
 		timing(0, "blockIO");
 #endif
