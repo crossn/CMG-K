@@ -252,10 +252,6 @@ int pb_romClosed(void)
 	return 0;
 }
 
-
-#define GETKEYS_POLL_INTERVAL_MS 5
-#define GETKEYS_POLL_IDLE_MS 10 // This longer sleep is only when no channels are available
-
 struct cachedKeys {
 	unsigned int keys;
 	int valid;
@@ -268,24 +264,13 @@ static int g_threading_initialized = 0;
 
 #if defined(_WIN32)
 static CRITICAL_SECTION g_io_mutex;
-static CRITICAL_SECTION g_keys_mutex;
 static HANDLE g_getKeys_thread = NULL;
 #define PB_THREAD_RETURN DWORD WINAPI
 #else
 static pthread_mutex_t g_io_mutex;
-static pthread_mutex_t g_keys_mutex;
 static pthread_t g_getKeys_thread;
 #define PB_THREAD_RETURN void *
 #endif
-
-static void pb_sleepMs(int ms)
-{
-#if defined(_WIN32)
-	Sleep((DWORD)ms);
-#else
-	usleep(ms * 1000);
-#endif
-}
 
 static void pb_threadingInit(void)
 {
@@ -295,10 +280,8 @@ static void pb_threadingInit(void)
 
 #if defined(_WIN32)
 	InitializeCriticalSection(&g_io_mutex);
-	InitializeCriticalSection(&g_keys_mutex);
 #else
 	pthread_mutex_init(&g_io_mutex, NULL);
-	pthread_mutex_init(&g_keys_mutex, NULL);
 #endif
 	g_threading_initialized = 1;
 }
@@ -313,10 +296,8 @@ static void pb_threadingShutdown(void)
 
 #if defined(_WIN32)
 	DeleteCriticalSection(&g_io_mutex);
-	DeleteCriticalSection(&g_keys_mutex);
 #else
 	pthread_mutex_destroy(&g_io_mutex);
-	pthread_mutex_destroy(&g_keys_mutex);
 #endif
 	g_threading_initialized = 0;
 }
@@ -397,18 +378,13 @@ static PB_THREAD_RETURN pb_getKeysPollingThread(void *unused)
 	(void)unused;
 
 	while (g_getKeys_polling) {
-		int polled = 0;
-
 		for (i=0; i<g_n_channels && i<MAX_CHANNELS && g_getKeys_polling; i++) {
 			unsigned int keys;
 			if (pb_pollGetKeysOnce(i, &keys)) {
 				g_cached_keys[i].keys = keys;
 				g_cached_keys[i].valid = 1;
 			}
-			polled = 1;
 		}
-
-		pb_sleepMs(polled ? GETKEYS_POLL_INTERVAL_MS : GETKEYS_POLL_IDLE_MS);
 	}
 
 #if defined(_WIN32)
