@@ -251,7 +251,7 @@ EXPORT void CALL InitiateControllers(CONTROL_INFO ControlInfo)
 		adap_port = EMU_2_ADAP_PORT(i);
 
 		if (adap_port < n_controllers) {
-			ControlInfo.Controls[i].RawData = 1;
+			ControlInfo.Controls[i].RawData = 0;
 
 			/* Setting this is currently required or we
 			 * won't be called at all.
