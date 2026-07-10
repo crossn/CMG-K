@@ -91,6 +91,11 @@ struct rawChannel {
 	int chn;
 };
 
+struct cachedKeys {
+	unsigned int keys;
+	int valid;
+};
+
 /* Multiple adapters are supported, some are single player, others
  * two-player. As they are discovered during scan, their
  * channels (corresponding to physical controller ports) are added
@@ -100,6 +105,10 @@ struct rawChannel {
  */
 static struct rawChannel g_channels[MAX_CHANNELS] = { };
 static int g_n_channels = 0;
+static volatile struct cachedKeys g_cached_keys[MAX_CHANNELS] = { };
+static volatile int g_getKeys_polling = 0;
+static int g_getKeys_thread_running = 0;
+static int g_threading_initialized = 0;
 
 static int pb_commandIsValid(int Control, unsigned char *Command);
 
@@ -222,17 +231,53 @@ int pb_scanControllers(void)
 	return g_n_channels;
 }
 
+static int g_input_mode = PB_INPUT_MODE_RAW_PIF;
+
+void pb_setInputMode(int mode)
+{
+    if (mode != PB_INPUT_MODE_CACHED_GETKEYS)
+    {
+        mode = PB_INPUT_MODE_RAW_PIF;
+    }
+	
+	
+	if (g_input_mode == mode) {
+        return;
+    }
+
+    if (mode == PB_INPUT_MODE_RAW_PIF) {
+        pb_stopGetKeysPolling();
+    }
+
+    g_input_mode = mode;
+}
+
+int pb_getInputMode(void)
+{
+    return g_input_mode;
+}
+
+int pb_usesRawData(void)
+{
+    return g_input_mode == PB_INPUT_MODE_RAW_PIF;
+}
+
 int pb_romOpen(void)
 {
 	int i;
-
+	
 	for (i=0; i<MAX_ADAPTERS; i++) {
 		if (g_adapters[i].handle) {
 			gcn64lib_suspendPolling(g_adapters[i].handle, 1);
 		}
 	}
+	
+	pb_stopGetKeysPolling(); // safety
 
-	pb_startGetKeysPolling();
+    if (g_input_mode == PB_INPUT_MODE_CACHED_GETKEYS)
+    {
+        pb_startGetKeysPolling();
+    }
 
 	return 0;
 }
@@ -251,16 +296,6 @@ int pb_romClosed(void)
 
 	return 0;
 }
-
-struct cachedKeys {
-	unsigned int keys;
-	int valid;
-};
-
-static volatile struct cachedKeys g_cached_keys[MAX_CHANNELS] = { };
-static volatile int g_getKeys_polling = 0;
-static int g_getKeys_thread_running = 0;
-static int g_threading_initialized = 0;
 
 #if defined(_WIN32)
 static CRITICAL_SECTION g_io_mutex;
@@ -304,7 +339,8 @@ static void pb_threadingShutdown(void)
 
 static void pb_mutexLockIo(void)
 {
-	pb_threadingInit();
+	pb_threadingInit(); // safety
+	
 #if defined(_WIN32)
 	EnterCriticalSection(&g_io_mutex);
 #else
@@ -396,8 +432,8 @@ static PB_THREAD_RETURN pb_getKeysPollingThread(void *unused)
 
 static void pb_startGetKeysPolling(void)
 {
-	pb_threadingInit();
-
+	pb_threadingInit(); // safety
+	
 	if (g_getKeys_thread_running) {
 		return;
 	}
@@ -516,13 +552,14 @@ int pb_controllerCommand(int Control, unsigned char *Command)
 
 int pb_getKeys(int Control, unsigned int *Keys)
 {
-	/* This mirrors the normal controller status command used by the old
-	 * synchronous GetKeys path, but GetKeys now only uses it for validation.
-	 * The actual adapter IO is done continuously by the background polling
-	 * thread below.
-	 */
 	unsigned char command[7] = { 0x01, 0x04, 0x01, 0x00, 0x00, 0x00, 0x00 };
 	int valid;
+	
+	// Normal path
+    if (g_input_mode != PB_INPUT_MODE_CACHED_GETKEYS)
+    {
+        return pb_pollGetKeysOnce(Control, Keys);
+    }
 
 	if (!Keys) {
 		return 0;
@@ -534,6 +571,7 @@ int pb_getKeys(int Control, unsigned int *Keys)
 		return 0;
 	}
 
+	// Cached path
 	valid = g_cached_keys[Control].valid;
 	if (valid) {
 		*Keys = g_cached_keys[Control].keys;

@@ -9,6 +9,8 @@
  */
 #include "RaphnetInputDialog.hpp"
 
+#include <RMG-Core/Settings.hpp>
+
 #include <hidapi.h>
 
 #include <QVBoxLayout>
@@ -49,6 +51,9 @@
 
 namespace
 {
+	
+constexpr int kRaphnetInputModeRawPif = 0;
+constexpr int kRaphnetInputModeCachedGetKeys = 1;
 
 struct RaphnetAdapterDef
 {
@@ -161,6 +166,35 @@ void RaphnetInputDialog::setupUi()
     portLayout->addWidget(m_PortComboBox);
     portLayout->addStretch();
     mainLayout->addLayout(portLayout);
+	
+    // Plugin mode setting
+    QGroupBox* modeGroup = new QGroupBox("Plugin Mode", this);
+    QVBoxLayout* modeLayout = new QVBoxLayout(modeGroup);
+
+    m_InputModeComboBox = new QComboBox(modeGroup);
+    m_InputModeComboBox->addItem("Normal", kRaphnetInputModeRawPif);
+    m_InputModeComboBox->addItem("Cached / Nopak", kRaphnetInputModeCachedGetKeys);
+
+    int inputMode = CoreSettingsGetIntValue(SettingsID::RaphnetInput_InputMode);
+    int inputModeIndex = m_InputModeComboBox->findData(inputMode);
+    if (inputModeIndex < 0)
+    {
+        inputModeIndex = m_InputModeComboBox->findData(kRaphnetInputModeRawPif);
+    }
+    m_InputModeComboBox->setCurrentIndex(inputModeIndex);
+
+    QLabel* modeHelpLabel = new QLabel(
+        "Normal keeps the original raphnetraw behavior with pak support.\n"
+        "Cached / Nopak allows for higher USB latencies to not lag the game.\n"
+        "Changes apply the next time emulation is started.", modeGroup);
+    modeHelpLabel->setWordWrap(true);
+
+    modeLayout->addWidget(m_InputModeComboBox);
+    modeLayout->addWidget(modeHelpLabel);
+    mainLayout->addWidget(modeGroup);
+
+    connect(m_InputModeComboBox, static_cast<void (QComboBox::*)(int)>(&QComboBox::currentIndexChanged),
+        this, &RaphnetInputDialog::onInputModeChanged);
 
     // Buttons group
     QGroupBox* buttonsGroup = new QGroupBox("Buttons", this);
@@ -494,6 +528,18 @@ void RaphnetInputDialog::onResetStatsClicked()
     m_DebugStats = {};
     m_FailedPollCount = 0;
     updateDebugStatsLabels();
+}
+
+void RaphnetInputDialog::onInputModeChanged(int index)
+{
+    if (m_InputModeComboBox == nullptr || index < 0)
+    {
+        return;
+    }
+
+    int inputMode = m_InputModeComboBox->itemData(index).toInt();
+    CoreSettingsSetValue(SettingsID::RaphnetInput_InputMode, inputMode);
+    CoreSettingsSave();
 }
 
 void RaphnetInputDialog::updateButtonIndicators(uint16_t buttons)
