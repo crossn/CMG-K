@@ -134,13 +134,22 @@ inline std::string encodeKailleraText(const char* text)
     std::wstring wide;
     if (!multiByteToWide(CP_UTF8, MB_ERR_INVALID_CHARS, text, wide))
     {
-        return std::string(text);
+        // If the input already looks legacy-encoded, normalize it through CP932.
+        if (multiByteToWide(932, 0, text, wide))
+        {
+            std::string cp932;
+            if (wideToMultiByte(932, WC_NO_BEST_FIT_CHARS, wide, cp932))
+            {
+                return cp932;
+            }
+        }
+        return "?";
     }
 
     std::string cp932;
     if (!wideToMultiByte(932, WC_NO_BEST_FIT_CHARS, wide, cp932))
     {
-        return std::string(text);
+        return "?";
     }
     return cp932;
 #else
