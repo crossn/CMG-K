@@ -363,7 +363,11 @@ void RaphnetInputDialog::closeAdapter()
         hid_close(m_HidDevice);
         m_HidDevice = nullptr;
     }
-    hid_exit();
+    // hid_exit();
+    // NB: Do not call hid_exit() here.
+    // HIDAPI state is process-wide and is shared with the Raphnet input plugin.
+    // Calling hid_exit() from this dialog invalidates HIDAPI while the plugin may
+    // still have open device handles.
 }
 
 bool RaphnetInputDialog::exchangeCommand(const unsigned char* command, int commandLength, unsigned char* response,
