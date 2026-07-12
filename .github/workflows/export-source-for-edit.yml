@@ -4,6 +4,9 @@ on:
   push:
     branches:
       - fix/krec-wide-path
+  pull_request:
+    branches:
+      - master
 
 permissions:
   contents: read
