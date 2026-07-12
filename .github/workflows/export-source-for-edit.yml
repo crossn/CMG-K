@@ -1,0 +1,37 @@
+name: Export source for Issue 5 implementation
+
+on:
+  push:
+    branches:
+      - fix/krec-wide-path
+
+permissions:
+  contents: read
+
+jobs:
+  export-source:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Collect relevant source files
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p staging
+          cp --parents \
+            Source/RMG/UserInterface/Dialog/Kaillera/KailleraPlaybackDialog.cpp \
+            Source/RMG/Utilities/KailleraExport/*.cpp \
+            Source/RMG/Utilities/KailleraExport/*.hpp \
+            staging/
+          while IFS= read -r file; do
+            cp --parents "$file" staging/
+          done < <(grep -RIl --exclude-dir=.git 'audio_capture_set_output' Source || true)
+
+      - name: Upload source bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: issue-5-source
+          path: staging
+          if-no-files-found: error
+          retention-days: 1
