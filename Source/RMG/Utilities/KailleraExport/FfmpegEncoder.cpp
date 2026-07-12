@@ -2,6 +2,7 @@
 
 #include <cstdio>
 #include <cstring>
+#include <filesystem>
 #include <string>
 #include <vector>
 
@@ -39,7 +40,13 @@ static bool fail(std::string* errorMessage, const std::string& message)
 }
 
 #ifdef _WIN32
-static bool runCommandWithCapturedOutput(const std::string& command,
+static std::wstring quotePath(const std::filesystem::path& path)
+{
+    return L"\"" + path.wstring() + L"\"";
+}
+
+static bool runCommandWithCapturedOutput(const std::filesystem::path& executable,
+                                         const std::wstring& command,
                                          DWORD timeoutMs,
                                          bool requireOutput,
                                          DWORD* exitCode)
@@ -57,7 +64,7 @@ static bool runCommandWithCapturedOutput(const std::string& command,
 
     SetHandleInformation(readHandle, HANDLE_FLAG_INHERIT, 0);
 
-    STARTUPINFOA startupInfo = {};
+    STARTUPINFOW startupInfo = {};
     startupInfo.cb = sizeof(startupInfo);
     startupInfo.dwFlags = STARTF_USESTDHANDLES;
     startupInfo.hStdInput = GetStdHandle(STD_INPUT_HANDLE);
@@ -65,10 +72,10 @@ static bool runCommandWithCapturedOutput(const std::string& command,
     startupInfo.hStdError = writeHandle;
 
     PROCESS_INFORMATION processInfo = {};
-    std::vector<char> mutableCommand(command.begin(), command.end());
-    mutableCommand.push_back('\0');
+    std::vector<wchar_t> mutableCommand(command.begin(), command.end());
+    mutableCommand.push_back(L'\0');
 
-    const BOOL created = CreateProcessA(nullptr,
+    const BOOL created = CreateProcessW(executable.c_str(),
                                         mutableCommand.data(),
                                         nullptr,
                                         nullptr,
@@ -124,7 +131,7 @@ static bool runCommandWithCapturedOutput(const std::string& command,
     return localExitCode == 0;
 }
 
-static bool probeVideoEncoder(const std::string& ffmpegPath, const char* codec)
+static bool probeVideoEncoder(const std::filesystem::path& ffmpegPath, const char* codec)
 {
     // AMD AMF requires at least 128x96 to initialize; 64x64 silently fails on
     // AMD systems even when the driver is fine. 320x240 clears all known
@@ -132,18 +139,15 @@ static bool probeVideoEncoder(const std::string& ffmpegPath, const char* codec)
     // the real export pipeline converts to it and some hardware encoders
     // refuse lavfi's default surface format. The 10s timeout covers AMF's
     // cold-init latency on first launch.
-    char command[512];
-    snprintf(command,
-             sizeof(command),
-             "\"%s\" -v error -f lavfi -i color=black:s=320x240:r=30:d=0.1 -frames:v 1 "
-             "-pix_fmt yuv420p -c:v %s -f null -",
-             ffmpegPath.c_str(),
-             codec);
+    std::wstring codecWide(codec, codec + strlen(codec));
+    const std::wstring command = quotePath(ffmpegPath) +
+        L" -v error -f lavfi -i color=black:s=320x240:r=30:d=0.1 -frames:v 1 "
+        L"-pix_fmt yuv420p -c:v " + codecWide + L" -f null -";
 
-    return runCommandWithCapturedOutput(command, 10000, false, nullptr);
+    return runCommandWithCapturedOutput(ffmpegPath, command, 10000, false, nullptr);
 }
 
-static std::string chooseVideoEncoder(const std::string& ffmpegPath, bool* hardwareAccelerated)
+static std::string chooseVideoEncoder(const std::filesystem::path& ffmpegPath, bool* hardwareAccelerated)
 {
     for (const EncoderCandidate& candidate : kPreferredVideoEncoders)
     {
@@ -206,13 +210,13 @@ static std::string buildVideoEncoderFlags(const std::string& videoEncoder, int c
 
 } // namespace
 
-bool CheckFfmpegExecutable(const std::string& ffmpegPath, std::string* errorMessage)
+bool CheckFfmpegExecutable(const std::filesystem::path& ffmpegPath, std::string* errorMessage)
 {
 #ifdef _WIN32
-    std::string command = "\"" + ffmpegPath + "\" -version";
+    const std::wstring command = quotePath(ffmpegPath) + L" -version";
 
     DWORD exitCode = 1;
-    if (!runCommandWithCapturedOutput(command, 5000, true, &exitCode) || exitCode != 0)
+    if (!runCommandWithCapturedOutput(ffmpegPath, command, 5000, true, &exitCode) || exitCode != 0)
     {
         return fail(errorMessage, "FFmpeg was not found");
     }
@@ -229,10 +233,12 @@ bool CheckFfmpegExecutable(const std::string& ffmpegPath, std::string* errorMess
 #endif
 }
 
-static bool runFfmpegCommand(const std::string& command, std::string* errorMessage)
+static bool runFfmpegCommand(const std::filesystem::path& ffmpegPath,
+                             const std::wstring& command,
+                             std::string* errorMessage)
 {
 #ifdef _WIN32
-    STARTUPINFOA startupInfo = {};
+    STARTUPINFOW startupInfo = {};
     startupInfo.cb = sizeof(startupInfo);
     startupInfo.dwFlags = STARTF_USESTDHANDLES;
     startupInfo.hStdInput = GetStdHandle(STD_INPUT_HANDLE);
@@ -240,10 +246,10 @@ static bool runFfmpegCommand(const std::string& command, std::string* errorMessa
     startupInfo.hStdError = GetStdHandle(STD_ERROR_HANDLE);
 
     PROCESS_INFORMATION processInfo = {};
-    std::vector<char> mutableCommand(command.begin(), command.end());
-    mutableCommand.push_back('\0');
+    std::vector<wchar_t> mutableCommand(command.begin(), command.end());
+    mutableCommand.push_back(L'\0');
 
-    if (!CreateProcessA(nullptr,
+    if (!CreateProcessW(ffmpegPath.c_str(),
                         mutableCommand.data(),
                         nullptr,
                         nullptr,
@@ -270,21 +276,23 @@ static bool runFfmpegCommand(const std::string& command, std::string* errorMessa
 
     return true;
 #else
+    (void)ffmpegPath;
     (void)command;
     return fail(errorMessage, "Replay export is only supported on Windows");
 #endif
 }
 
-bool MuxVideoAndAudio(const std::string& ffmpegPath,
-                      const std::string& videoPath,
-                      const std::string& audioPath,
+bool MuxVideoAndAudio(const std::filesystem::path& ffmpegPath,
+                      const std::filesystem::path& videoPath,
+                      const std::filesystem::path& audioPath,
                       unsigned int audioFrequency,
                       unsigned long long audioBytes,
                       int capturedFrames,
                       double fps,
-                      const std::string& outputPath,
+                      const std::filesystem::path& outputPath,
                       std::string* errorMessage)
 {
+#ifdef _WIN32
     const double audioDuration = static_cast<double>(audioBytes) /
                                  (static_cast<double>(audioFrequency) * 4.0);
     const double videoDuration = static_cast<double>(capturedFrames) / fps;
@@ -292,19 +300,27 @@ bool MuxVideoAndAudio(const std::string& ffmpegPath,
         ? audioDuration / videoDuration
         : 1.0;
 
-    char command[4096];
-    snprintf(command,
-             sizeof(command),
-             "\"%s\" -v error -y -itsscale %g -i \"%s\" -f s16le -ar %u -ac 2 -i \"%s\" "
-             "-c:v copy -c:a aac -strict -2 -b:a 192k -shortest \"%s\"",
-             ffmpegPath.c_str(),
-             timestampScale,
-             videoPath.c_str(),
-             audioFrequency,
-             audioPath.c_str(),
-             outputPath.c_str());
+    wchar_t numericArguments[128];
+    swprintf(numericArguments,
+             sizeof(numericArguments) / sizeof(numericArguments[0]),
+             L" -v error -y -itsscale %g -i ",
+             timestampScale);
+    const std::wstring command = quotePath(ffmpegPath) + numericArguments + quotePath(videoPath) +
+        L" -f s16le -ar " + std::to_wstring(audioFrequency) + L" -ac 2 -i " + quotePath(audioPath) +
+        L" -c:v copy -c:a aac -strict -2 -b:a 192k -shortest " + quotePath(outputPath);
 
-    return runFfmpegCommand(command, errorMessage);
+    return runFfmpegCommand(ffmpegPath, command, errorMessage);
+#else
+    (void)ffmpegPath;
+    (void)videoPath;
+    (void)audioPath;
+    (void)audioFrequency;
+    (void)audioBytes;
+    (void)capturedFrames;
+    (void)fps;
+    (void)outputPath;
+    return fail(errorMessage, "Replay export is only supported on Windows");
+#endif
 }
 
 bool FfmpegEncoder::open(const FfmpegEncoderConfig& config, std::string* errorMessage)
@@ -334,17 +350,16 @@ bool FfmpegEncoder::open(const FfmpegEncoderConfig& config, std::string* errorMe
             m_SelectedVideoEncoder.c_str(),
             m_HardwareAccelerated ? " (hardware)" : " (CPU)");
 
-    char command[4096];
-    snprintf(command,
-             sizeof(command),
-             "\"%s\" -v error -y -f rawvideo -pixel_format rgb24 -video_size %dx%d -framerate %g -i pipe:0 "
-             "%s \"%s\"",
-             config.ffmpegPath.c_str(),
+    wchar_t videoArguments[256];
+    swprintf(videoArguments,
+             sizeof(videoArguments) / sizeof(videoArguments[0]),
+             L" -v error -y -f rawvideo -pixel_format rgb24 -video_size %dx%d -framerate %g -i pipe:0 ",
              config.width,
              config.height,
-             config.fps,
-             encoderFlags.c_str(),
-             config.outputPath.c_str());
+             config.fps);
+    const std::wstring encoderFlagsWide(encoderFlags.begin(), encoderFlags.end());
+    const std::wstring command = quotePath(config.ffmpegPath) + videoArguments +
+        encoderFlagsWide + L" " + quotePath(config.outputPath);
 
     SECURITY_ATTRIBUTES securityAttributes = {};
     securityAttributes.nLength = sizeof(securityAttributes);
@@ -359,7 +374,7 @@ bool FfmpegEncoder::open(const FfmpegEncoderConfig& config, std::string* errorMe
 
     SetHandleInformation(writeHandle, HANDLE_FLAG_INHERIT, 0);
 
-    STARTUPINFOA startupInfo = {};
+    STARTUPINFOW startupInfo = {};
     startupInfo.cb = sizeof(startupInfo);
     startupInfo.dwFlags = STARTF_USESTDHANDLES;
     startupInfo.hStdInput = readHandle;
@@ -367,8 +382,10 @@ bool FfmpegEncoder::open(const FfmpegEncoderConfig& config, std::string* errorMe
     startupInfo.hStdError = GetStdHandle(STD_ERROR_HANDLE);
 
     PROCESS_INFORMATION processInfo = {};
-    if (!CreateProcessA(nullptr,
-                        command,
+    std::vector<wchar_t> mutableCommand(command.begin(), command.end());
+    mutableCommand.push_back(L'\0');
+    if (!CreateProcessW(config.ffmpegPath.c_str(),
+                        mutableCommand.data(),
                         nullptr,
                         nullptr,
                         TRUE,

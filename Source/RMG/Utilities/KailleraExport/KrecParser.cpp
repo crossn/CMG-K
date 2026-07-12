@@ -1,7 +1,7 @@
 #include "KrecParser.hpp"
 
-#include <cstdio>
 #include <cstring>
+#include <fstream>
 
 namespace KailleraExport
 {
@@ -17,6 +17,46 @@ static std::string readCStringField(const uint8_t* source, size_t length)
     return std::string(reinterpret_cast<const char*>(source), end);
 }
 
+static std::string readPlayerName(const uint8_t* source, size_t length)
+{
+    std::string name = readCStringField(source, length);
+    for (size_t i = 0; i < name.size();)
+    {
+        const uint8_t lead = static_cast<uint8_t>(name[i]);
+        size_t sequenceLength = 1;
+        if ((lead & 0xE0U) == 0xC0U)
+        {
+            sequenceLength = 2;
+        }
+        else if ((lead & 0xF0U) == 0xE0U)
+        {
+            sequenceLength = 3;
+        }
+        else if ((lead & 0xF8U) == 0xF0U)
+        {
+            sequenceLength = 4;
+        }
+
+        if (sequenceLength > 1 && i + sequenceLength > name.size())
+        {
+            name.resize(i);
+            break;
+        }
+
+        bool validContinuation = true;
+        for (size_t j = 1; j < sequenceLength; ++j)
+        {
+            if ((static_cast<uint8_t>(name[i + j]) & 0xC0U) != 0x80U)
+            {
+                validContinuation = false;
+                break;
+            }
+        }
+        i += validContinuation ? sequenceLength : 1;
+    }
+    return name;
+}
+
 static bool fail(std::string* errorMessage, const std::string& message)
 {
     if (errorMessage != nullptr)
@@ -28,35 +68,29 @@ static bool fail(std::string* errorMessage, const std::string& message)
 
 bool ParseKrecFile(const std::filesystem::path& path, KrecData& outData, std::string* errorMessage)
 {
-    FILE* file = fopen(path.string().c_str(), "rb");
-    if (file == nullptr)
+    std::ifstream file(path, std::ios::binary | std::ios::ate);
+    if (!file.is_open())
     {
         return fail(errorMessage, "Cannot open recording file");
     }
 
-    if (fseek(file, 0, SEEK_END) != 0)
-    {
-        fclose(file);
-        return fail(errorMessage, "Failed to seek recording file");
-    }
-
-    const long fileLength = ftell(file);
+    const std::streamoff fileLength = file.tellg();
     if (fileLength < 272)
     {
-        fclose(file);
         return fail(errorMessage, "Recording file is too short");
     }
 
-    rewind(file);
-
-    std::vector<uint8_t> buffer(static_cast<size_t>(fileLength));
-    if (fread(buffer.data(), 1, buffer.size(), file) != buffer.size())
+    file.seekg(0, std::ios::beg);
+    if (!file)
     {
-        fclose(file);
-        return fail(errorMessage, "Failed to read recording file");
+        return fail(errorMessage, "Failed to seek recording file");
     }
 
-    fclose(file);
+    std::vector<uint8_t> buffer(static_cast<size_t>(fileLength));
+    if (!file.read(reinterpret_cast<char*>(buffer.data()), static_cast<std::streamsize>(buffer.size())))
+    {
+        return fail(errorMessage, "Failed to read recording file");
+    }
 
     const std::string magic = readCStringField(buffer.data(), 4);
     const bool isKrc1 = (magic == "KRC1");
@@ -85,7 +119,7 @@ bool ParseKrecFile(const std::filesystem::path& path, KrecData& outData, std::st
         for (int i = 0; i < 4; ++i)
         {
             outData.header.playerNames[static_cast<size_t>(i)] =
-                readCStringField(buffer.data() + 272 + i * 32, 32);
+                readPlayerName(buffer.data() + 272 + i * 32, 32);
         }
     }
 

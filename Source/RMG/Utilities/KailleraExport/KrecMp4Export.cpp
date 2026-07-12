@@ -8,6 +8,7 @@
 #include "OnScreenDisplay.hpp"
 
 #include <QCommandLineParser>
+#include <QByteArray>
 #include <QCoreApplication>
 #include <QDir>
 #include <QFileInfo>
@@ -17,6 +18,7 @@
 #include <RMG-Core/Directories.hpp>
 #include <RMG-Core/Settings.hpp>
 
+#include <algorithm>
 #include <cstdio>
 #include <filesystem>
 #include <string>
@@ -47,6 +49,9 @@ struct ReplayExportOptions
 };
 
 using AudioCaptureSetOutputFn = void (*)(const char*);
+#ifdef _WIN32
+using AudioCaptureSetOutputWideFn = void (*)(const wchar_t*);
+#endif
 using AudioCaptureGetFrequencyFn = unsigned int (*)(void);
 using AudioCaptureGetBytesWrittenFn = unsigned long long (*)(void);
 
@@ -63,6 +68,34 @@ static constexpr const char* kExportVerboseOption = "export-verbose";
 static void printExportError(const std::string& message)
 {
     fprintf(stderr, "Replay export failed: %s\n", message.c_str());
+}
+
+static std::filesystem::path pathFromQString(const QString& path)
+{
+#ifdef _WIN32
+    return std::filesystem::path(path.toStdWString());
+#else
+    const QByteArray utf8 = path.toUtf8();
+    return std::filesystem::u8path(utf8.constData(), utf8.constData() + utf8.size());
+#endif
+}
+
+static std::string pathForDisplay(const std::filesystem::path& path)
+{
+#ifdef _WIN32
+    const std::wstring wide = path.wstring();
+    const int length = WideCharToMultiByte(CP_UTF8, 0, wide.c_str(), -1, nullptr, 0, nullptr, nullptr);
+    if (length <= 1)
+    {
+        return {};
+    }
+    std::string utf8(static_cast<size_t>(length), '\0');
+    WideCharToMultiByte(CP_UTF8, 0, wide.c_str(), -1, utf8.data(), length, nullptr, nullptr);
+    utf8.pop_back();
+    return utf8;
+#else
+    return path.native();
+#endif
 }
 
 static bool copyFileIfPresent(const std::filesystem::path& source, const std::filesystem::path& target)
@@ -111,33 +144,33 @@ static std::filesystem::path resolveFfmpegPath(const QCommandLineParser& parser)
 {
     if (parser.isSet(kExportFfmpegOption))
     {
-        return std::filesystem::path(parser.value(kExportFfmpegOption).toStdString());
+        return pathFromQString(parser.value(kExportFfmpegOption));
     }
 
     const QString applicationDirectory = QCoreApplication::applicationDirPath();
     const QString localFfmpeg = QDir(applicationDirectory).filePath("ffmpeg.exe");
     if (QFileInfo::exists(localFfmpeg))
     {
-        return std::filesystem::path(localFfmpeg.toStdString());
+        return pathFromQString(localFfmpeg);
     }
 
     const QString savedFfmpeg =
         QString::fromStdString(CoreSettingsGetStringValue(SettingsID::Kaillera_FfmpegPath));
     if (!savedFfmpeg.isEmpty() && QFileInfo::exists(savedFfmpeg))
     {
-        return std::filesystem::path(savedFfmpeg.toStdString());
+        return pathFromQString(savedFfmpeg);
     }
 
     const QString foundExecutable = QStandardPaths::findExecutable("ffmpeg");
     if (!foundExecutable.isEmpty())
     {
-        return std::filesystem::path(foundExecutable.toStdString());
+        return pathFromQString(foundExecutable);
     }
 
     const QString foundExecutableExe = QStandardPaths::findExecutable("ffmpeg.exe");
     if (!foundExecutableExe.isEmpty())
     {
-        return std::filesystem::path(foundExecutableExe.toStdString());
+        return pathFromQString(foundExecutableExe);
     }
 
     return {};
@@ -160,9 +193,9 @@ static bool parseOptions(const QCommandLineParser& parser,
         return false;
     }
 
-    outOptions.krecPath = std::filesystem::path(krecValue.toStdString());
-    outOptions.romPath = std::filesystem::path(romValue.toStdString());
-    outOptions.outputPath = std::filesystem::path(outputValue.toStdString());
+    outOptions.krecPath = pathFromQString(krecValue);
+    outOptions.romPath = pathFromQString(romValue);
+    outOptions.outputPath = pathFromQString(outputValue);
     outOptions.ffmpegPath = resolveFfmpegPath(parser);
     outOptions.includeKailleraChat = !parser.isSet(kExportNoKailleraChatOption);
     outOptions.labelPorts = parser.isSet(kExportLabelPortsOption);
@@ -221,7 +254,7 @@ static bool requireExistingFile(const std::filesystem::path& path,
 
     if (errorMessage != nullptr)
     {
-        *errorMessage = std::string("Missing ") + label + ": " + path.string();
+        *errorMessage = std::string("Missing ") + label + ": " + pathForDisplay(path);
     }
     return false;
 }
@@ -242,7 +275,7 @@ static bool runReplayExport(const ReplayExportOptions& options, std::string* err
     }
 
     std::string ffmpegError;
-    if (!CheckFfmpegExecutable(options.ffmpegPath.string(), &ffmpegError))
+    if (!CheckFfmpegExecutable(options.ffmpegPath, &ffmpegError))
     {
         if (errorMessage != nullptr)
         {
@@ -267,7 +300,7 @@ static bool runReplayExport(const ReplayExportOptions& options, std::string* err
         return false;
     }
 
-    prepareConfigDirectory(std::filesystem::path(temporaryConfigDirectory.path().toStdString()));
+    prepareConfigDirectory(pathFromQString(temporaryConfigDirectory.path()));
 
     const std::filesystem::path corePath = CoreGetCoreDirectory() / "mupen64plus.dll";
     const std::filesystem::path inputPluginPath = getPluginPath("Input", "RMG-Input.dll");
@@ -288,13 +321,13 @@ static bool runReplayExport(const ReplayExportOptions& options, std::string* err
     }
 
     EmulatorConfig emulatorConfig;
-    emulatorConfig.corePath = corePath.string();
-    emulatorConfig.configDir = temporaryConfigDirectory.path().toStdString();
-    emulatorConfig.dataDir = dataDirectory.string();
-    emulatorConfig.gfxPluginPath = gfxPluginPath.string();
-    emulatorConfig.rspPluginPath = rspPluginPath.string();
-    emulatorConfig.inputPluginPath = inputPluginPath.string();
-    emulatorConfig.audioPluginPath = audioPluginPath.string();
+    emulatorConfig.corePath = corePath;
+    emulatorConfig.configDir = pathFromQString(temporaryConfigDirectory.path());
+    emulatorConfig.dataDir = dataDirectory;
+    emulatorConfig.gfxPluginPath = gfxPluginPath;
+    emulatorConfig.rspPluginPath = rspPluginPath;
+    emulatorConfig.inputPluginPath = inputPluginPath;
+    emulatorConfig.audioPluginPath = audioPluginPath;
     emulatorConfig.renderWidth = options.renderWidth;
     emulatorConfig.renderHeight = options.renderHeight;
     emulatorConfig.verbose = options.verbose;
@@ -312,6 +345,9 @@ static bool runReplayExport(const ReplayExportOptions& options, std::string* err
     auto shutdownGuard = [&emulator]() { emulator.shutdown(); };
 
     AudioCaptureSetOutputFn setOutputFn = nullptr;
+#ifdef _WIN32
+    AudioCaptureSetOutputWideFn setOutputWideFn = nullptr;
+#endif
     AudioCaptureGetFrequencyFn getFrequencyFn = nullptr;
     AudioCaptureGetBytesWrittenFn getBytesWrittenFn = nullptr;
 
@@ -319,13 +355,14 @@ static bool runReplayExport(const ReplayExportOptions& options, std::string* err
     if (audioHandle != nullptr)
     {
 #ifdef _WIN32
+        setOutputWideFn = reinterpret_cast<AudioCaptureSetOutputWideFn>(GetProcAddress((HMODULE)audioHandle, "audio_capture_set_output_w"));
         setOutputFn = reinterpret_cast<AudioCaptureSetOutputFn>(GetProcAddress((HMODULE)audioHandle, "audio_capture_set_output"));
         getFrequencyFn = reinterpret_cast<AudioCaptureGetFrequencyFn>(GetProcAddress((HMODULE)audioHandle, "audio_capture_get_frequency"));
         getBytesWrittenFn = reinterpret_cast<AudioCaptureGetBytesWrittenFn>(GetProcAddress((HMODULE)audioHandle, "audio_capture_get_bytes_written"));
 #endif
     }
 
-    if (!emulator.openRom(options.romPath.string()))
+    if (!emulator.openRom(options.romPath))
     {
         shutdownGuard();
         if (errorMessage != nullptr)
@@ -348,18 +385,38 @@ static bool runReplayExport(const ReplayExportOptions& options, std::string* err
 
     emulator.applyDeterministicSettings();
 
-    const std::filesystem::path tempVideoPath = options.outputPath.string() + ".tmp_v.mp4";
-    const std::filesystem::path tempAudioPath = options.outputPath.string() + ".tmp_a.raw";
+    std::filesystem::path tempVideoPath = options.outputPath;
+    tempVideoPath += std::filesystem::path(".tmp_v.mp4");
+    std::filesystem::path tempAudioPath = options.outputPath;
+    tempAudioPath += std::filesystem::path(".tmp_a.raw");
 
+#ifdef _WIN32
+    if (setOutputWideFn != nullptr)
+    {
+        setOutputWideFn(tempAudioPath.c_str());
+    }
+    else
+#endif
     if (setOutputFn != nullptr)
     {
-        setOutputFn(tempAudioPath.string().c_str());
+        const std::string audioPathUtf8 = pathForDisplay(tempAudioPath);
+        if (std::any_of(audioPathUtf8.begin(), audioPathUtf8.end(),
+                        [](unsigned char c) { return c > 0x7FU; }))
+        {
+            shutdownGuard();
+            if (errorMessage != nullptr)
+            {
+                *errorMessage = "Audio capture plugin does not support this Unicode output path";
+            }
+            return false;
+        }
+        setOutputFn(audioPathUtf8.c_str());
     }
 
     FfmpegEncoder encoder;
     FfmpegEncoderConfig encoderConfig;
-    encoderConfig.ffmpegPath = options.ffmpegPath.string();
-    encoderConfig.outputPath = tempVideoPath.string();
+    encoderConfig.ffmpegPath = options.ffmpegPath;
+    encoderConfig.outputPath = tempVideoPath;
     encoderConfig.videoEncoder.clear();
     encoderConfig.width = options.renderWidth;
     encoderConfig.height = options.renderHeight;
@@ -439,14 +496,14 @@ static bool runReplayExport(const ReplayExportOptions& options, std::string* err
     if (audioBytes > 0)
     {
         std::string muxError;
-        if (!MuxVideoAndAudio(options.ffmpegPath.string(),
-                              tempVideoPath.string(),
-                              tempAudioPath.string(),
+        if (!MuxVideoAndAudio(options.ffmpegPath,
+                              tempVideoPath,
+                              tempAudioPath,
                               audioFrequency,
                               audioBytes,
                               capturedFrames,
                               options.fps,
-                              options.outputPath.string(),
+                              options.outputPath,
                               &muxError))
         {
             fprintf(stderr,
@@ -516,7 +573,7 @@ int RunReplayExportFromCommandLine(const QCommandLineParser& parser)
         return 1;
     }
 
-    fprintf(stderr, "Replay export finished: %s\n", options.outputPath.string().c_str());
+    fprintf(stderr, "Replay export finished: %s\n", pathForDisplay(options.outputPath).c_str());
     return 0;
 #endif
 }

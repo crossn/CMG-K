@@ -2,6 +2,7 @@
 
 #include <cstdio>
 #include <cstdint>
+#include <filesystem>
 #include <string>
 
 namespace KailleraExport
@@ -9,8 +10,8 @@ namespace KailleraExport
 
 struct FfmpegEncoderConfig
 {
-    std::string ffmpegPath;
-    std::string outputPath;
+    std::filesystem::path ffmpegPath;
+    std::filesystem::path outputPath;
     std::string videoEncoder;
     int width = 640;
     int height = 480;
@@ -18,15 +19,15 @@ struct FfmpegEncoderConfig
     int crf = 23;
 };
 
-bool CheckFfmpegExecutable(const std::string& ffmpegPath, std::string* errorMessage);
-bool MuxVideoAndAudio(const std::string& ffmpegPath,
-                      const std::string& videoPath,
-                      const std::string& audioPath,
+bool CheckFfmpegExecutable(const std::filesystem::path& ffmpegPath, std::string* errorMessage);
+bool MuxVideoAndAudio(const std::filesystem::path& ffmpegPath,
+                      const std::filesystem::path& videoPath,
+                      const std::filesystem::path& audioPath,
                       unsigned int audioFrequency,
                       unsigned long long audioBytes,
                       int capturedFrames,
                       double fps,
-                      const std::string& outputPath,
+                      const std::filesystem::path& outputPath,
                       std::string* errorMessage);
 
 class FfmpegEncoder

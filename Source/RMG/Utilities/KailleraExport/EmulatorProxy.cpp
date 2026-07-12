@@ -10,7 +10,7 @@
 #include <vector>
 
 #ifdef _WIN32
-#define LOAD_LIB(path) LoadLibraryA(path)
+#define LOAD_LIB(path) LoadLibraryW(path)
 #define GET_PROC(handle, name) GetProcAddress((HMODULE)(handle), name)
 #define FREE_LIB(handle) FreeLibrary((HMODULE)(handle))
 #else
@@ -25,6 +25,30 @@ namespace KailleraExport
 
 static bool s_VerboseLogs = false;
 static EmulatorLogCallback s_LogCallback;
+
+static std::string pathForApi(const std::filesystem::path& path)
+{
+#ifdef _WIN32
+    if (path.empty())
+    {
+        return {};
+    }
+
+    const std::wstring wide = path.wstring();
+    const int length = WideCharToMultiByte(CP_UTF8, 0, wide.c_str(), -1, nullptr, 0, nullptr, nullptr);
+    if (length <= 1)
+    {
+        return {};
+    }
+
+    std::string utf8(static_cast<size_t>(length), '\0');
+    WideCharToMultiByte(CP_UTF8, 0, wide.c_str(), -1, utf8.data(), length, nullptr, nullptr);
+    utf8.pop_back();
+    return utf8;
+#else
+    return path.native();
+#endif
+}
 
 void SetEmulatorLogCallback(EmulatorLogCallback callback)
 {
@@ -65,12 +89,12 @@ static void stateCallback(void*, m64p_core_param, int)
 {
 }
 
-bool EmulatorProxy::loadCore(const std::string& path)
+bool EmulatorProxy::loadCore(const std::filesystem::path& path)
 {
     m_CoreHandle = LOAD_LIB(path.c_str());
     if (m_CoreHandle == nullptr)
     {
-        writeLog(M64MSG_ERROR, "Failed to load core library: %s", path.c_str());
+        writeLog(M64MSG_ERROR, "Failed to load core library: %s", pathForApi(path).c_str());
         return false;
     }
 
@@ -98,7 +122,7 @@ bool EmulatorProxy::loadCore(const std::string& path)
     return true;
 }
 
-bool EmulatorProxy::loadPlugin(const std::string& path, m64p_plugin_type type)
+bool EmulatorProxy::loadPlugin(const std::filesystem::path& path, m64p_plugin_type type)
 {
     const int index = static_cast<int>(type) - 1;
     if (index < 0 || index > 3)
@@ -109,7 +133,7 @@ bool EmulatorProxy::loadPlugin(const std::string& path, m64p_plugin_type type)
     m64p_dynlib_handle handle = LOAD_LIB(path.c_str());
     if (handle == nullptr)
     {
-        writeLog(M64MSG_ERROR, "Failed to load plugin: %s", path.c_str());
+        writeLog(M64MSG_ERROR, "Failed to load plugin: %s", pathForApi(path).c_str());
         return false;
     }
 
@@ -118,7 +142,7 @@ bool EmulatorProxy::loadPlugin(const std::string& path, m64p_plugin_type type)
     auto shutdown = reinterpret_cast<PluginShutdownFn>(GET_PROC(handle, "PluginShutdown"));
     if (startup == nullptr || shutdown == nullptr)
     {
-        writeLog(M64MSG_ERROR, "Plugin is missing PluginStartup/PluginShutdown: %s", path.c_str());
+        writeLog(M64MSG_ERROR, "Plugin is missing PluginStartup/PluginShutdown: %s", pathForApi(path).c_str());
         FREE_LIB(handle);
         return false;
     }
@@ -126,7 +150,7 @@ bool EmulatorProxy::loadPlugin(const std::string& path, m64p_plugin_type type)
     const m64p_error result = startup(m_CoreHandle, nullptr, debugCallback);
     if (result != M64ERR_SUCCESS && result != M64ERR_ALREADY_INIT)
     {
-        writeLog(M64MSG_ERROR, "PluginStartup failed for %s with error %d", path.c_str(), result);
+        writeLog(M64MSG_ERROR, "PluginStartup failed for %s with error %d", pathForApi(path).c_str(), result);
         FREE_LIB(handle);
         return false;
     }
@@ -144,8 +168,8 @@ bool EmulatorProxy::loadPlugin(const std::string& path, m64p_plugin_type type)
 void EmulatorProxy::configureGlideN64()
 {
     std::vector<std::filesystem::path> iniFiles;
-    iniFiles.push_back(std::filesystem::path(m_ConfigDir) / "GLideN64.ini");
-    iniFiles.push_back(std::filesystem::path(m_ConfigDir) / "GLideN64.custom.ini");
+    iniFiles.push_back(m_ConfigDir / "GLideN64.ini");
+    iniFiles.push_back(m_ConfigDir / "GLideN64.custom.ini");
 
     for (const auto& iniPath : iniFiles)
     {
@@ -292,10 +316,13 @@ bool EmulatorProxy::init(const EmulatorConfig& config)
         return false;
     }
 
+    // Mupen64Plus defines these API path strings as UTF-8 and widens them internally on Windows.
+    const std::string configDirUtf8 = pathForApi(config.configDir);
+    const std::string dataDirUtf8 = pathForApi(config.dataDir);
     const m64p_error startupResult = m_CoreStartup(
         0x020001,
-        config.configDir.c_str(),
-        config.dataDir.c_str(),
+        configDirUtf8.c_str(),
+        dataDirUtf8.c_str(),
         nullptr,
         debugCallback,
         nullptr,
@@ -329,34 +356,30 @@ bool EmulatorProxy::init(const EmulatorConfig& config)
     return true;
 }
 
-bool EmulatorProxy::openRom(const std::string& romPath)
+bool EmulatorProxy::openRom(const std::filesystem::path& romPath)
 {
-    FILE* file = fopen(romPath.c_str(), "rb");
-    if (file == nullptr)
+    std::ifstream file(romPath, std::ios::binary | std::ios::ate);
+    if (!file.is_open())
     {
-        writeLog(M64MSG_ERROR, "Cannot open ROM: %s", romPath.c_str());
+        writeLog(M64MSG_ERROR, "Cannot open ROM: %s", pathForApi(romPath).c_str());
         return false;
     }
 
-    if (fseek(file, 0, SEEK_END) != 0)
+    const std::streamoff length = file.tellg();
+    if (length <= 0)
     {
-        fclose(file);
         return false;
     }
-
-    const long length = ftell(file);
-    rewind(file);
+    file.seekg(0, std::ios::beg);
 
     std::vector<uint8_t> romData(static_cast<size_t>(length));
-    if (fread(romData.data(), 1, romData.size(), file) != romData.size())
+    if (!file.read(reinterpret_cast<char*>(romData.data()), static_cast<std::streamsize>(romData.size())))
     {
-        fclose(file);
         writeLog(M64MSG_ERROR, "Failed to read ROM");
         return false;
     }
-    fclose(file);
 
-    const m64p_error result = coreDoCommand(M64CMD_ROM_OPEN, static_cast<int>(length), romData.data());
+    const m64p_error result = coreDoCommand(M64CMD_ROM_OPEN, static_cast<int>(romData.size()), romData.data());
     if (result != M64ERR_SUCCESS)
     {
         writeLog(M64MSG_ERROR, "M64CMD_ROM_OPEN failed with error %d", result);
