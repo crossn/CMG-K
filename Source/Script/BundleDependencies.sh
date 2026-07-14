@@ -8,20 +8,20 @@ bin_dir="$2"
 path="/${MSYSTEM,,}/bin"
 
 function copyForOBJ() {
-    local deps=`objdump.exe -p $1 | grep 'DLL Name:' | sed -e "s/\t*DLL Name: //g"`
+    local deps=`objdump.exe -p "$1" | grep 'DLL Name:' | sed -e "s/\t*DLL Name: //g"`
     while read -r line
 	do
-        findAndCopyDLL $line
+        findAndCopyDLL "$line"
     done <<< "$deps"
 }
 
 function findAndCopyDLL() {
     local file="$path/$1"
     
-	if [ -f $file ] && [ ! -f "$bin_dir/$1" ]
+	if [ -f "$file" ] && [ ! -f "$bin_dir/$1" ]
 	then
 		cp "$file" "$bin_dir"
-        copyForOBJ $file
+        copyForOBJ "$file"
 		return 0
 	fi
 
