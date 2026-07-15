@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <filesystem>
 #include <functional>
 #include <string>
 
@@ -203,13 +204,13 @@ using EmulatorLogCallback = std::function<void(int level, const char* message)>;
 
 struct EmulatorConfig
 {
-    std::string corePath;
-    std::string configDir;
-    std::string dataDir;
-    std::string gfxPluginPath;
-    std::string rspPluginPath;
-    std::string inputPluginPath;
-    std::string audioPluginPath;
+    std::filesystem::path corePath;
+    std::filesystem::path configDir;
+    std::filesystem::path dataDir;
+    std::filesystem::path gfxPluginPath;
+    std::filesystem::path rspPluginPath;
+    std::filesystem::path inputPluginPath;
+    std::filesystem::path audioPluginPath;
     int renderWidth = 640;
     int renderHeight = 480;
     int msaa = 0;
@@ -223,7 +224,7 @@ class EmulatorProxy
 {
 public:
     bool init(const EmulatorConfig& config);
-    bool openRom(const std::string& romPath);
+    bool openRom(const std::filesystem::path& romPath);
     bool attachPlugins();
     void applyDeterministicSettings();
     void configureControllersForReplay(int numPlayers);
@@ -239,8 +240,8 @@ public:
     CoreDoCommandFn coreDoCommand = nullptr;
 
 private:
-    bool loadCore(const std::string& path);
-    bool loadPlugin(const std::string& path, m64p_plugin_type type);
+    bool loadCore(const std::filesystem::path& path);
+    bool loadPlugin(const std::filesystem::path& path, m64p_plugin_type type);
     void detachPlugins();
     void configureGlideN64();
     void disableGlideN64Osd();
@@ -272,7 +273,7 @@ private:
 
     bool m_RomOpen = false;
     bool m_PluginsAttached = false;
-    std::string m_ConfigDir;
+    std::filesystem::path m_ConfigDir;
     int m_RenderWidth = 640;
     int m_RenderHeight = 480;
     int m_Msaa = 0;

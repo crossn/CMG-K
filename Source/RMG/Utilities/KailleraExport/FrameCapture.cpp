@@ -114,6 +114,7 @@ static GlyphRows glyphForChar(char c)
     case '_': return {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x1F};
     case '.': return {0x00, 0x00, 0x00, 0x00, 0x00, 0x0C, 0x0C};
     case ':': return {0x00, 0x0C, 0x0C, 0x00, 0x0C, 0x0C, 0x00};
+    case '@': return {0x0E, 0x11, 0x17, 0x15, 0x17, 0x10, 0x0E};
     case ' ': return {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
     default: return {0x1F, 0x01, 0x02, 0x04, 0x04, 0x00, 0x04};
     }
@@ -193,17 +194,104 @@ static void drawText(uint8_t* frame,
     }
 }
 
+static bool decodeUtf8CodePoint(const std::string& text, size_t& offset, uint32_t& codePoint)
+{
+    const uint8_t lead = static_cast<uint8_t>(text[offset++]);
+    if (lead < 0x80U)
+    {
+        codePoint = lead;
+        return true;
+    }
+
+    size_t continuationCount = 0;
+    uint32_t minimumValue = 0;
+    if ((lead & 0xE0U) == 0xC0U)
+    {
+        continuationCount = 1;
+        codePoint = lead & 0x1FU;
+        minimumValue = 0x80U;
+    }
+    else if ((lead & 0xF0U) == 0xE0U)
+    {
+        continuationCount = 2;
+        codePoint = lead & 0x0FU;
+        minimumValue = 0x800U;
+    }
+    else if ((lead & 0xF8U) == 0xF0U)
+    {
+        continuationCount = 3;
+        codePoint = lead & 0x07U;
+        minimumValue = 0x10000U;
+    }
+    else
+    {
+        codePoint = '?';
+        return false;
+    }
+
+    if (offset + continuationCount > text.size())
+    {
+        offset = text.size();
+        codePoint = '?';
+        return false;
+    }
+
+    for (size_t i = 0; i < continuationCount; ++i)
+    {
+        const uint8_t continuation = static_cast<uint8_t>(text[offset + i]);
+        if ((continuation & 0xC0U) != 0x80U)
+        {
+            codePoint = '?';
+            return false;
+        }
+        codePoint = (codePoint << 6U) | (continuation & 0x3FU);
+    }
+    offset += continuationCount;
+
+    if (codePoint < minimumValue || codePoint > 0x10FFFFU ||
+        (codePoint >= 0xD800U && codePoint <= 0xDFFFU))
+    {
+        codePoint = '?';
+        return false;
+    }
+    return true;
+}
+
 static std::string normalizedLabelName(const std::string& name, int playerIndex)
 {
-    std::string label = name.empty()
-        ? ("P" + std::to_string(playerIndex + 1))
-        : name;
-
-    for (char& c : label)
+    if (name.empty())
     {
-        if (static_cast<unsigned char>(c) < 32)
+        return "P" + std::to_string(playerIndex + 1);
+    }
+
+    std::string label;
+    label.reserve(name.size());
+    for (size_t offset = 0; offset < name.size();)
+    {
+        uint32_t codePoint = 0;
+        decodeUtf8CodePoint(name, offset, codePoint);
+
+        if (codePoint == 0x3000U)
         {
-            c = ' ';
+            codePoint = ' ';
+        }
+        else if (codePoint >= 0xFF01U && codePoint <= 0xFF5EU)
+        {
+            codePoint -= 0xFEE0U;
+        }
+
+        if (codePoint < 0x20U || codePoint == 0x7FU)
+        {
+            label.push_back(' ');
+        }
+        else if (codePoint <= 0x7EU)
+        {
+            label.push_back(static_cast<char>(codePoint));
+        }
+        else
+        {
+            // The bitmap font has no non-ASCII glyphs; use one fallback per code point.
+            label.push_back('?');
         }
     }
     return label;

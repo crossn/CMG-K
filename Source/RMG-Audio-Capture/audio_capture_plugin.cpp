@@ -5,7 +5,9 @@
 
 #include <cstdio>
 #include <cstdint>
+#include <cwchar>
 #include <cstring>
+#include <string>
 
 #ifdef _WIN32
 #define EXPORT __declspec(dllexport)
@@ -67,6 +69,9 @@ static bool s_Initialized = false;
 static AUDIO_INFO s_AudioInfo = {};
 static FILE* s_OutputFile = nullptr;
 static char s_OutputPath[1024] = {};
+#ifdef _WIN32
+static std::wstring s_OutputPathWide;
+#endif
 static unsigned int s_Frequency = 33600;
 static unsigned long long s_BytesWritten = 0;
 
@@ -75,6 +80,9 @@ extern "C"
 
 EXPORT void CALL audio_capture_set_output(const char* path)
 {
+#ifdef _WIN32
+    s_OutputPathWide.clear();
+#endif
     if (path == nullptr)
     {
         s_OutputPath[0] = '\0';
@@ -84,6 +92,20 @@ EXPORT void CALL audio_capture_set_output(const char* path)
     strncpy(s_OutputPath, path, sizeof(s_OutputPath) - 1);
     s_OutputPath[sizeof(s_OutputPath) - 1] = '\0';
 }
+
+#ifdef _WIN32
+EXPORT void CALL audio_capture_set_output_w(const wchar_t* path)
+{
+    s_OutputPath[0] = '\0';
+    if (path == nullptr)
+    {
+        s_OutputPathWide.clear();
+        return;
+    }
+
+    s_OutputPathWide = path;
+}
+#endif
 
 EXPORT unsigned int CALL audio_capture_get_frequency(void)
 {
@@ -158,6 +180,17 @@ EXPORT int CALL RomOpen(void)
 {
     s_BytesWritten = 0;
 
+#ifdef _WIN32
+    if (!s_OutputPathWide.empty())
+    {
+        s_OutputFile = _wfopen(s_OutputPathWide.c_str(), L"wb");
+        if (s_OutputFile == nullptr)
+        {
+            return 0;
+        }
+    }
+    else
+#endif
     if (s_OutputPath[0] != '\0')
     {
         s_OutputFile = fopen(s_OutputPath, "wb");

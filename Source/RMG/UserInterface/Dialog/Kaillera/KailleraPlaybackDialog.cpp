@@ -27,6 +27,7 @@
 #include "n02_client.h"
 
 #include <QApplication>
+#include <QByteArray>
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QHeaderView>
@@ -323,7 +324,17 @@ static QString ensureMp4Extension(QString path)
 
 static QString pathFromFilesystem(const std::filesystem::path& path)
 {
-    return QString::fromStdString(path.string());
+#ifdef _WIN32
+    return QString::fromStdWString(path.wstring());
+#else
+    return QString::fromStdString(path.native());
+#endif
+}
+
+static std::string qStringToUtf8(const QString& text)
+{
+    const QByteArray utf8 = text.toUtf8();
+    return std::string(utf8.constData(), static_cast<size_t>(utf8.size()));
 }
 
 static std::filesystem::path managedFfmpegRootDirectory()
@@ -371,7 +382,7 @@ static bool validateFfmpegPath(const QString& path, QString* errorMessage = null
     return false;
 #else
     std::string error;
-    if (KailleraExport::CheckFfmpegExecutable(path.toStdString(), &error))
+    if (KailleraExport::CheckFfmpegExecutable(std::filesystem::path(path.toStdWString()), &error))
     {
         return true;
     }
@@ -729,7 +740,7 @@ void KailleraPlaybackDialog::populatePlaybackList()
 
     for (const QFileInfo& fi : files)
     {
-        std::string fullPath = fi.absoluteFilePath().toStdString();
+        const std::filesystem::path fullPath(fi.absoluteFilePath().toStdWString());
         std::ifstream file(fullPath, std::ios::binary | std::ios::ate);
         if (!file.is_open()) continue;
 
@@ -995,7 +1006,7 @@ QString KailleraPlaybackDialog::getSelectedRecordingGameName(QString* recordingP
 #else
     KailleraExport::KrecData krecData;
     std::string errorMessage;
-    if (!KailleraExport::ParseKrecFile(std::filesystem::path(selectedPath.toStdString()), krecData, &errorMessage))
+    if (!KailleraExport::ParseKrecFile(std::filesystem::path(selectedPath.toStdWString()), krecData, &errorMessage))
     {
         return {};
     }
@@ -1162,7 +1173,7 @@ QString KailleraPlaybackDialog::resolveExportFfmpegPath()
     const QString managedFfmpeg = managedFfmpegExecutablePath();
     if (isExecutableFile(managedFfmpeg) && validateFfmpegPath(managedFfmpeg))
     {
-        CoreSettingsSetValue(SettingsID::Kaillera_FfmpegPath, managedFfmpeg.toStdString());
+        CoreSettingsSetValue(SettingsID::Kaillera_FfmpegPath, qStringToUtf8(managedFfmpeg));
         CoreSettingsSave();
         return managedFfmpeg;
     }
@@ -1220,7 +1231,7 @@ QString KailleraPlaybackDialog::promptForFfmpegPath()
         return {};
     }
 
-    CoreSettingsSetValue(SettingsID::Kaillera_FfmpegPath, path.toStdString());
+    CoreSettingsSetValue(SettingsID::Kaillera_FfmpegPath, qStringToUtf8(path));
     CoreSettingsSave();
     return path;
 }
@@ -1325,7 +1336,7 @@ QString KailleraPlaybackDialog::downloadManagedFfmpeg()
         return {};
     }
 
-    CoreSettingsSetValue(SettingsID::Kaillera_FfmpegPath, ffmpegPath.toStdString());
+    CoreSettingsSetValue(SettingsID::Kaillera_FfmpegPath, qStringToUtf8(ffmpegPath));
     CoreSettingsSave();
     return ffmpegPath;
 }
