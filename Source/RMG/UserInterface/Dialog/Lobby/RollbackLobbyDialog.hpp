@@ -153,6 +153,11 @@ private slots:
     void onChatMessageReceived(const LobbyClient::ChatMessage& msg);
     void onMatchBegin(quint64 matchId, const QList<LobbyClient::LobbyMatchPeer>& peers);
 
+    // Moderation (server → client) responses.
+    void onAdminAuthResult(bool ok, const QString& nameOrReason);
+    void onModNotice(const QString& severity, const QString& text);
+    void onModListReceived(const QJsonArray& bans, const QJsonArray& mutes);
+
     // Periodic probe driver: while in a room, requests a fresh ping
     // measurement from each seated peer (skipping self). Cadence is set
     // by m_pingProbeTimer's interval.
@@ -192,6 +197,11 @@ private:
     QString stateGlyph(const QString& state) const;
     void    appendChatLine(const QString& channel, const QString& text);
     void    appendChatSystemLine(const QString& channel, const QString& text);
+
+    // Parse and execute a chat slash command (/login, /kick, /mute, /timeout,
+    // /ban, /unban, /unmute, /modlist, /modhelp). Returns true if text was a
+    // recognized command and was handled (so it must NOT be sent as chat).
+    bool     handleSlashCommand(const QString& channel, const QString& text);
 
     // Flash the taskbar entry + play the system notification sound — called when
     // a new player takes a seat while we're in the room. No-ops the flash if the

@@ -346,6 +346,7 @@ void LobbyClient::onWsDisconnected()
 {
     m_heartbeatTimer->stop();
     m_udpKeepaliveTimer->stop();
+    m_isModerator = false; // role is per-connection; must re-auth after reconnect
     setState(ConnectionState::Disconnected);
 }
 
@@ -395,6 +396,10 @@ void LobbyClient::handleEnvelope(const QJsonObject& env)
     else if (type == "SPECTATE_KEYFRAME")    handleSpectateKeyframe(data);
     else if (type == "SPECTATE_END")         handleSpectateEnd(data);
     else if (type == "SPECTATE_FAIL")        handleSpectateFail(data);
+    else if (type == "ADMIN_AUTH_OK")        handleAdminAuthOk(data);
+    else if (type == "ADMIN_AUTH_FAIL")      handleAdminAuthFail(data);
+    else if (type == "MOD_NOTICE")           handleModNotice(data);
+    else if (type == "MOD_LIST")             handleModList(data);
     else qDebug() << "lobby: unknown message type" << type;
 }
 
@@ -1145,6 +1150,48 @@ void LobbyClient::requestChatHistory(const QString& channel)
     QJsonObject d;
     d["channel"] = channel;
     sendEnvelope("CHAT_HISTORY", d);
+}
+
+// --- Moderation ---
+
+void LobbyClient::sendAdminAuth(const QString& password)
+{
+    QJsonObject d;
+    d["password"] = password;
+    sendEnvelope("ADMIN_AUTH", d);
+}
+
+void LobbyClient::sendModAction(const QString& action, const QString& target,
+                                const QString& duration, const QString& reason)
+{
+    QJsonObject d;
+    d["action"] = action;
+    d["target"] = target;
+    if (!duration.isEmpty()) d["duration"] = duration;
+    if (!reason.isEmpty())   d["reason"]   = reason;
+    sendEnvelope("MOD_ACTION", d);
+}
+
+void LobbyClient::handleAdminAuthOk(const QJsonObject& data)
+{
+    m_isModerator = true;
+    emit adminAuthResult(true, data.value("name").toString());
+}
+
+void LobbyClient::handleAdminAuthFail(const QJsonObject& data)
+{
+    m_isModerator = false;
+    emit adminAuthResult(false, data.value("text").toString());
+}
+
+void LobbyClient::handleModNotice(const QJsonObject& data)
+{
+    emit modNotice(data.value("severity").toString(), data.value("text").toString());
+}
+
+void LobbyClient::handleModList(const QJsonObject& data)
+{
+    emit modListReceived(data.value("bans").toArray(), data.value("mutes").toArray());
 }
 
 // -------- Room API --------
