@@ -15,6 +15,8 @@
 #include "Library.hpp"
 #include "Settings.hpp"
 
+#include "PreciseWait.hpp"
+
 #ifdef RMGK_HAVE_GEKKONET
 #include <gekkonet.h>
 #ifdef RMGK_HAVE_P2P_TRANSPORT
@@ -1516,7 +1518,8 @@ int rollback_execute_begin_frame(void* userData)
             return 1;
         }
 
-        std::this_thread::sleep_for(std::chrono::microseconds(kGekkoWaitSleepUs));
+        //std::this_thread::sleep_for(std::chrono::microseconds(kGekkoWaitSleepUs)); // Not accurate enough in windows
+		rmgk::timing::PreciseWaitFor(std::chrono::microseconds{kGekkoWaitSleepUs}, std::chrono::microseconds{kGekkoWaitSleepUs});
     }
 }
 
