@@ -56,6 +56,13 @@ class rmgk_gekko
     static void request_disconnect_player(int slot);
     static bool is_netplay_session_active();
     static bool execute();
+    // Rollback presentation pacer. This waits immediately before the real
+    // OpenGL swap so rollback work consumes the frame's otherwise-idle time.
+    static void pace_before_swap();
+
+    // Buffered rollback-pacing trace hook used by VidExt.cpp.
+    // No-op unless RMGK_PACING_TRACE is enabled.
+    static void trace_swap_duration(long long swapUs, long long makeCurrentUs, int path);
     static bool set_deterministic(bool enabled);
     static bool install_core_input_callback();
     static void clear_core_input_callback();

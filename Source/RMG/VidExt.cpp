@@ -14,6 +14,7 @@
 #include <RMG-Core/Kaillera.hpp>
 #include <RMG-Core/Netplay.hpp>
 #include <RMG-Core/Settings.hpp>
+#include <RMG-Core/rmgk_gekko.hpp>
 #include <RMG-Core/VidExt.hpp>
 #include <RMG-Core/Video.hpp>
 
@@ -26,6 +27,8 @@
 #include <QByteArray>
 #include <QThread>
 #include <QScreen>
+
+#include <chrono>
 
 #ifdef _WIN32
 #ifndef WIN32_LEAN_AND_MEAN
@@ -957,7 +960,29 @@ static m64p_error VidExt_GLSwapBuf(void)
     if (VidExt_NativeWglActive())
     {
         VidExt_NativeWglPollEvents();
+
+        /*
+         * Rollback-only presentation pacing happens after emulation,
+         * rollback resimulation, rendering, and OSD work, immediately
+         * before the real swap.
+         */
+        rmgk_gekko::pace_before_swap();
+
+        const auto swapBegin =
+            std::chrono::steady_clock::now();
+
         SwapBuffers(l_NativeWgl.hdc);
+
+        const auto swapUs =
+            std::chrono::duration_cast<std::chrono::microseconds>(
+                std::chrono::steady_clock::now() -
+                swapBegin).count();
+
+        rmgk_gekko::trace_swap_duration(
+            swapUs,
+            0,
+            1);
+
         return M64ERR_SUCCESS;
     }
 #endif
@@ -965,8 +990,39 @@ static m64p_error VidExt_GLSwapBuf(void)
     VidExt_UpdateOsdDisplaySize();
     OnScreenDisplayRender();
 
-    (*l_OGLWidget)->GetContext()->swapBuffers((*l_OGLWidget));
-    (*l_OGLWidget)->GetContext()->makeCurrent((*l_OGLWidget));
+    /*
+     * Rollback-only presentation pacing happens after all frame work,
+     * immediately before the real swap.
+     */
+    rmgk_gekko::pace_before_swap();
+
+    const auto swapBegin =
+        std::chrono::steady_clock::now();
+
+    (*l_OGLWidget)->GetContext()->swapBuffers(
+        (*l_OGLWidget));
+
+    const auto swapEnd =
+        std::chrono::steady_clock::now();
+
+    (*l_OGLWidget)->GetContext()->makeCurrent(
+        (*l_OGLWidget));
+
+    const auto makeCurrentEnd =
+        std::chrono::steady_clock::now();
+
+    const auto swapUs =
+        std::chrono::duration_cast<std::chrono::microseconds>(
+            swapEnd - swapBegin).count();
+
+    const auto makeCurrentUs =
+        std::chrono::duration_cast<std::chrono::microseconds>(
+            makeCurrentEnd - swapEnd).count();
+
+    rmgk_gekko::trace_swap_duration(
+        swapUs,
+        makeCurrentUs,
+        2);
 
     return M64ERR_SUCCESS;
 }
