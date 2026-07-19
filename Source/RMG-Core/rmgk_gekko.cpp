@@ -205,8 +205,9 @@ long long g_GekkoLastPendingSaveUs = 0;
 // ---------------------------------------------------------------------------
 // Buffered rollback pacing trace.
 //
-// Enabled with RMGK_PACING_TRACE=1. Rows remain in memory during gameplay and
-// are written only when rollback execution ends, avoiding per-frame disk I/O.
+// Enabled by Settings -> Rollback -> Logging -> Pacing Trace. Rows remain in
+// memory during gameplay and are written only when rollback execution ends,
+// avoiding per-frame disk I/O.
 // ---------------------------------------------------------------------------
 constexpr std::size_t kRmgkPacingTraceCapacity = 60000;
 constexpr std::size_t kRmgkPacingTraceInvalidRow =
@@ -483,11 +484,9 @@ void rmgk_pacing_trace_reset()
     g_RmgkPacingTraceActiveRow =
         kRmgkPacingTraceInvalidRow;
 
-    const char* env = std::getenv("RMGK_PACING_TRACE");
     g_RmgkPacingTraceEnabled =
-        env != nullptr &&
-        env[0] != '\0' &&
-        std::strcmp(env, "0") != 0;
+        CoreSettingsGetBoolValue(
+            SettingsID::Rollback_PacingTrace);
 
     if (g_RmgkPacingTraceEnabled)
     {
@@ -2853,6 +2852,8 @@ CORE_EXPORT bool rmgk_gekko::execute()
     m64p_rollback_execute_callbacks callbacks = {};
     callbacks.begin_frame = rollback_execute_begin_frame;
     callbacks.end_frame = rollback_execute_end_frame;
+    callbacks.pacing_trace_enabled =
+        g_RmgkPacingTraceEnabled ? 1 : 0;
     g_GekkoExecuting.store(true, std::memory_order_relaxed);
     bool result = CoreRollbackExecute(callbacks);
     g_GekkoExecuting.store(false, std::memory_order_relaxed);

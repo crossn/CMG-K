@@ -61,7 +61,7 @@ class rmgk_gekko
     static void pace_before_swap();
 
     // Buffered rollback-pacing trace hook used by VidExt.cpp.
-    // No-op unless RMGK_PACING_TRACE is enabled.
+    // No-op unless Rollback -> Logging -> Pacing Trace is enabled.
     static void trace_swap_duration(long long swapUs, long long makeCurrentUs, int path);
     static bool set_deterministic(bool enabled);
     static bool install_core_input_callback();

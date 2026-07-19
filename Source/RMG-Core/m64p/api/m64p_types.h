@@ -71,6 +71,8 @@ typedef struct {
   void *user_data;
   int (*begin_frame)(void *user_data);
   int (*end_frame)(void *user_data);
+  /* RMG-K: enable buffered frontend/core pacing CSV traces. */
+  int pacing_trace_enabled;
 } m64p_rollback_execute_callbacks;
 typedef struct {
   uint64_t total_us;

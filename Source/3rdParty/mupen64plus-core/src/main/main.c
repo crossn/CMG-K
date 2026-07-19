@@ -143,8 +143,9 @@ static double l_RollbackTimesyncScale = 1.0;
 /* -------------------------------------------------------------------------
  * Buffered core speed-limiter trace.
  *
- * Enabled with RMGK_PACING_TRACE=1. Rows remain in memory during gameplay
- * and are written only after run_device() returns.
+ * Enabled by the frontend's Rollback -> Logging -> Pacing Trace setting.
+ * Rows remain in memory during gameplay and are written after run_device()
+ * returns, avoiding per-frame disk I/O.
  * ------------------------------------------------------------------------- */
 #define RMGK_PACING_TRACE_CAPACITY 60000u
 
@@ -365,17 +366,11 @@ static void rmgk_pacing_trace_flush(void)
     l_RmgkPacingEnabled = 0;
 }
 
-static void rmgk_pacing_trace_reset(void)
+static void rmgk_pacing_trace_reset(int enabled)
 {
-    const char* env;
-
     rmgk_pacing_trace_flush();
 
-    env = getenv("RMGK_PACING_TRACE");
-    l_RmgkPacingEnabled =
-        env != NULL &&
-        env[0] != '\0' &&
-        strcmp(env, "0") != 0;
+    l_RmgkPacingEnabled = enabled ? 1 : 0;
 
     if (!l_RmgkPacingEnabled)
         return;
@@ -2827,7 +2822,8 @@ m64p_error main_run(void)
     g_EmulatorRunning = 1;
     StateChanged(M64CORE_EMU_STATE, M64EMU_RUNNING);
 
-    rmgk_pacing_trace_reset();
+    rmgk_pacing_trace_reset(
+        l_RollbackExecuteCallbacks.pacing_trace_enabled);
     poweron_device(&g_dev);
     pif_bootrom_hle_execute(&g_dev.r4300);
     run_device(&g_dev);
