@@ -360,8 +360,10 @@ static l_Setting get_setting(SettingsID settingId)
         setting = {SETTING_SECTION_ROLLBACK, "PacingTrace", false};
         break;
     case SettingsID::Rollback_PacingMode:
-        // 0 = symmetric/aggressive (default), 1 = asymmetric/Slippi-style.
-        setting = {SETTING_SECTION_ROLLBACK, "PacingMode", 0};
+        // 0 = symmetric/aggressive, 1 = asymmetric/Slippi-style ("Smooth").
+        // The engine hardwires Smooth and ignores this setting; it only feeds
+        // the lobby's host-authoritative room-settings plumbing.
+        setting = {SETTING_SECTION_ROLLBACK, "PacingMode", 1};
         break;
 
     case SettingsID::Core_GFX_Plugin:

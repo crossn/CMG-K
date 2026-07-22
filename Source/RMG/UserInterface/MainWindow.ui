@@ -651,9 +651,6 @@
    </property>
   </action>
   <action name="action_Netplay_BrowseSessions">
-   <property name="icon">
-    <iconset theme="plug-line"/>
-   </property>
    <property name="text">
     <string>Legacy Server</string>
    </property>
