@@ -3458,8 +3458,13 @@ void MainWindow::timerEvent(QTimerEvent *event)
             // frame: in the keyframe path the krec tail starts at the keyframe frame,
             // so the global stamp is far ahead of our local numbering and would never
             // let us settle. Local buffered-remaining is correct for both paths.
-            const int settle   = 90;  // once catching up, stop ~1.5 s behind the edge
-            const int reengage = 240; // but don't RE-start catch-up until ~4 s behind
+            // Keep a generous cushion: the broadcaster only drains CONFIRMED
+            // frames, so rollback-heavy stretches stall its upload and a viewer
+            // riding too close hits the dry edge and visibly hitches (player_MPV
+            // idles at the live edge). ~5 s absorbs those bursts plus the
+            // chunked upload cadence.
+            const int settle   = 300; // once catching up, stop ~5 s behind the edge
+            const int reengage = 600; // but don't RE-start catch-up until ~10 s behind
             const int behind   = n02::playbackGetTotalFrames() - n02::playbackGetCurrentFrame();
 
             // Hysteresis: engage catch-up only when we're well behind, then run
