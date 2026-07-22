@@ -165,6 +165,15 @@ public:
     void startSpectate(quint64 matchId);
     void stopSpectate(quint64 matchId);
 
+    // Moderation. sendAdminAuth claims the moderator role with a password;
+    // sendModAction issues a command once authenticated. action is one of
+    // "kick"/"mute"/"timeout"/"ban"/"unban"/"unmute"/"list"; target is a
+    // username (or an IP for unban/unmute); duration is "10m"/"1h"/"2d"/"".
+    void sendAdminAuth(const QString& password);
+    void sendModAction(const QString& action, const QString& target,
+                       const QString& duration = QString(), const QString& reason = QString());
+    bool isModerator() const { return m_isModerator; }
+
     // UDP anchor port management — exposed so the GekkoNet session can take
     // the same local port we registered with the server (matches NAT mapping).
     quint16 localUdpPort() const;
@@ -216,6 +225,11 @@ signals:
     void spectateEnded(quint64 matchId, const QString& reason);
     void spectateFailed(quint64 matchId, const QString& reason);
 
+    // Moderation (server → client).
+    void adminAuthResult(bool ok, const QString& nameOrReason); // ok => moderator granted, name; else reason
+    void modNotice(const QString& severity, const QString& text); // system notice ("info"/"warn"/"error")
+    void modListReceived(const QJsonArray& bans, const QJsonArray& mutes); // reply to "list"
+
 private slots:
     void onWsConnected();
     void onWsDisconnected();
@@ -255,6 +269,10 @@ private:
     void handleSpectateKeyframe(const QJsonObject& data);
     void handleSpectateEnd(const QJsonObject& data);
     void handleSpectateFail(const QJsonObject& data);
+    void handleAdminAuthOk(const QJsonObject& data);
+    void handleAdminAuthFail(const QJsonObject& data);
+    void handleModNotice(const QJsonObject& data);
+    void handleModList(const QJsonObject& data);
 
     void initiateUdpAnchor();
     void sendUdpRegister();
@@ -289,6 +307,7 @@ private:
     quint64 m_selfUserId = 0;
     QString m_observedIp;
     QString m_region;
+    bool    m_isModerator = false; // set once ADMIN_AUTH_OK is received
 
     QHash<quint64, LobbyUser> m_users;
     QHash<quint64, LobbyRoomSummary> m_rooms;

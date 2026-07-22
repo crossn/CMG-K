@@ -350,6 +350,9 @@ RollbackLobbyDialog::RollbackLobbyDialog(QWidget* parent)
     connect(m_client, &LobbyClient::roomStateChanged,     this, &RollbackLobbyDialog::onRoomStateChanged);
     connect(m_client, &LobbyClient::quickMatchStatus,     this, &RollbackLobbyDialog::onQuickMatchStatusChanged);
     connect(m_client, &LobbyClient::chatMessageReceived,  this, &RollbackLobbyDialog::onChatMessageReceived);
+    connect(m_client, &LobbyClient::adminAuthResult,      this, &RollbackLobbyDialog::onAdminAuthResult);
+    connect(m_client, &LobbyClient::modNotice,            this, &RollbackLobbyDialog::onModNotice);
+    connect(m_client, &LobbyClient::modListReceived,      this, &RollbackLobbyDialog::onModListReceived);
     connect(m_client, &LobbyClient::matchBegin,           this, &RollbackLobbyDialog::onMatchBegin);
     connect(m_client, &LobbyClient::matchPeerLeft,        this, &RollbackLobbyDialog::onMatchPeerLeft);
     connect(m_client, &LobbyClient::pingProbeMeasured,    this, &RollbackLobbyDialog::onPingMeasured);
@@ -972,6 +975,7 @@ QWidget* RollbackLobbyDialog::buildInRoomView()
     m_roomChatInput = new QLineEdit(roomChatCard);
     m_roomChatInput->setPlaceholderText("Message the room…");
     m_roomChatInput->setEnabled(false);
+    m_roomChatInput->setMaxLength(500); // server truncates at 500; cap client-side too
     m_roomChatInput->setMinimumHeight(BUTTON_MIN_HEIGHT);
     connect(m_roomChatInput, &QLineEdit::returnPressed, this, &RollbackLobbyDialog::onRoomChatSendClicked);
     roomChatLay->addWidget(m_roomChatInput);
@@ -1223,6 +1227,7 @@ QWidget* RollbackLobbyDialog::buildChatColumn()
     m_chatInput = new QLineEdit(card);
     m_chatInput->setPlaceholderText("Message the lobby…");
     m_chatInput->setEnabled(false);
+    m_chatInput->setMaxLength(500); // server truncates at 500; cap client-side too
     m_chatInput->setMinimumHeight(BUTTON_MIN_HEIGHT);
     connect(m_chatInput, &QLineEdit::returnPressed, this, &RollbackLobbyDialog::onChatSendClicked);
     cardLay->addWidget(m_chatInput);
@@ -2974,6 +2979,7 @@ void RollbackLobbyDialog::onChatSendClicked()
 {
     const QString text = m_chatInput->text().trimmed();
     if (text.isEmpty()) return;
+    if (handleSlashCommand(CHANNEL_LOBBY, text)) { m_chatInput->clear(); return; }
     m_client->sendChat(CHANNEL_LOBBY, text);
     m_chatInput->clear();
 }
@@ -2983,6 +2989,7 @@ void RollbackLobbyDialog::onRoomChatSendClicked()
     if (!m_roomChatInput) return;
     const QString text = m_roomChatInput->text().trimmed();
     if (text.isEmpty()) return;
+    if (handleSlashCommand(CHANNEL_ROOM, text)) { m_roomChatInput->clear(); return; }
     m_client->sendChat(CHANNEL_ROOM, text);
     m_roomChatInput->clear();
 }
@@ -3028,6 +3035,155 @@ void RollbackLobbyDialog::appendChatSystemLine(const QString& channel, const QSt
 {
     const auto ts = QDateTime::currentDateTime().toString("hh:mm");
     appendChatLine(channel, QString("[%1] <i>%2</i>").arg(ts, text));
+}
+
+bool RollbackLobbyDialog::handleSlashCommand(const QString& channel, const QString& text)
+{
+    if (!m_client || !text.startsWith('/'))
+        return false;
+
+    const QStringList parts = text.split(QRegularExpression("\\s+"), Qt::SkipEmptyParts);
+    if (parts.isEmpty())
+        return false;
+    const QString cmd = parts[0].toLower();
+
+    auto sysline = [&](const QString& s) { appendChatSystemLine(channel, s); };
+
+    // /login is always intercepted (even with trailing text) so a password typed
+    // inline is never sent to chat. The password is collected via a masked modal.
+    if (cmd == "/login")
+    {
+        bool ok = false;
+        const QString pw = QInputDialog::getText(this, tr("Moderator Login"),
+            tr("Password:"), QLineEdit::Password, QString(), &ok);
+        if (ok && !pw.isEmpty())
+        {
+            m_client->sendAdminAuth(pw);
+            sysline(tr("Authenticating…"));
+        }
+        return true;
+    }
+
+    if (cmd == "/modhelp")
+    {
+        sysline("Moderator commands: /login, /kick &lt;user&gt; [reason], "
+                "/mute &lt;user&gt; [dur] [reason], /timeout &lt;user&gt; &lt;dur&gt; [reason], "
+                "/ban &lt;user&gt; [reason], /unban &lt;ip&gt;, /unmute &lt;ip&gt;, /modlist. "
+                "Durations: 10m, 1h, 2d (blank = permanent).");
+        return true;
+    }
+
+    static const QStringList modCmds = {"/kick", "/mute", "/timeout", "/ban", "/unban", "/unmute", "/modlist"};
+    if (!modCmds.contains(cmd))
+        return false; // unknown slash command → fall through and send as normal chat
+
+    if (!m_client->isModerator())
+    {
+        sysline(tr("You are not a moderator. Use /login first."));
+        return true;
+    }
+
+    const QString action = cmd.mid(1); // drop leading '/'
+
+    if (action == "modlist")
+    {
+        m_client->sendModAction("list", QString());
+        return true;
+    }
+
+    if (action == "unban" || action == "unmute")
+    {
+        if (parts.size() < 2) { sysline(tr("Usage: /%1 &lt;ip&gt;").arg(action)); return true; }
+        m_client->sendModAction(action, parts[1]);
+        return true;
+    }
+
+    // kick / ban / mute / timeout target a username.
+    if (parts.size() < 2)
+    {
+        sysline(tr("Usage: /%1 &lt;username&gt; …").arg(action));
+        return true;
+    }
+    const QString target = parts[1];
+
+    if (action == "kick" || action == "ban")
+    {
+        const QString reason = parts.size() > 2 ? parts.mid(2).join(' ') : QString();
+        m_client->sendModAction(action, target, QString(), reason);
+        return true;
+    }
+
+    if (action == "mute")
+    {
+        // Optional duration (blank = permanent), optional reason after it.
+        QString duration, reason;
+        if (parts.size() >= 3) duration = parts[2];
+        if (parts.size() >= 4) reason = parts.mid(3).join(' ');
+        m_client->sendModAction("mute", target, duration, reason);
+        return true;
+    }
+
+    // timeout requires an explicit duration.
+    if (parts.size() < 3)
+    {
+        sysline(tr("Usage: /timeout &lt;username&gt; &lt;duration&gt; [reason]"));
+        return true;
+    }
+    const QString reason = parts.size() > 3 ? parts.mid(3).join(' ') : QString();
+    m_client->sendModAction("timeout", target, parts[2], reason);
+    return true;
+}
+
+void RollbackLobbyDialog::onAdminAuthResult(bool ok, const QString& nameOrReason)
+{
+    if (ok)
+    {
+        const QString line = tr("✓ Moderator access granted (%1). Type /modhelp for commands.")
+            .arg(nameOrReason.toHtmlEscaped());
+        appendChatSystemLine(CHANNEL_LOBBY, line);
+        appendChatSystemLine(CHANNEL_ROOM, line);
+    }
+    else
+    {
+        appendChatSystemLine(CHANNEL_LOBBY, tr("Admin login failed: %1").arg(nameOrReason.toHtmlEscaped()));
+    }
+}
+
+void RollbackLobbyDialog::onModNotice(const QString& severity, const QString& text)
+{
+    Q_UNUSED(severity);
+    const QString line = text.toHtmlEscaped();
+    appendChatSystemLine(CHANNEL_LOBBY, line);
+    appendChatSystemLine(CHANNEL_ROOM, line);
+}
+
+void RollbackLobbyDialog::onModListReceived(const QJsonArray& bans, const QJsonArray& mutes)
+{
+    auto fmt = [](const QJsonArray& arr, const QString& kind) -> QStringList {
+        QStringList lines;
+        for (const auto& v : arr)
+        {
+            const auto o = v.toObject();
+            const QString ip = o.value("ip").toString();
+            const QString by = o.value("by").toString().toHtmlEscaped();
+            const QString reason = o.value("reason").toString().toHtmlEscaped();
+            const qint64 until = static_cast<qint64>(o.value("until").toDouble());
+            const QString when = (until == 0)
+                ? QStringLiteral("permanent")
+                : QDateTime::fromMSecsSinceEpoch(until).toString("yyyy-MM-dd hh:mm");
+            QString line = QString("&nbsp;&nbsp;%1 %2 (by %3, %4)").arg(kind, ip, by, when);
+            if (!reason.isEmpty()) line += " — " + reason;
+            lines << line;
+        }
+        return lines;
+    };
+
+    appendChatSystemLine(CHANNEL_LOBBY, tr("Active sanctions:"));
+    const QStringList all = fmt(bans, "BAN") + fmt(mutes, "MUTE");
+    if (all.isEmpty())
+        appendChatLine(CHANNEL_LOBBY, tr("&nbsp;&nbsp;(none)"));
+    for (const auto& l : all)
+        appendChatLine(CHANNEL_LOBBY, l);
 }
 
 void RollbackLobbyDialog::notifyPlayerJoined()
