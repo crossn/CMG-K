@@ -852,25 +852,13 @@ QWidget* RollbackLobbyDialog::buildInRoomView()
     settingsRow->addWidget(predLbl);
     settingsRow->addWidget(m_predictionCombo);
 
-    settingsRow->addSpacing(SPACING_DEFAULT * 2);
-
-    const QString pacingTip = QStringLiteral(
-        "Time-sync pacing model used to keep all seats in lockstep.\n"
-        "Aggressive: corrects hard every frame; snappiest, slightly more visible\n"
-        "speed nudges for whoever's ahead.\n"
-        "Smooth (Slippi-style): gentler, biased to sit slightly ahead — fewer\n"
-        "rollback \"teleports\".\n"
-        "\n"
-        "Host-only. All players will use the same model.");
-    auto* pacingLbl = new QLabel("Pacing:", this);
+    // Pacing is no longer user-selectable — the engine hardwires the Smooth
+    // (asymmetric) model. The combo survives hidden and pinned to Smooth
+    // because the room-settings sync paths require all three combos non-null;
+    // it just always reports 1.
     m_pacingCombo = new QComboBox(this);
-    m_pacingCombo->setObjectName("LobbyCombo");
-    m_pacingCombo->addItem("Aggressive", 0);
     m_pacingCombo->addItem("Smooth", 1);
-    m_pacingCombo->setToolTip(pacingTip);
-    m_pacingCombo->setProperty("originalTip", pacingTip);
-    settingsRow->addWidget(pacingLbl);
-    settingsRow->addWidget(m_pacingCombo);
+    m_pacingCombo->hide();
 
     settingsRow->addStretch(1);
     lay->addLayout(settingsRow);
@@ -930,7 +918,6 @@ QWidget* RollbackLobbyDialog::buildInRoomView()
     };
     connect(m_delayCombo,      QOverload<int>::of(&QComboBox::currentIndexChanged), this, pushSettings);
     connect(m_predictionCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, pushSettings);
-    connect(m_pacingCombo,     QOverload<int>::of(&QComboBox::currentIndexChanged), this, pushSettings);
 
     // ── Seats — bold section header + vertical player-list rows ──
     auto* seatsHeader = new QLabel("SEATS", this);
@@ -2266,9 +2253,9 @@ void RollbackLobbyDialog::onCreateRoomClicked()
 void RollbackLobbyDialog::onRoomCreateRequested()
 {
     if (!m_createRoomDialog) return;
-    // Seed the new room's pacing from the host's saved engine setting; the host
-    // can change it in-room via the pacing combo (like delay/prediction).
-    const int pacing = CoreSettingsGetIntValue(SettingsID::Rollback_PacingMode) == 1 ? 1 : 0;
+    // Pacing is fixed to Smooth (the engine hardwires it); the room field only
+    // survives for protocol compatibility.
+    const int pacing = 1;
     m_client->createRoom(
         m_createRoomDialog->name(),
         m_createRoomDialog->romName(),

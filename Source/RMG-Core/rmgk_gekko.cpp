@@ -113,15 +113,14 @@ enum class ClientInputReplayMode
     Playing
 };
 
-// Selectable rollback time-sync model. Cached per session in reset_gekko_log()
-// from the Rollback_PacingMode setting (or the RMGK_GEKKO_PACING_MODE env
-// override) so apply_gekko_frame_pacing() — which runs every frame — never hits
-// the settings store on the hot path. The int values are persisted, so keep them
-// stable.
+// Rollback time-sync model. Smooth (asymmetric) is the only supported model;
+// symmetric survives solely behind the RMGK_GEKKO_PACING_MODE dev override.
+// Cached per session in reset_gekko_log() so apply_gekko_frame_pacing() —
+// which runs every frame — never hits the environment on the hot path.
 enum class GekkoPacingMode
 {
-    Symmetric  = 0, // aggressive per-frame correction (default)
-    Asymmetric = 1, // Slippi-style biased correction
+    Symmetric  = 0, // aggressive per-frame correction (dev override only)
+    Asymmetric = 1, // Slippi-style biased correction (the default)
 };
 
 struct PendingGekkoSave
@@ -180,7 +179,7 @@ double g_GekkoSpeedScale = 1.0;
 int g_GekkoTimesyncSampleCounter = 0;
 double g_GekkoTimesyncTargetScale = 1.0;
 // Active frame-pacing model, cached at session start (see GekkoPacingMode).
-GekkoPacingMode g_GekkoPacingMode = GekkoPacingMode::Symmetric;
+GekkoPacingMode g_GekkoPacingMode = GekkoPacingMode::Asymmetric;
 bool g_GekkoLogEnabled = false;
 // Lightweight stall diagnostics, independent of verbose logging. Only emits while a
 // rollback session is genuinely stalled (waiting on a peer's input), so the log
@@ -749,16 +748,16 @@ void reset_gekko_log()
     g_GekkoStallReported = false;
 
     // Frame-pacing model, cached per session regardless of logging (this runs
-    // before the early-out below). RMGK_GEKKO_PACING_MODE overrides the setting,
-    // mirroring the logging toggles above: "1" = asymmetric, anything else
-    // (incl. unset/"0") = symmetric (the default).
+    // before the early-out below). Smooth (asymmetric) is the only supported
+    // model now — the UI selector is gone and the persisted Rollback_PacingMode
+    // setting is ignored, so stale configs and room-sync writes are inert.
+    // RMGK_GEKKO_PACING_MODE=0 survives as a dev-only A/B override for the old
+    // symmetric model.
     const char* pacingEnv = std::getenv("RMGK_GEKKO_PACING_MODE");
-    const int pacingMode = pacingEnv != nullptr
-        ? std::atoi(pacingEnv)
-        : CoreSettingsGetIntValue(SettingsID::Rollback_PacingMode);
-    g_GekkoPacingMode = (pacingMode == static_cast<int>(GekkoPacingMode::Asymmetric))
-        ? GekkoPacingMode::Asymmetric
-        : GekkoPacingMode::Symmetric;
+    g_GekkoPacingMode = (pacingEnv != nullptr &&
+            std::atoi(pacingEnv) == static_cast<int>(GekkoPacingMode::Symmetric))
+        ? GekkoPacingMode::Symmetric
+        : GekkoPacingMode::Asymmetric;
 
     if (!g_GekkoLogEnabled && !g_GekkoStallLogEnabled)
     {

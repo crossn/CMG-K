@@ -1447,37 +1447,6 @@ void KailleraP2PDialog::setupUI()
     predictionLayout->addStretch();
     hostLayout->addLayout(predictionLayout);
 
-    auto* pacingLayout = new QHBoxLayout();
-    pacingLayout->setContentsMargins(0, 0, 0, 0);
-    pacingLayout->setSpacing(6);
-    auto* pacingModeLabel = new QLabel("Pacing:", m_hostGroup);
-    pacingLayout->addWidget(pacingModeLabel);
-    m_pacingModeCombo = new QComboBox(m_hostGroup);
-    m_pacingModeCombo->setObjectName("KailleraP2PCombo");
-    m_pacingModeCombo->setMinimumWidth(120);
-    m_pacingModeCombo->setSizeAdjustPolicy(QComboBox::AdjustToContentsOnFirstShow);
-    configureP2PComboPopup(m_pacingModeCombo, theme);
-    m_pacingModeCombo->addItem("Aggressive", 0);
-    m_pacingModeCombo->addItem("Smooth", 1);
-    const int pacingModeIndex = m_pacingModeCombo->findData(m_rollbackPacingMode);
-    m_pacingModeCombo->setCurrentIndex(pacingModeIndex >= 0 ? pacingModeIndex : 0);
-    connect(m_pacingModeCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this](int index) {
-        if (canEditRollbackPacingSettings() && m_pacingModeCombo != nullptr && index >= 0)
-        {
-            setRollbackPacingMode(m_pacingModeCombo->itemData(index).toInt(), m_isHost, true);
-        }
-    });
-    pacingLayout->addWidget(m_pacingModeCombo);
-    pacingLayout->addWidget(makeP2PInfoIcon(m_hostGroup,
-        "Time-sync pacing model used to keep both players in lockstep.\n\n"
-        "Aggressive: recomputes every frame and corrects hard from either side.\n"
-        "Reacts fastest; the player who's ahead sees a slightly more visible nudge.\n\n"
-        "Smooth (Slippi-style): the behind player speeds up more than the ahead\n"
-        "player slows, biased to sit slightly ahead — fewer rollback \"teleports\".\n\n"
-        "Set by the host; applies to both players."));
-    pacingLayout->addStretch();
-    hostLayout->addLayout(pacingLayout);
-
     if (m_isHost)
     {
         auto* publicLobbyRow = new QHBoxLayout();
@@ -1518,11 +1487,9 @@ void KailleraP2PDialog::setupUI()
 
     const int formLabelWidth = std::max(
         m_frameDelayLabel->sizeHint().width(),
-        std::max(predictionWindowLabel->sizeHint().width(),
-                 pacingModeLabel->sizeHint().width()));
+        predictionWindowLabel->sizeHint().width());
     m_frameDelayLabel->setMinimumWidth(formLabelWidth);
     predictionWindowLabel->setMinimumWidth(formLabelWidth);
-    pacingModeLabel->setMinimumWidth(formLabelWidth);
 
     const QMargins hostMargins = hostLayout->contentsMargins();
     m_frameDelayLabel->setText(isRollbackMode() ? "Input Delay:" : "Frame Delay:");
