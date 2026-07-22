@@ -15,6 +15,8 @@
 #include "Library.hpp"
 #include "Settings.hpp"
 
+#include "PreciseWait.hpp"
+
 #ifdef RMGK_HAVE_GEKKONET
 #include <gekkonet.h>
 #ifdef RMGK_HAVE_P2P_TRANSPORT
@@ -200,6 +202,406 @@ long long g_GekkoLastSaveStateUs = 0;
 long long g_GekkoLastRunFrameUs = 0;
 long long g_GekkoLastPendingSaveUs = 0;
 
+// ---------------------------------------------------------------------------
+// Buffered rollback pacing trace.
+//
+// Enabled by Settings -> Rollback -> Logging -> Pacing Trace. Rows remain in
+// memory during gameplay and are written only when rollback execution ends,
+// avoiding per-frame disk I/O.
+// ---------------------------------------------------------------------------
+constexpr std::size_t kRmgkPacingTraceCapacity = 60000;
+constexpr std::size_t kRmgkPacingTraceInvalidRow =
+    static_cast<std::size_t>(-1);
+
+struct RmgkPacingTraceRow
+{
+    std::uint64_t sequence = 0;
+    long long timestampUs = 0;
+
+    int coreFrameBegin = -1;
+    int coreFrameSwap = -1;
+    int coreFrameEnd = -1;
+
+    float framesAhead = 0.0f;
+    double targetScale = 1.0;
+    double internalScale = 1.0;
+    double clampedScale = 1.0;
+    int pacingMode = 0;
+    int sampleFrame = 0;
+
+    int events = 0;
+    int saves = 0;
+    int loads = 0;
+    int rollbackAdvances = 0;
+    int runaheadAdvances = 0;
+    int waitLoops = 0;
+
+    long long debugBeginUs = 0;
+    long long beginTotalUs = 0;
+    long long networkPollUs = 0;
+    long long pacingCalcUs = 0;
+    long long submitInputUs = 0;
+    long long updateSessionUs = 0;
+    long long latchInputUs = 0;
+    long long saveTotalUs = 0;
+    long long loadTotalUs = 0;
+    long long resimTotalUs = 0;
+    long long resimMaxUs = 0;
+    long long waitTotalUs = 0;
+    long long waitMaxUs = 0;
+
+    int presentPacerActive = 0;
+    int presentPacerFirstFrame = 0;
+    int presentPacerDeadlineMiss = 0;
+    double presentPacerScale = 1.0;
+    double presentPacerPeriodUs = 0.0;
+    long long presentIntervalBeforeWaitUs = 0;
+    long long presentWaitRequestedUs = 0;
+    long long presentWaitActualUs = 0;
+    long long presentLateUs = 0;
+    long long presentIntervalAfterWaitUs = 0;
+
+    long long swapUs = 0;
+    long long makeCurrentUs = 0;
+    int swapPath = 0; // 1 = native WGL, 2 = Qt OpenGL
+
+    long long endTotalUs = 0;
+    long long pendingSaveUs = 0;
+    long long debugEndUs = 0;
+};
+
+std::vector<RmgkPacingTraceRow> g_RmgkPacingTraceRows;
+bool g_RmgkPacingTraceEnabled = false;
+std::size_t g_RmgkPacingTraceActiveRow =
+    kRmgkPacingTraceInvalidRow;
+
+float g_RmgkTraceFramesAhead = 0.0f;
+double g_RmgkTraceTargetScale = 1.0;
+double g_RmgkTraceInternalScale = 1.0;
+double g_RmgkTraceClampedScale = 1.0;
+int g_RmgkTracePacingMode = 0;
+int g_RmgkTraceSampleFrame = 0;
+
+// ---------------------------------------------------------------------------
+// Rollback presentation pacer.
+//
+// The ordinary core limiter is bypassed for visible rollback frames. The
+// emulation thread then waits here, immediately before SwapBuffers(), until the
+// next phase-locked presentation deadline. Hidden rollback work therefore
+// consumes idle time instead of being added after an earlier core sleep.
+//
+// The core publishes the exact nominal VI rate before the first swap.
+// RMGK_ROLLBACK_PRESENT_HZ may be used as an explicit diagnostic override.
+// ---------------------------------------------------------------------------
+bool g_RollbackPresentPacerEnabled = true;
+double g_RollbackPresentBaseHz = 60.0;
+bool g_RollbackPresentBaseHzOverridden = false;
+bool g_RollbackPresentPacerInitialized = false;
+std::chrono::steady_clock::time_point g_RollbackPresentLastSwapTime;
+std::chrono::steady_clock::time_point g_RollbackPresentTargetTime;
+
+void reset_rollback_present_pacer()
+{
+    // The rollback presentation pacer is a permanent part of the rollback
+    // frame path. It remains gated below by the active session/execution checks.
+    g_RollbackPresentPacerEnabled = true;
+
+    g_RollbackPresentBaseHz = 60.0;
+    g_RollbackPresentBaseHzOverridden = false;
+
+    const char* hzEnv =
+        std::getenv("RMGK_ROLLBACK_PRESENT_HZ");
+
+    if (hzEnv != nullptr && hzEnv[0] != '\0')
+    {
+        char* end = nullptr;
+        const double value = std::strtod(hzEnv, &end);
+
+        if (end != hzEnv &&
+            value >= 30.0 &&
+            value <= 240.0)
+        {
+            g_RollbackPresentBaseHz = value;
+            g_RollbackPresentBaseHzOverridden = true;
+        }
+    }
+
+    g_RollbackPresentPacerInitialized = false;
+    g_RollbackPresentLastSwapTime =
+        std::chrono::steady_clock::time_point{};
+    g_RollbackPresentTargetTime =
+        std::chrono::steady_clock::time_point{};
+}
+
+void record_rollback_present_pacing(
+    int active,
+    int firstFrame,
+    int deadlineMiss,
+    double scale,
+    double periodUs,
+    long long intervalBeforeWaitUs,
+    long long waitRequestedUs,
+    long long waitActualUs,
+    long long lateUs,
+    long long intervalAfterWaitUs)
+{
+    if (!g_RmgkPacingTraceEnabled ||
+        g_RmgkPacingTraceActiveRow ==
+            kRmgkPacingTraceInvalidRow ||
+        g_RmgkPacingTraceActiveRow >=
+            g_RmgkPacingTraceRows.size())
+    {
+        return;
+    }
+
+    auto& row =
+        g_RmgkPacingTraceRows[
+            g_RmgkPacingTraceActiveRow];
+
+    row.presentPacerActive = active;
+    row.presentPacerFirstFrame = firstFrame;
+    row.presentPacerDeadlineMiss = deadlineMiss;
+    row.presentPacerScale = scale;
+    row.presentPacerPeriodUs = periodUs;
+    row.presentIntervalBeforeWaitUs =
+        intervalBeforeWaitUs;
+    row.presentWaitRequestedUs = waitRequestedUs;
+    row.presentWaitActualUs = waitActualUs;
+    row.presentLateUs = lateUs;
+    row.presentIntervalAfterWaitUs =
+        intervalAfterWaitUs;
+}
+
+long long rmgk_pacing_trace_now_us()
+{
+    return std::chrono::duration_cast<std::chrono::microseconds>(
+        std::chrono::steady_clock::now().time_since_epoch()).count();
+}
+
+void rmgk_pacing_trace_flush()
+{
+    g_RmgkPacingTraceActiveRow = kRmgkPacingTraceInvalidRow;
+
+    if (!g_RmgkPacingTraceEnabled ||
+        g_RmgkPacingTraceRows.empty())
+    {
+        g_RmgkPacingTraceRows.clear();
+        return;
+    }
+
+    const std::string filename =
+        g_GekkoLogPrefix + "_pacing_frontend.csv";
+
+    const std::filesystem::path path =
+        g_GekkoLogDirectory.empty()
+            ? std::filesystem::path(filename)
+            : g_GekkoLogDirectory / filename;
+
+    std::ofstream file(path, std::ios::out | std::ios::trunc);
+    if (file)
+    {
+        file
+            << "sequence,timestamp_us,"
+            << "core_frame_begin,core_frame_swap,core_frame_end,"
+            << "frames_ahead,target_scale,internal_scale,clamped_scale,"
+            << "pacing_mode,sample_frame,"
+            << "events,saves,loads,rollback_advances,runahead_advances,"
+            << "wait_loops,debug_begin_us,begin_total_us,"
+            << "network_poll_us,pacing_calc_us,submit_input_us,"
+            << "update_session_us,latch_input_us,save_total_us,"
+            << "load_total_us,resim_total_us,resim_max_us,"
+            << "wait_total_us,wait_max_us,"
+            << "present_pacer_active,present_pacer_first_frame,"
+            << "present_pacer_deadline_miss,"
+            << "present_pacer_scale,present_pacer_period_us,"
+            << "present_interval_before_wait_us,"
+            << "present_wait_requested_us,present_wait_actual_us,"
+            << "present_late_us,present_interval_after_wait_us,"
+            << "swap_us,make_current_us,swap_path,"
+            << "end_total_us,pending_save_us,debug_end_us\n";
+
+        file << std::fixed << std::setprecision(9);
+
+        for (const auto& row : g_RmgkPacingTraceRows)
+        {
+            file
+                << row.sequence << ','
+                << row.timestampUs << ','
+                << row.coreFrameBegin << ','
+                << row.coreFrameSwap << ','
+                << row.coreFrameEnd << ','
+                << row.framesAhead << ','
+                << row.targetScale << ','
+                << row.internalScale << ','
+                << row.clampedScale << ','
+                << row.pacingMode << ','
+                << row.sampleFrame << ','
+                << row.events << ','
+                << row.saves << ','
+                << row.loads << ','
+                << row.rollbackAdvances << ','
+                << row.runaheadAdvances << ','
+                << row.waitLoops << ','
+                << row.debugBeginUs << ','
+                << row.beginTotalUs << ','
+                << row.networkPollUs << ','
+                << row.pacingCalcUs << ','
+                << row.submitInputUs << ','
+                << row.updateSessionUs << ','
+                << row.latchInputUs << ','
+                << row.saveTotalUs << ','
+                << row.loadTotalUs << ','
+                << row.resimTotalUs << ','
+                << row.resimMaxUs << ','
+                << row.waitTotalUs << ','
+                << row.waitMaxUs << ','
+                << row.presentPacerActive << ','
+                << row.presentPacerFirstFrame << ','
+                << row.presentPacerDeadlineMiss << ','
+                << row.presentPacerScale << ','
+                << row.presentPacerPeriodUs << ','
+                << row.presentIntervalBeforeWaitUs << ','
+                << row.presentWaitRequestedUs << ','
+                << row.presentWaitActualUs << ','
+                << row.presentLateUs << ','
+                << row.presentIntervalAfterWaitUs << ','
+                << row.swapUs << ','
+                << row.makeCurrentUs << ','
+                << row.swapPath << ','
+                << row.endTotalUs << ','
+                << row.pendingSaveUs << ','
+                << row.debugEndUs
+                << '\n';
+        }
+    }
+
+    g_RmgkPacingTraceRows.clear();
+}
+
+void rmgk_pacing_trace_reset()
+{
+    g_RmgkPacingTraceRows.clear();
+    g_RmgkPacingTraceActiveRow =
+        kRmgkPacingTraceInvalidRow;
+
+    g_RmgkPacingTraceEnabled =
+        CoreSettingsGetBoolValue(
+            SettingsID::Rollback_PacingTrace);
+
+    if (g_RmgkPacingTraceEnabled)
+    {
+        g_RmgkPacingTraceRows.reserve(
+            kRmgkPacingTraceCapacity);
+    }
+
+    g_RmgkTraceFramesAhead = 0.0f;
+    g_RmgkTraceTargetScale = 1.0;
+    g_RmgkTraceInternalScale = 1.0;
+    g_RmgkTraceClampedScale = 1.0;
+    g_RmgkTracePacingMode = 0;
+    g_RmgkTraceSampleFrame = 0;
+}
+
+void rmgk_pacing_trace_begin_frame(
+    int events,
+    int saves,
+    int loads,
+    int rollbackAdvances,
+    int runaheadAdvances,
+    int waitLoops,
+    long long debugBeginUs,
+    long long beginTotalUs,
+    long long networkPollUs,
+    long long pacingCalcUs,
+    long long submitInputUs,
+    long long updateSessionUs,
+    long long latchInputUs,
+    long long saveTotalUs,
+    long long loadTotalUs,
+    long long resimTotalUs,
+    long long resimMaxUs,
+    long long waitTotalUs,
+    long long waitMaxUs)
+{
+    g_RmgkPacingTraceActiveRow =
+        kRmgkPacingTraceInvalidRow;
+
+    if (!g_RmgkPacingTraceEnabled ||
+        g_RmgkPacingTraceRows.size() >=
+            kRmgkPacingTraceCapacity)
+    {
+        return;
+    }
+
+    RmgkPacingTraceRow row;
+
+    row.sequence =
+        static_cast<std::uint64_t>(
+            g_RmgkPacingTraceRows.size());
+
+    row.timestampUs = rmgk_pacing_trace_now_us();
+    row.coreFrameBegin = CoreGetCurrentFrameCount();
+
+    row.framesAhead = g_RmgkTraceFramesAhead;
+    row.targetScale = g_RmgkTraceTargetScale;
+    row.internalScale = g_RmgkTraceInternalScale;
+    row.clampedScale = g_RmgkTraceClampedScale;
+    row.pacingMode = g_RmgkTracePacingMode;
+    row.sampleFrame = g_RmgkTraceSampleFrame;
+
+    row.events = events;
+    row.saves = saves;
+    row.loads = loads;
+    row.rollbackAdvances = rollbackAdvances;
+    row.runaheadAdvances = runaheadAdvances;
+    row.waitLoops = waitLoops;
+
+    row.debugBeginUs = debugBeginUs;
+    row.beginTotalUs = beginTotalUs;
+    row.networkPollUs = networkPollUs;
+    row.pacingCalcUs = pacingCalcUs;
+    row.submitInputUs = submitInputUs;
+    row.updateSessionUs = updateSessionUs;
+    row.latchInputUs = latchInputUs;
+    row.saveTotalUs = saveTotalUs;
+    row.loadTotalUs = loadTotalUs;
+    row.resimTotalUs = resimTotalUs;
+    row.resimMaxUs = resimMaxUs;
+    row.waitTotalUs = waitTotalUs;
+    row.waitMaxUs = waitMaxUs;
+
+    g_RmgkPacingTraceRows.push_back(row);
+    g_RmgkPacingTraceActiveRow =
+        g_RmgkPacingTraceRows.size() - 1;
+}
+
+void rmgk_pacing_trace_end_frame(
+    long long endTotalUs,
+    long long pendingSaveUs,
+    long long debugEndUs)
+{
+    if (!g_RmgkPacingTraceEnabled ||
+        g_RmgkPacingTraceActiveRow ==
+            kRmgkPacingTraceInvalidRow ||
+        g_RmgkPacingTraceActiveRow >=
+            g_RmgkPacingTraceRows.size())
+    {
+        return;
+    }
+
+    auto& row =
+        g_RmgkPacingTraceRows[
+            g_RmgkPacingTraceActiveRow];
+
+    row.coreFrameEnd = CoreGetCurrentFrameCount();
+    row.endTotalUs = endTotalUs;
+    row.pendingSaveUs = pendingSaveUs;
+    row.debugEndUs = debugEndUs;
+
+    g_RmgkPacingTraceActiveRow =
+        kRmgkPacingTraceInvalidRow;
+}
+
 // --- Spectate keyframe capture-and-hold (broadcaster side) ---
 // The UI requests a keyframe; we snapshot the live frame's state, then HOLD it until
 // the recording confirms that frame (flushes it to the krec, past the rollback
@@ -333,7 +735,10 @@ std::filesystem::path get_gekko_log_path()
 
 void reset_gekko_log()
 {
+    rmgk_pacing_trace_flush();
     reset_rollback_log_session();
+    rmgk_pacing_trace_reset();
+    reset_rollback_present_pacer();
 
     const char* logEnv = std::getenv("RMGK_GEKKO_LOG");
     g_GekkoLogEnabled = CoreSettingsGetBoolValue(SettingsID::Rollback_VerboseStats) ||
@@ -1026,6 +1431,15 @@ void apply_gekko_frame_pacing()
     g_GekkoSpeedScale += (g_GekkoTimesyncTargetScale - g_GekkoSpeedScale) * lerp;
     CoreRollbackSetTimesyncScale(g_GekkoSpeedScale);
 
+    g_RmgkTraceFramesAhead = framesAhead;
+    g_RmgkTraceTargetScale = g_GekkoTimesyncTargetScale;
+    g_RmgkTraceInternalScale = g_GekkoSpeedScale;
+    g_RmgkTraceClampedScale =
+        std::clamp(g_GekkoSpeedScale, 0.99, 1.01);
+    g_RmgkTracePacingMode =
+        static_cast<int>(g_GekkoPacingMode);
+    g_RmgkTraceSampleFrame = isSampleFrame ? 1 : 0;
+
     g_GekkoPacingLogFrames++;
     if (g_GekkoLogEnabled &&
         (g_GekkoTimesyncTargetScale != 1.0 || g_GekkoPacingLogFrames <= 10 || (g_GekkoPacingLogFrames % 60) == 0))
@@ -1096,6 +1510,8 @@ int rollback_execute_begin_frame(void* userData)
     long long summaryLoadUs = 0;
     long long summaryResimUs = 0;
     long long summaryMaxResimUs = 0;
+    long long summaryWaitUs = 0;
+    long long summaryMaxWaitUs = 0;
     long long summaryDebugBeginUs = 0;
 
     if (g_GekkoSession == nullptr)
@@ -1512,11 +1928,51 @@ int rollback_execute_begin_frame(void* userData)
                     write_gekko_log(stream.str());
                 }
             }
+            const auto traceBeginTotalUs =
+                std::chrono::duration_cast<std::chrono::microseconds>(
+                    std::chrono::steady_clock::now() - beginTime).count();
+
+            rmgk_pacing_trace_begin_frame(
+                summaryEventCount,
+                summarySaveCount,
+                summaryLoadCount,
+                summaryRollbackAdvanceCount,
+                summaryRunaheadAdvanceCount,
+                summaryWaitLoops,
+                summaryDebugBeginUs,
+                traceBeginTotalUs,
+                summaryNetworkPollUs,
+                summaryPacingUs,
+                summarySubmitInputUs,
+                summaryUpdateSessionUs,
+                summaryLatchInputUs,
+                summarySaveUs,
+                summaryLoadUs,
+                summaryResimUs,
+                summaryMaxResimUs,
+                summaryWaitUs,
+                summaryMaxWaitUs);
+
             write_gekko_log("begin_frame result=real_frame");
             return 1;
         }
 
-        std::this_thread::sleep_for(std::chrono::microseconds(kGekkoWaitSleepUs));
+        //std::this_thread::sleep_for(std::chrono::microseconds(kGekkoWaitSleepUs)); // Not accurate enough in windows
+        const auto traceWaitBegin =
+            std::chrono::steady_clock::now();
+
+        rmgk::timing::PreciseWaitFor(
+            std::chrono::microseconds{kGekkoWaitSleepUs},
+            std::chrono::microseconds{kGekkoWaitSleepUs});
+
+        const long long traceWaitUs =
+            std::chrono::duration_cast<std::chrono::microseconds>(
+                std::chrono::steady_clock::now() -
+                traceWaitBegin).count();
+
+        summaryWaitUs += traceWaitUs;
+        summaryMaxWaitUs =
+            std::max(summaryMaxWaitUs, traceWaitUs);
     }
 }
 
@@ -1548,6 +2004,16 @@ int rollback_execute_end_frame(void* userData)
                 std::chrono::steady_clock::now() - debugEndBeginTime).count();
     }
     g_GekkoHasLatchedInput = false;
+
+    const auto traceEndTotalUs =
+        std::chrono::duration_cast<std::chrono::microseconds>(
+            std::chrono::steady_clock::now() - beginTime).count();
+
+    rmgk_pacing_trace_end_frame(
+        traceEndTotalUs,
+        pendingSaveUs,
+        debugEndUs);
+
     if (g_GekkoLogEnabled)
     {
         const auto totalUs =
@@ -2064,6 +2530,7 @@ CORE_EXPORT bool rmgk_gekko::start_local_session(const char* gameName, int playe
 CORE_EXPORT void rmgk_gekko::close_session()
 {
 #ifdef RMGK_HAVE_GEKKONET
+    rmgk_pacing_trace_flush();
     g_GekkoStopRequested.store(false, std::memory_order_relaxed);
     clear_core_input_callback();
     if (g_GekkoSession != nullptr)
@@ -2171,6 +2638,213 @@ CORE_EXPORT bool rmgk_gekko::is_netplay_session_active()
 #endif
 }
 
+
+CORE_EXPORT void rmgk_gekko::pace_before_present()
+{
+#ifdef RMGK_HAVE_GEKKONET
+    if (!g_RollbackPresentPacerEnabled ||
+        g_GekkoSession == nullptr ||
+        !g_GekkoExecuting.load(std::memory_order_relaxed))
+    {
+        return;
+    }
+
+    /*
+     * The core publishes the exact nominal VI rate before the first bypassed
+     * visible-frame limiter call. An explicit environment override wins.
+     */
+    if (!g_RollbackPresentBaseHzOverridden)
+    {
+        const char* effectiveHzEnv =
+            std::getenv(
+                "RMGK_ROLLBACK_PRESENT_HZ_EFFECTIVE");
+
+        if (effectiveHzEnv != nullptr &&
+            effectiveHzEnv[0] != '\0')
+        {
+            char* end = nullptr;
+            const double value =
+                std::strtod(effectiveHzEnv, &end);
+
+            if (end != effectiveHzEnv &&
+                value >= 30.0 &&
+                value <= 240.0)
+            {
+                g_RollbackPresentBaseHz = value;
+            }
+        }
+    }
+
+    const double scale =
+        std::clamp(g_GekkoSpeedScale, 0.99, 1.01);
+
+    const double periodUs =
+        1000000.0 /
+        (g_RollbackPresentBaseHz * scale);
+
+    auto now = std::chrono::steady_clock::now();
+
+    if (!g_RollbackPresentPacerInitialized)
+    {
+        g_RollbackPresentPacerInitialized = true;
+        g_RollbackPresentLastSwapTime = now;
+        g_RollbackPresentTargetTime = now;
+
+        record_rollback_present_pacing(
+            1,
+            1,
+            0,
+            scale,
+            periodUs,
+            0,
+            0,
+            0,
+            0,
+            0);
+        return;
+    }
+
+    const auto period =
+        std::chrono::duration_cast<
+            std::chrono::steady_clock::duration>(
+                std::chrono::duration<
+                    double,
+                    std::micro>(periodUs));
+
+    const auto deadline =
+        g_RollbackPresentTargetTime + period;
+
+    const long long intervalBeforeWaitUs =
+        std::chrono::duration_cast<
+            std::chrono::microseconds>(
+                now -
+                g_RollbackPresentLastSwapTime).count();
+
+    long long waitRequestedUs = 0;
+    long long waitActualUs = 0;
+    long long lateUs = 0;
+    int deadlineMiss = 0;
+
+    if (now < deadline)
+    {
+        const auto remainingNs =
+            std::chrono::duration_cast<
+                std::chrono::nanoseconds>(
+                    deadline - now).count();
+
+        /*
+         * Round upward so microsecond conversion never intentionally
+         * shortens the requested deadline.
+         */
+        waitRequestedUs =
+            (remainingNs + 999) / 1000;
+
+        const auto waitBegin =
+            std::chrono::steady_clock::now();
+
+        rmgk::timing::PreciseWaitFor(
+            std::chrono::microseconds{
+                waitRequestedUs},
+            std::chrono::microseconds{
+                std::min<long long>(
+                    waitRequestedUs,
+                    100)});
+
+        now = std::chrono::steady_clock::now();
+
+        waitActualUs =
+            std::chrono::duration_cast<
+                std::chrono::microseconds>(
+                    now - waitBegin).count();
+    }
+    else
+    {
+        deadlineMiss = 1;
+        lateUs =
+            std::chrono::duration_cast<
+                std::chrono::microseconds>(
+                    now - deadline).count();
+    }
+
+    const long long intervalAfterWaitUs =
+        std::chrono::duration_cast<
+            std::chrono::microseconds>(
+                now -
+                g_RollbackPresentLastSwapTime).count();
+
+    /*
+     * Advance from the scheduled deadline rather than the actual late wake.
+     * Normal wait overshoot is therefore removed from the next wait instead
+     * of being permanently added to every frame interval.
+     *
+     * A stall which leaves us at least one complete period behind is rebased
+     * to the current time. This prevents a long pause from causing a burst of
+     * immediate catch-up swaps while still preserving phase across ordinary
+     * sub-frame scheduler jitter.
+     */
+    if (now >= deadline + period)
+    {
+        g_RollbackPresentTargetTime = now;
+    }
+    else
+    {
+        g_RollbackPresentTargetTime = deadline;
+    }
+
+    g_RollbackPresentLastSwapTime = now;
+
+    record_rollback_present_pacing(
+        1,
+        0,
+        deadlineMiss,
+        scale,
+        periodUs,
+        intervalBeforeWaitUs,
+        waitRequestedUs,
+        waitActualUs,
+        lateUs,
+        intervalAfterWaitUs);
+#else
+    return;
+#endif
+}
+
+CORE_EXPORT void rmgk_gekko::trace_swap_duration(
+    long long swapUs,
+    long long makeCurrentUs,
+    int path)
+{
+#ifdef RMGK_HAVE_GEKKONET
+    if (!g_RmgkPacingTraceEnabled ||
+        g_RmgkPacingTraceActiveRow ==
+            kRmgkPacingTraceInvalidRow ||
+        g_RmgkPacingTraceActiveRow >=
+            g_RmgkPacingTraceRows.size())
+    {
+        return;
+    }
+
+    auto& row =
+        g_RmgkPacingTraceRows[
+            g_RmgkPacingTraceActiveRow];
+
+    row.coreFrameSwap = CoreGetCurrentFrameCount();
+    row.swapUs = swapUs;
+    row.makeCurrentUs = makeCurrentUs;
+    row.swapPath = path;
+#else
+    (void)swapUs;
+    (void)makeCurrentUs;
+    (void)path;
+#endif
+}
+
+static void rollback_pace_before_present(void* userData)
+{
+    (void)userData;
+    rmgk_gekko::pace_before_present();
+}
+
 CORE_EXPORT bool rmgk_gekko::execute()
 {
 #ifndef RMGK_HAVE_GEKKONET
@@ -2184,9 +2858,14 @@ CORE_EXPORT bool rmgk_gekko::execute()
     m64p_rollback_execute_callbacks callbacks = {};
     callbacks.begin_frame = rollback_execute_begin_frame;
     callbacks.end_frame = rollback_execute_end_frame;
+    callbacks.pace_before_present = rollback_pace_before_present;
+    callbacks.pacing_trace_enabled =
+        g_RmgkPacingTraceEnabled ? 1 : 0;
     g_GekkoExecuting.store(true, std::memory_order_relaxed);
     bool result = CoreRollbackExecute(callbacks);
     g_GekkoExecuting.store(false, std::memory_order_relaxed);
+    rmgk_pacing_trace_flush();
+    g_RollbackPresentPacerInitialized = false;
     return result;
 #endif
 }

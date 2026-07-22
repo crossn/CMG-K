@@ -139,11 +139,275 @@ static int   l_FrameRunAudio = 1;
 static int   l_FrameRunPacing = 1;
 static int   l_FrameRunInput = 1;
 static double l_RollbackTimesyncScale = 1.0;
+
+/* -------------------------------------------------------------------------
+ * Buffered core speed-limiter trace.
+ *
+ * Enabled by the frontend's Rollback -> Logging -> Pacing Trace setting.
+ * Rows remain in memory during gameplay and are written after run_device()
+ * returns, avoiding per-frame disk I/O.
+ * ------------------------------------------------------------------------- */
+#define RMGK_PACING_TRACE_CAPACITY 60000u
+
+enum rmgk_pacing_reset_reason
+{
+    RMGK_PACING_RESET_NONE = 0,
+    RMGK_PACING_RESET_INITIALIZE = 1,
+    RMGK_PACING_RESET_TOO_LATE = 2,
+    RMGK_PACING_RESET_TOO_EARLY = 3
+};
+
+struct rmgk_pacing_core_row
+{
+    uint64_t sequence;
+    uint32_t core_frame;
+
+    uint64_t entry_us;
+    uint64_t entry_delta_us;
+    uint64_t limiter_total_us;
+
+    double expected_refresh_hz;
+    int speed_factor;
+    double speed_factor_multiple;
+    double rollback_scale;
+    double adjusted_limit_ms;
+    int speed_limit_enabled;
+
+    int rollback_execute_active;
+    int visible_step_active;
+    int hidden_step_active;
+    int frame_output_pacing;
+
+    int reset_before;
+    int reset_after;
+    int reset_reason;
+    int presentation_pacer_bypass;
+
+    double total_elapsed_game_ms;
+    double elapsed_real_ms;
+    double sleep_before_ms;
+    double first_delay_request_ms;
+    double requested_delay_total_ms;
+    uint32_t delay_calls;
+    uint32_t zero_delay_calls;
+    uint64_t actual_delay_us;
+    uint64_t max_single_delay_us;
+    double sleep_after_ms;
+};
+
+static struct rmgk_pacing_core_row* l_RmgkPacingRows = NULL;
+static size_t l_RmgkPacingRowCount = 0;
+static uint64_t l_RmgkPacingLastEntryUs = 0;
+static int l_RmgkPacingEnabled = 0;
+
+static int l_RmgkPresentBaseHzPublished = 0;
+
+static int rmgk_rollback_present_pacer_enabled(void)
+{
+    return 1;
+}
+
+static void rmgk_publish_present_base_hz(
+    double expected_refresh_hz,
+    double speed_factor_multiple)
+{
+    char value[64];
+    double effective_hz;
+
+    if (l_RmgkPresentBaseHzPublished)
+        return;
+
+    if (expected_refresh_hz <= 0.0 ||
+        speed_factor_multiple <= 0.0)
+    {
+        return;
+    }
+
+    /*
+     * The frontend applies rollback_scale itself, so publish only the
+     * nominal VI rate after the ordinary core speed-factor adjustment.
+     */
+    effective_hz =
+        expected_refresh_hz /
+        speed_factor_multiple;
+
+    snprintf(
+        value,
+        sizeof(value),
+        "%.12f",
+        effective_hz);
+
+#if defined(_WIN32)
+    _putenv_s(
+        "RMGK_ROLLBACK_PRESENT_HZ_EFFECTIVE",
+        value);
+#else
+    setenv(
+        "RMGK_ROLLBACK_PRESENT_HZ_EFFECTIVE",
+        value,
+        1);
+#endif
+
+    l_RmgkPresentBaseHzPublished = 1;
+}
+
+static uint64_t rmgk_pacing_now_us(void)
+{
+    const uint64_t counter = SDL_GetPerformanceCounter();
+    const uint64_t frequency = SDL_GetPerformanceFrequency();
+
+    if (frequency == 0)
+        return 0;
+
+    return (counter / frequency) * 1000000ULL +
+           ((counter % frequency) * 1000000ULL) / frequency;
+}
+
+static void rmgk_pacing_trace_flush(void)
+{
+    char path[4096];
+    const char* directory;
+    const char* prefix;
+    FILE* file;
+    size_t i;
+
+    if (!l_RmgkPacingEnabled || l_RmgkPacingRows == NULL)
+        return;
+
+    directory = getenv("RMGK_ROLLBACK_LOG_DIR");
+    prefix = getenv("RMGK_ROLLBACK_LOG_PREFIX");
+
+    if (directory != NULL && directory[0] != '\0' &&
+        prefix != NULL && prefix[0] != '\0')
+    {
+        snprintf(
+            path,
+            sizeof(path),
+            "%s/%s_pacing_core.csv",
+            directory,
+            prefix);
+    }
+    else
+    {
+        snprintf(
+            path,
+            sizeof(path),
+            "rmgk_pacing_core.csv");
+    }
+
+    file = fopen(path, "wb");
+    if (file != NULL)
+    {
+        fprintf(
+            file,
+            "sequence,core_frame,entry_us,entry_delta_us,"
+            "limiter_total_us,expected_refresh_hz,speed_factor,"
+            "speed_factor_multiple,rollback_scale,adjusted_limit_ms,"
+            "speed_limit_enabled,rollback_execute_active,"
+            "visible_step_active,hidden_step_active,frame_output_pacing,"
+            "reset_before,reset_after,reset_reason,"
+            "presentation_pacer_bypass,"
+            "total_elapsed_game_ms,elapsed_real_ms,sleep_before_ms,"
+            "first_delay_request_ms,requested_delay_total_ms,"
+            "delay_calls,zero_delay_calls,actual_delay_us,"
+            "max_single_delay_us,sleep_after_ms\n");
+
+        for (i = 0; i < l_RmgkPacingRowCount; ++i)
+        {
+            const struct rmgk_pacing_core_row* row =
+                &l_RmgkPacingRows[i];
+
+            fprintf(
+                file,
+                "%llu,%u,%llu,%llu,%llu,"
+                "%.9f,%d,%.9f,%.9f,%.9f,"
+                "%d,%d,%d,%d,%d,"
+                "%d,%d,%d,%d,"
+                "%.9f,%.9f,%.9f,"
+                "%.9f,%.9f,%u,%u,%llu,%llu,%.9f\n",
+                (unsigned long long) row->sequence,
+                row->core_frame,
+                (unsigned long long) row->entry_us,
+                (unsigned long long) row->entry_delta_us,
+                (unsigned long long) row->limiter_total_us,
+                row->expected_refresh_hz,
+                row->speed_factor,
+                row->speed_factor_multiple,
+                row->rollback_scale,
+                row->adjusted_limit_ms,
+                row->speed_limit_enabled,
+                row->rollback_execute_active,
+                row->visible_step_active,
+                row->hidden_step_active,
+                row->frame_output_pacing,
+                row->reset_before,
+                row->reset_after,
+                row->reset_reason,
+                row->presentation_pacer_bypass,
+                row->total_elapsed_game_ms,
+                row->elapsed_real_ms,
+                row->sleep_before_ms,
+                row->first_delay_request_ms,
+                row->requested_delay_total_ms,
+                row->delay_calls,
+                row->zero_delay_calls,
+                (unsigned long long) row->actual_delay_us,
+                (unsigned long long) row->max_single_delay_us,
+                row->sleep_after_ms);
+        }
+
+        fclose(file);
+    }
+
+    free(l_RmgkPacingRows);
+    l_RmgkPacingRows = NULL;
+    l_RmgkPacingRowCount = 0;
+    l_RmgkPacingLastEntryUs = 0;
+    l_RmgkPacingEnabled = 0;
+}
+
+static void rmgk_pacing_trace_reset(int enabled)
+{
+    rmgk_pacing_trace_flush();
+
+    l_RmgkPacingEnabled = enabled ? 1 : 0;
+
+    if (!l_RmgkPacingEnabled)
+        return;
+
+    l_RmgkPacingRows =
+        (struct rmgk_pacing_core_row*) calloc(
+            RMGK_PACING_TRACE_CAPACITY,
+            sizeof(struct rmgk_pacing_core_row));
+
+    if (l_RmgkPacingRows == NULL)
+        l_RmgkPacingEnabled = 0;
+}
+
+static void rmgk_pacing_trace_push(
+    const struct rmgk_pacing_core_row* row)
+{
+    if (!l_RmgkPacingEnabled ||
+        l_RmgkPacingRows == NULL ||
+        row == NULL)
+    {
+        return;
+    }
+
+    if (l_RmgkPacingRowCount >= RMGK_PACING_TRACE_CAPACITY)
+        return;
+
+    l_RmgkPacingRows[l_RmgkPacingRowCount++] = *row;
+}
 static m64p_rollback_execute_callbacks l_RollbackExecuteCallbacks;
 static int   l_RollbackExecuteActive = 0;
 static int   l_RollbackSingleStepActive = 0;
 static int   l_RollbackVisibleStepActive = 0;
 static int   l_RollbackVisibleStepCompleted = 0;
+/* Set only when the video plugin reached its pre-present rendering callback
+ * for the current visible rollback frame. If it does not, the ordinary core
+ * limiter remains active as a safety fallback. */
+static int   l_RollbackPresentPacedThisFrame = 0;
 static int   l_RollbackHiddenStepActive = 0;
 static int   l_RollbackHiddenStepCompleted = 0;
 static m64p_rollback_run_frame_stats l_RollbackRunFrameStats;
@@ -715,8 +979,10 @@ void main_set_rollback_execute_callbacks(m64p_rollback_execute_callbacks* callba
         l_RollbackExecuteActive = 0;
         l_RollbackVisibleStepActive = 0;
         l_RollbackVisibleStepCompleted = 0;
+        l_RollbackPresentPacedThisFrame = 0;
         l_RollbackHiddenStepActive = 0;
         l_RollbackHiddenStepCompleted = 0;
+        l_RmgkPresentBaseHzPublished = 0;
 #ifdef NEW_DYNAREC
         new_dynarec_rollback_stats_reset();
 #endif
@@ -753,6 +1019,7 @@ void main_rollback_visible_frame_begin(void)
 {
     l_RollbackVisibleStepActive = 1;
     l_RollbackVisibleStepCompleted = 0;
+    l_RollbackPresentPacedThisFrame = 0;
 }
 
 int main_rollback_visible_frame_completed(void)
@@ -1316,6 +1583,23 @@ static void video_plugin_render_callback(int bScreenRedrawn)
     {
         input.renderCallback();
     }
+
+    /*
+     * All bundled video plugins invoke this rendering callback immediately
+     * before presenting: GLideN64/Angrylion before GL swap and Parallel before
+     * wsi->end_frame(). Pace here so OpenGL and Vulkan share one phase-locked
+     * presentation path. Guard against duplicate rendering callbacks in one VI.
+     */
+    if (l_RollbackExecuteActive &&
+        l_RollbackVisibleStepActive &&
+        l_FrameOutputPacing &&
+        !l_RollbackPresentPacedThisFrame &&
+        l_RollbackExecuteCallbacks.pace_before_present != NULL)
+    {
+        l_RollbackPresentPacedThisFrame = 1;
+        l_RollbackExecuteCallbacks.pace_before_present(
+            l_RollbackExecuteCallbacks.user_data);
+    }
 }
 
 void new_frame(void)
@@ -1366,12 +1650,104 @@ static void apply_speed_limiter(void)
     static double totalElapsedGameTime = 0.0;
     static uint64_t StartFPSTime = 0;
     static const double defaultSpeedFactor = 100.0;
+
+    struct rmgk_pacing_core_row traceRow;
+    uint64_t traceEntryUs = 0;
+    uint64_t traceEntryDeltaUs = 0;
+    int traceResetReason = RMGK_PACING_RESET_NONE;
+
+    if (l_RmgkPacingEnabled)
+    {
+        memset(&traceRow, 0, sizeof(traceRow));
+        traceEntryUs = rmgk_pacing_now_us();
+        traceEntryDeltaUs =
+            l_RmgkPacingLastEntryUs == 0
+                ? 0
+                : traceEntryUs - l_RmgkPacingLastEntryUs;
+
+        traceRow.sequence =
+            (uint64_t) l_RmgkPacingRowCount;
+        traceRow.core_frame = (uint32_t) l_CurrentFrame;
+        traceRow.entry_us = traceEntryUs;
+        traceRow.entry_delta_us = traceEntryDeltaUs;
+        traceRow.speed_factor = l_SpeedFactor;
+        traceRow.rollback_scale = l_RollbackTimesyncScale;
+        traceRow.speed_limit_enabled = l_MainSpeedLimit;
+        traceRow.rollback_execute_active =
+            l_RollbackExecuteActive;
+        traceRow.visible_step_active =
+            l_RollbackVisibleStepActive;
+        traceRow.hidden_step_active =
+            l_RollbackHiddenStepActive;
+        traceRow.frame_output_pacing =
+            l_FrameOutputPacing;
+        traceRow.reset_before = resetOnce;
+    }
+
     uint64_t CurrentFPSTime = SDL_GetTicks();
 
     // calculate frame duration based upon ROM setting (50/60hz) and mupen64plus speed adjustment
     const double VILimitMilliseconds = 1000.0 / g_dev.vi.expected_refresh_rate;
     const double SpeedFactorMultiple = defaultSpeedFactor/l_SpeedFactor;
     const double AdjustedLimit = (VILimitMilliseconds * SpeedFactorMultiple) / l_RollbackTimesyncScale;
+
+    if (l_RmgkPacingEnabled)
+    {
+        traceRow.expected_refresh_hz =
+            g_dev.vi.expected_refresh_rate;
+        traceRow.speed_factor_multiple =
+            SpeedFactorMultiple;
+        traceRow.adjusted_limit_ms =
+            AdjustedLimit;
+    }
+
+    /*
+     * Rollback presentation pacing.
+     *
+     * The video plugin rendering callback runs immediately before the actual
+     * OpenGL/Vulkan present. Only bypass the ordinary core limiter if that hook
+     * really ran for this visible frame. Plugins which omit the hook therefore
+     * fall back to the core limiter instead of running unbounded.
+     *
+     * Reset the cumulative limiter state on every bypassed visible rollback
+     * frame so stale wall-clock debt cannot leak back in when rollback
+     * execution ends.
+     */
+    if (rmgk_rollback_present_pacer_enabled() &&
+        l_RollbackExecuteActive &&
+        l_RollbackVisibleStepActive &&
+        l_FrameOutputPacing &&
+        l_RollbackPresentPacedThisFrame)
+    {
+        rmgk_publish_present_base_hz(
+            g_dev.vi.expected_refresh_rate,
+            SpeedFactorMultiple);
+
+        StartFPSTime = 0;
+        totalVIs = 0;
+        totalElapsedGameTime = 0.0;
+        resetOnce = 0;
+        lastSpeedFactor = l_SpeedFactor;
+
+        if (l_RmgkPacingEnabled)
+        {
+            traceRow.presentation_pacer_bypass = 1;
+            traceRow.total_elapsed_game_ms = 0.0;
+            traceRow.elapsed_real_ms = 0.0;
+            traceRow.sleep_before_ms = 0.0;
+            traceRow.sleep_after_ms = 0.0;
+            traceRow.reset_after = resetOnce;
+            traceRow.reset_reason =
+                RMGK_PACING_RESET_NONE;
+            traceRow.limiter_total_us =
+                rmgk_pacing_now_us() - traceEntryUs;
+
+            rmgk_pacing_trace_push(&traceRow);
+            l_RmgkPacingLastEntryUs = traceEntryUs;
+        }
+
+        return;
+    }
 
     //if this is the first time or we are resuming from pause
     if(StartFPSTime == 0 || !resetOnce || lastSpeedFactor != l_SpeedFactor)
@@ -1380,6 +1756,7 @@ static void apply_speed_limiter(void)
        totalVIs = 0;
        totalElapsedGameTime = 0.0;
        resetOnce = 1;
+       traceResetReason = RMGK_PACING_RESET_INITIALIZE;
     }
     else
     {
@@ -1400,12 +1777,24 @@ static void apply_speed_limiter(void)
     double elapsedRealTime = CurrentFPSTime - StartFPSTime;
     double sleepTime = totalElapsedGameTime - elapsedRealTime;
 
+    if (l_RmgkPacingEnabled)
+    {
+        traceRow.total_elapsed_game_ms =
+            totalElapsedGameTime;
+        traceRow.elapsed_real_ms = elapsedRealTime;
+        traceRow.sleep_before_ms = sleepTime;
+    }
+
     //Reset if the sleep needed is an unreasonable value
     static const double minSleepNeeded = -50;
     static const double maxSleepNeeded = 50;
     if(sleepTime < minSleepNeeded || sleepTime > (maxSleepNeeded*SpeedFactorMultiple))
     {
        resetOnce = 0;
+       traceResetReason =
+           sleepTime < minSleepNeeded
+               ? RMGK_PACING_RESET_TOO_LATE
+               : RMGK_PACING_RESET_TOO_EARLY;
     }
 
     if (sleepTime < minSleepNeeded) {
@@ -1415,7 +1804,39 @@ static void apply_speed_limiter(void)
     if(l_MainSpeedLimit && sleepTime > 0 && sleepTime < maxSleepNeeded*SpeedFactorMultiple)
     {
         while(sleepTime >= 0) {
-            SDL_Delay((unsigned int) sleepTime);
+            const unsigned int requestedDelayMs =
+                (unsigned int) sleepTime;
+            uint64_t delayBeginUs = 0;
+            uint64_t actualDelayUs = 0;
+
+            if (l_RmgkPacingEnabled)
+            {
+                if (traceRow.delay_calls == 0)
+                    traceRow.first_delay_request_ms = sleepTime;
+
+                traceRow.requested_delay_total_ms +=
+                    (double) requestedDelayMs;
+                traceRow.delay_calls++;
+                if (requestedDelayMs == 0)
+                    traceRow.zero_delay_calls++;
+
+                delayBeginUs = rmgk_pacing_now_us();
+            }
+
+            SDL_Delay(requestedDelayMs);
+
+            if (l_RmgkPacingEnabled)
+            {
+                actualDelayUs =
+                    rmgk_pacing_now_us() - delayBeginUs;
+                traceRow.actual_delay_us += actualDelayUs;
+                if (actualDelayUs >
+                    traceRow.max_single_delay_us)
+                {
+                    traceRow.max_single_delay_us =
+                        actualDelayUs;
+                }
+            }
 
             CurrentFPSTime = SDL_GetTicks();
             elapsedRealTime = CurrentFPSTime - StartFPSTime;
@@ -1427,6 +1848,21 @@ static void apply_speed_limiter(void)
 #if defined(PROFILE)
     timed_section_end(TIMED_SECTION_IDLE);
 #endif
+
+    if (l_RmgkPacingEnabled)
+    {
+        traceRow.limiter_total_us =
+            rmgk_pacing_now_us() - traceEntryUs;
+        traceRow.reset_after = resetOnce;
+        traceRow.reset_reason = traceResetReason;
+        traceRow.total_elapsed_game_ms =
+            totalElapsedGameTime;
+        traceRow.elapsed_real_ms = elapsedRealTime;
+        traceRow.sleep_after_ms = sleepTime;
+
+        rmgk_pacing_trace_push(&traceRow);
+        l_RmgkPacingLastEntryUs = traceEntryUs;
+    }
 }
 
 /* TODO: make a GameShark module and move that there */
@@ -2411,9 +2847,12 @@ m64p_error main_run(void)
     g_EmulatorRunning = 1;
     StateChanged(M64CORE_EMU_STATE, M64EMU_RUNNING);
 
+    rmgk_pacing_trace_reset(
+        l_RollbackExecuteCallbacks.pacing_trace_enabled);
     poweron_device(&g_dev);
     pif_bootrom_hle_execute(&g_dev.r4300);
     run_device(&g_dev);
+    rmgk_pacing_trace_flush();
 
     /* now begin to shut down */
 #ifdef WITH_LIRC
@@ -2490,6 +2929,7 @@ on_gfx_open_failure:
     /* reset pif */
     close_pif();
 
+    rmgk_pacing_trace_flush();
     return failure_rval;
 }
 

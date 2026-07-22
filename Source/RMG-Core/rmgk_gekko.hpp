@@ -56,6 +56,13 @@ class rmgk_gekko
     static void request_disconnect_player(int slot);
     static bool is_netplay_session_active();
     static bool execute();
+    // Rollback presentation pacer. The core invokes this through the video
+    // plugin rendering callback immediately before OpenGL or Vulkan presents.
+    static void pace_before_present();
+
+    // Buffered rollback-pacing trace hook used by VidExt.cpp.
+    // No-op unless Rollback -> Logging -> Pacing Trace is enabled.
+    static void trace_swap_duration(long long swapUs, long long makeCurrentUs, int path);
     static bool set_deterministic(bool enabled);
     static bool install_core_input_callback();
     static void clear_core_input_callback();

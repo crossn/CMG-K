@@ -108,6 +108,7 @@ enum class SettingsID
     Rollback_VerbosePifInputLogging,
     Rollback_VerboseGlideInputLogging,
     Rollback_StallDiagnostics,
+    Rollback_PacingTrace,
     Rollback_PacingMode,
 
     // Core Plugin Settings
