@@ -2639,7 +2639,7 @@ CORE_EXPORT bool rmgk_gekko::is_netplay_session_active()
 }
 
 
-CORE_EXPORT void rmgk_gekko::pace_before_swap()
+CORE_EXPORT void rmgk_gekko::pace_before_present()
 {
 #ifdef RMGK_HAVE_GEKKONET
     if (!g_RollbackPresentPacerEnabled ||
@@ -2839,6 +2839,12 @@ CORE_EXPORT void rmgk_gekko::trace_swap_duration(
 #endif
 }
 
+static void rollback_pace_before_present(void* userData)
+{
+    (void)userData;
+    rmgk_gekko::pace_before_present();
+}
+
 CORE_EXPORT bool rmgk_gekko::execute()
 {
 #ifndef RMGK_HAVE_GEKKONET
@@ -2852,6 +2858,7 @@ CORE_EXPORT bool rmgk_gekko::execute()
     m64p_rollback_execute_callbacks callbacks = {};
     callbacks.begin_frame = rollback_execute_begin_frame;
     callbacks.end_frame = rollback_execute_end_frame;
+    callbacks.pace_before_present = rollback_pace_before_present;
     callbacks.pacing_trace_enabled =
         g_RmgkPacingTraceEnabled ? 1 : 0;
     g_GekkoExecuting.store(true, std::memory_order_relaxed);

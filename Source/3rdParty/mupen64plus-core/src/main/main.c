@@ -404,6 +404,10 @@ static int   l_RollbackExecuteActive = 0;
 static int   l_RollbackSingleStepActive = 0;
 static int   l_RollbackVisibleStepActive = 0;
 static int   l_RollbackVisibleStepCompleted = 0;
+/* Set only when the video plugin reached its pre-present rendering callback
+ * for the current visible rollback frame. If it does not, the ordinary core
+ * limiter remains active as a safety fallback. */
+static int   l_RollbackPresentPacedThisFrame = 0;
 static int   l_RollbackHiddenStepActive = 0;
 static int   l_RollbackHiddenStepCompleted = 0;
 static m64p_rollback_run_frame_stats l_RollbackRunFrameStats;
@@ -975,6 +979,7 @@ void main_set_rollback_execute_callbacks(m64p_rollback_execute_callbacks* callba
         l_RollbackExecuteActive = 0;
         l_RollbackVisibleStepActive = 0;
         l_RollbackVisibleStepCompleted = 0;
+        l_RollbackPresentPacedThisFrame = 0;
         l_RollbackHiddenStepActive = 0;
         l_RollbackHiddenStepCompleted = 0;
         l_RmgkPresentBaseHzPublished = 0;
@@ -1014,6 +1019,7 @@ void main_rollback_visible_frame_begin(void)
 {
     l_RollbackVisibleStepActive = 1;
     l_RollbackVisibleStepCompleted = 0;
+    l_RollbackPresentPacedThisFrame = 0;
 }
 
 int main_rollback_visible_frame_completed(void)
@@ -1577,6 +1583,23 @@ static void video_plugin_render_callback(int bScreenRedrawn)
     {
         input.renderCallback();
     }
+
+    /*
+     * All bundled video plugins invoke this rendering callback immediately
+     * before presenting: GLideN64/Angrylion before GL swap and Parallel before
+     * wsi->end_frame(). Pace here so OpenGL and Vulkan share one phase-locked
+     * presentation path. Guard against duplicate rendering callbacks in one VI.
+     */
+    if (l_RollbackExecuteActive &&
+        l_RollbackVisibleStepActive &&
+        l_FrameOutputPacing &&
+        !l_RollbackPresentPacedThisFrame &&
+        l_RollbackExecuteCallbacks.pace_before_present != NULL)
+    {
+        l_RollbackPresentPacedThisFrame = 1;
+        l_RollbackExecuteCallbacks.pace_before_present(
+            l_RollbackExecuteCallbacks.user_data);
+    }
 }
 
 void new_frame(void)
@@ -1679,11 +1702,12 @@ static void apply_speed_limiter(void)
     }
 
     /*
-     * Experimental rollback presentation pacing.
+     * Rollback presentation pacing.
      *
-     * When enabled, do not spend the frame's idle budget here. The frontend
-     * waits immediately before SwapBuffers(), after hidden rollback
-     * resimulation and visible-frame rendering have completed.
+     * The video plugin rendering callback runs immediately before the actual
+     * OpenGL/Vulkan present. Only bypass the ordinary core limiter if that hook
+     * really ran for this visible frame. Plugins which omit the hook therefore
+     * fall back to the core limiter instead of running unbounded.
      *
      * Reset the cumulative limiter state on every bypassed visible rollback
      * frame so stale wall-clock debt cannot leak back in when rollback
@@ -1692,7 +1716,8 @@ static void apply_speed_limiter(void)
     if (rmgk_rollback_present_pacer_enabled() &&
         l_RollbackExecuteActive &&
         l_RollbackVisibleStepActive &&
-        l_FrameOutputPacing)
+        l_FrameOutputPacing &&
+        l_RollbackPresentPacedThisFrame)
     {
         rmgk_publish_present_base_hz(
             g_dev.vi.expected_refresh_rate,

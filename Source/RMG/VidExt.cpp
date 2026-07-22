@@ -961,13 +961,6 @@ static m64p_error VidExt_GLSwapBuf(void)
     {
         VidExt_NativeWglPollEvents();
 
-        /*
-         * Rollback-only presentation pacing happens after emulation,
-         * rollback resimulation, rendering, and OSD work, immediately
-         * before the real swap.
-         */
-        rmgk_gekko::pace_before_swap();
-
         const auto swapBegin =
             std::chrono::steady_clock::now();
 
@@ -989,12 +982,6 @@ static m64p_error VidExt_GLSwapBuf(void)
 
     VidExt_UpdateOsdDisplaySize();
     OnScreenDisplayRender();
-
-    /*
-     * Rollback-only presentation pacing happens after all frame work,
-     * immediately before the real swap.
-     */
-    rmgk_gekko::pace_before_swap();
 
     const auto swapBegin =
         std::chrono::steady_clock::now();
