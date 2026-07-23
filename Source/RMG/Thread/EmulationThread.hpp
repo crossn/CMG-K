@@ -13,6 +13,7 @@
 #ifndef _WIN32
 #include <QDBusInterface>
 #endif
+#include <QStringList>
 #include <QSurfaceFormat>
 #include <QString>
 #include <QThread>
@@ -38,6 +39,11 @@ class EmulationThread : public QThread
     void SetDiskFile(QString);
     void SetNetplay(QString address, int port, int player);
     void SetGekkoNetplay(QString remoteAddress, int localPort, int remotePort, int localPlayer, int frameDelay, int predictionWindow);
+    // Lobby variant: builds a LOBBY| address carrying N-1 remote peers
+    // (one per non-local participant). Each entry in remotePeers is
+    // formatted "<slot>,<ip>,<port>". CoreStartEmulation routes this to
+    // start_lobby_session which uses GekkoNet's default UDP adapter.
+    void SetLobbyNetplay(QStringList remotePeers, int localPort, int localPlayer, int frameDelay, int predictionWindow);
 
     void run(void) override;
 

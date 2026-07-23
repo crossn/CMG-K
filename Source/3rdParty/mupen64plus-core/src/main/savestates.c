@@ -89,6 +89,12 @@ static char *fname = NULL;
 static unsigned int slot = 0;
 static int autoinc_save_slot = 0;
 
+/* Counts completed rollback-buffer loads. The SI controller compares this across an
+ * update_pif_ram() call to detect a spectate keyframe load that happened *inside* the
+ * PIF sync callback (mid-SI-DMA), so it can skip the stale SI completion that would
+ * otherwise inject a phantom SI interrupt into the just-restored state. */
+static int rollback_load_counter = 0;
+
 enum { ROLLBACK_SAVE_STATES_COUNT = 120 };
 enum { ROLLBACK_LOAD_FRAMES_AGO = 30 };
 
@@ -119,6 +125,11 @@ static int *rollback_save_buffer_checksum = NULL;
 static int rollback_save_buffer_frame = 0;
 static unsigned char *rollback_save_prealloc_data = NULL;
 static int rollback_save_prealloc_capacity = 0;
+/* When set, a rollback-buffer save produces a FULL normal-format state (TLB LUT included,
+ * buffer zeroed, omit flag cleared) instead of the stripped rollback variant. Set only for
+ * the spectate keyframe save via savestates_save_full_buffer; the host's per-frame rollback
+ * saves leave it 0, so their path is byte-for-byte unchanged. */
+static int rollback_save_full = 0;
 static int rollback_verbose_stats = 0;
 
 void savestates_set_rollback_verbose_stats(int enabled)
@@ -204,6 +215,42 @@ void savestates_inc_slot(void)
 savestates_job savestates_get_job(void)
 {
     return job;
+}
+
+int savestates_get_rollback_load_counter(void)
+{
+    return rollback_load_counter;
+}
+
+/* Spectate keyframe deferred load: the spectator stages a rollback-buffer load and it is
+ * performed at the next safe interrupt boundary (gen_interrupt), exactly like a normal
+ * savestate load, instead of synchronously mid-frame. Loading a full machine state mid-SI
+ * DMA / mid-dynarec-block lets the half-finished operation run on top of the restored
+ * state and desyncs the replay one frame later. The buffer must stay valid until drained
+ * (it does — it's the spectator's persistent keyframe buffer). */
+static unsigned char* pending_rollback_load_buffer = NULL;
+static int pending_rollback_load_len = 0;
+
+int savestates_has_pending_rollback_load(void)
+{
+    return pending_rollback_load_buffer != NULL;
+}
+
+void savestates_set_pending_rollback_load(unsigned char* buffer, int len)
+{
+    pending_rollback_load_buffer = buffer;
+    pending_rollback_load_len = len;
+}
+
+int savestates_run_pending_rollback_load(void)
+{
+    unsigned char* buffer = pending_rollback_load_buffer;
+    int len = pending_rollback_load_len;
+    pending_rollback_load_buffer = NULL;
+    pending_rollback_load_len = 0;
+    if (buffer != NULL && len > 0)
+        return savestates_load_rollback_buffer(buffer, len);
+    return 0;
 }
 
 void savestates_set_job(savestates_job j, savestates_type t, const char *fn)
@@ -723,7 +770,12 @@ static int savestates_load_m64p(struct device* dev, char *filepath)
     if (memory_data != NULL)
     {
         rollback_tlb_start = SDL_GetPerformanceCounter();
-        if (memcmp(rollback_old_tlb_entries, dev->r4300.cp0.tlb.entries, sizeof(rollback_old_tlb_entries)) == 0)
+        /* The "entries unchanged -> keep existing LUT" shortcut is only valid for the OMITTED
+         * (stripped rollback) format, where there's no LUT in the buffer to install. A FULL
+         * buffer (omit flag clear) carries its own LUT — a cold spectator must always install
+         * it, so don't take the skip in that case. */
+        if (rollback_tlb_lut_omitted &&
+            memcmp(rollback_old_tlb_entries, dev->r4300.cp0.tlb.entries, sizeof(rollback_old_tlb_entries)) == 0)
         {
             rollback_tlb_lut_skipped = 1;
         }
@@ -1713,6 +1765,18 @@ int savestates_load(void)
     char *filepath = NULL;
     int ret = 0;
 
+    /* Spectate keyframe: a rollback buffer was staged via savestates_set_job(load,
+     * savestates_type_rollback_buffer). Load it from memory here — at the same safe
+     * interrupt boundary the normal file load uses — and skip all file handling. */
+    if (type == savestates_type_rollback_buffer)
+    {
+        ret = savestates_run_pending_rollback_load();
+        DebugMessage(M64MSG_INFO, "RMGK-DEFER: rollback-buffer job loaded (ret=%d)", ret);
+        StateChanged(M64CORE_STATE_LOADCOMPLETE, ret);
+        savestates_clear_job();
+        return ret;
+    }
+
     if (fname != NULL && strcmp(fname, "MEMORY") == 0)
     {
         type = savestates_type_m64p;
@@ -1882,7 +1946,7 @@ static int savestates_save_m64p(const struct device* dev, char *filepath)
 
     // Allocate memory for the save state data
     save->size = 16788288 + sizeof(queue) + 4 + 4096;
-    if (rollback_buffer_save)
+    if (rollback_buffer_save && !rollback_save_full)
         save->size -= rollback_tlb_lut_size;
     allocation_size = save->size;
     if (rollback_buffer_save)
@@ -1927,7 +1991,7 @@ static int savestates_save_m64p(const struct device* dev, char *filepath)
         return 0;
     }
 
-    if (!rollback_buffer_save)
+    if (!rollback_buffer_save || rollback_save_full)
         memset(save->data, 0, allocation_size);
 
     // Write the save state data to memory
@@ -2099,7 +2163,7 @@ static int savestates_save_m64p(const struct device* dev, char *filepath)
 
     if (rollback_buffer_save)
         rollback_save_tlb_start = SDL_GetPerformanceCounter();
-    if (!rollback_buffer_save)
+    if (!rollback_buffer_save || rollback_save_full)
     {
         PUTARRAY(dev->r4300.cp0.tlb.LUT_r, curr, uint32_t, 0x100000);
         PUTARRAY(dev->r4300.cp0.tlb.LUT_w, curr, uint32_t, 0x100000);
@@ -2321,7 +2385,7 @@ static int savestates_save_m64p(const struct device* dev, char *filepath)
         rollback_header[1] = rollback_state_header_size;
         rollback_header[2] = savestate_latest_version;
         rollback_header[3] = rollback_save_buffer_frame;
-        rollback_header[4] = rollback_state_flag_omit_tlb_lut;
+        rollback_header[4] = rollback_save_full ? 0 : rollback_state_flag_omit_tlb_lut;
         rollback_header[5] = 0;
 
         if (rollback_save_buffer_checksum != NULL)
@@ -2702,6 +2766,21 @@ int savestates_save_rollback_buffer(unsigned char **buffer, int *len, int *check
     return result;
 }
 
+/* Spectate keyframe: a FULL normal-format savestate into a caller buffer (same memory-buffer
+ * plumbing as savestates_save_rollback_buffer, but the rollback_save_full flag makes the save
+ * include the TLB LUT and zero the buffer, and clears the omit flag in the header). The host's
+ * per-frame rollback saves never set the flag, so their fast stripped path is unchanged. The
+ * resulting buffer carries the rollback header (so the existing buffer-load path reads it) but
+ * is otherwise a complete savestate a cold spectator can load. */
+int savestates_save_full_buffer(unsigned char **buffer, int *len, int *checksum, int frame)
+{
+    int result;
+    rollback_save_full = 1;
+    result = savestates_save_rollback_buffer(buffer, len, checksum, frame);
+    rollback_save_full = 0;
+    return result;
+}
+
 int savestates_load_rollback_buffer(unsigned char *buffer, int len)
 {
     int result;
@@ -2716,6 +2795,7 @@ int savestates_load_rollback_buffer(unsigned char *buffer, int len)
     if (result)
     {
         main_rollback_capture_load_probe();
+        ++rollback_load_counter;
     }
     rollback_load_buffer = NULL;
     rollback_load_buffer_size = 0;

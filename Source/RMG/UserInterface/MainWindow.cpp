@@ -9,6 +9,8 @@
  */
 #include "MainWindow.hpp"
 
+#include <cstdio>
+
 #include "UserInterface/Dialog/AboutDialog.hpp"
 #include "Dialog/Cheats/CheatsDialog.hpp"
 #include "Dialog/SettingsDialog.hpp"
@@ -1585,6 +1587,13 @@ MainWindow::~MainWindow()
     CoreRollbackFreeGameState(g_RollbackDebugReplay.initialState);
     CoreRollbackFreeGameState(g_RollbackDebugReplay.finalState);
     FreeRollbackDebugStressCheckpoints();
+#ifdef NETPLAY
+    if (this->rollbackLobbyDialog != nullptr)
+    {
+        delete this->rollbackLobbyDialog;
+        this->rollbackLobbyDialog = nullptr;
+    }
+#endif
 }
 
 bool MainWindow::Init(QApplication* app, bool showUI, bool launchROM)
@@ -2814,7 +2823,9 @@ void MainWindow::updateActions(bool inEmulation, bool isPaused)
     this->action_View_Search->setEnabled(!inEmulation);
 
 #ifdef NETPLAY
-    this->action_Netplay_BrowseSessions->setEnabled(!inEmulation && this->netplaySessionDialog == nullptr && this->kailleraSessionManager == nullptr);
+    const bool netplayLauncherAvailable = !inEmulation && this->netplaySessionDialog == nullptr && this->kailleraSessionManager == nullptr;
+    this->action_Netplay_BrowseSessions->setEnabled(netplayLauncherAvailable);
+    this->action_Netplay_P2P->setEnabled(netplayLauncherAvailable);
 #endif // NETPLAY
 
     keyBinding = QString::fromStdString(CoreSettingsGetStringValue(SettingsID::KeyBinding_IncreaseVolume));
@@ -3110,7 +3121,9 @@ void MainWindow::connectActionSignals(void)
 
     connect(this->action_System_Shutdown, &QAction::triggered, this, &MainWindow::on_Action_System_Shutdown);
 #ifdef NETPLAY
-    connect(this->action_Netplay_Start, &QAction::triggered, this, &MainWindow::on_Action_Netplay_BrowseSessions);
+    // The toolbar Netplay button is the primary, streamlined entry: it connects
+    // straight to the rollback lobby (onboarding the first time).
+    connect(this->action_Netplay_Start, &QAction::triggered, this, &MainWindow::on_Action_Rollback_Lobby);
 #else
     connect(this->action_Netplay_Start, &QAction::triggered, this, &MainWindow::on_Action_System_SoftReset);
 #endif
@@ -3155,7 +3168,13 @@ void MainWindow::connectActionSignals(void)
     connect(this->action_View_Log, &QAction::triggered, this, &MainWindow::on_Action_View_Log);
     connect(this->action_View_Search, &QAction::triggered, this, &MainWindow::on_Action_View_Search);
 
-    connect(this->action_Netplay_BrowseSessions, &QAction::triggered, this, &MainWindow::on_Action_Netplay_BrowseSessions);
+    // Menu-bar Netplay: legacy (delay) server + peer-to-peer open the launcher
+    // straight to their tab; rollback lobby is the streamlined entry.
+    connect(this->action_Netplay_BrowseSessions, &QAction::triggered, this, &MainWindow::on_Action_Netplay_LegacyServer);
+    connect(this->action_Netplay_P2P, &QAction::triggered, this, &MainWindow::on_Action_Netplay_P2P);
+#ifdef NETPLAY
+    connect(this->action_Rollback_Lobby, &QAction::triggered, this, &MainWindow::on_Action_Rollback_Lobby);
+#endif
 
     connect(this->action_Help_Github, &QAction::triggered, this, &MainWindow::on_Action_Help_Github);
     connect(this->action_Help_About, &QAction::triggered, this, &MainWindow::on_Action_Help_About);
@@ -3412,6 +3431,118 @@ void MainWindow::timerEvent(QTimerEvent *event)
     {
         this->killTimer(timerId);
         this->ui_RollbackLivePumpTimerId = 0;
+    }
+    else if (timerId == this->ui_SpectateTimerId)
+    {
+        if (!this->ui_SpectateActive)
+        {
+            this->killTimer(timerId);
+            this->ui_SpectateTimerId = 0;
+            return;
+        }
+        // Drive the playback state machine (fires the game-start callback that
+        // launches emulation once the krec header has been received).
+        n02::processStateMachineStep();
+
+        if (this->emulationThread->isRunning())
+        {
+            if (!n02::isPlaybackActive())
+            {
+                // Stream ended (broadcaster stopped, or a drop record arrived).
+                this->stopLobbySpectate();
+                return;
+            }
+            // Fast-forward while there's buffered krec ahead of us, then settle near
+            // the buffered/live edge. We measure "behind" as buffered-but-unplayed
+            // frames (LOCAL to this stream) rather than the broadcaster's global live
+            // frame: in the keyframe path the krec tail starts at the keyframe frame,
+            // so the global stamp is far ahead of our local numbering and would never
+            // let us settle. Local buffered-remaining is correct for both paths.
+            const int settle   = 90;  // once catching up, stop ~1.5 s behind the edge
+            const int reengage = 240; // but don't RE-start catch-up until ~4 s behind
+            const int behind   = n02::playbackGetTotalFrames() - n02::playbackGetCurrentFrame();
+
+            // Hysteresis: engage catch-up only when we're well behind, then run
+            // until we're close. Without the gap, normal live-stream jitter near
+            // the edge would flip the headless toggle on/off and flicker the
+            // screen. The initial join (behind = whole backlog) always engages.
+            const bool wantFastForward = this->ui_SpectateFastForward
+                ? (behind > settle)
+                : (behind > reengage);
+
+            if (wantFastForward)
+            {
+                // Fully headless catch-up (video off) — max speed, and headless boot-replay
+                // stays in sync. The OSD can't paint without a presented frame, so the
+                // loading bar lives in the WINDOW TITLE instead (set on the UI thread below,
+                // which runs regardless of whether the emulator presents anything).
+                const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
+                if (!this->ui_SpectateFastForward)
+                {
+                    this->ui_SpectateFastForward = true;
+                    this->ui_SpectateBannerPending = false;
+                    // Arm the loading-bar estimator + remember the title to restore.
+                    this->ui_SpectateInitialBehind  = behind > 1 ? behind : 1;
+                    this->ui_SpectateCatchupRate    = 0.0;
+                    this->ui_SpectateRateLastBehind = behind;
+                    this->ui_SpectateRateLastMs     = nowMs;
+                    this->ui_SpectateSavedTitle     = this->windowTitle();
+                }
+                CoreSetFrameOutput(CoreFrameOutput_Pacing | CoreFrameOutput_Input); // headless (no Video)
+                // Flat-out until caught up — no taper near the edge. A spectator is
+                // data-bound: it can't pass the live edge (it idles once the buffer
+                // runs dry), so there's nothing to overshoot.
+                if (CoreGetSpeedFactor() != 1000)
+                    CoreSetSpeedFactor(1000);
+
+                // Loading bar + ETA. The live edge grows while we catch up, so we
+                // estimate from how fast "behind" is actually shrinking (sampled ~10/s
+                // so the per-sample frame delta is meaningful), not an assumed speed
+                // multiplier. Progress is against the backlog we started this run with.
+                if (nowMs - this->ui_SpectateRateLastMs >= 100)
+                {
+                    const double dtSec  = (nowMs - this->ui_SpectateRateLastMs) / 1000.0;
+                    const double inst   = (this->ui_SpectateRateLastBehind - behind) / dtSec;
+                    this->ui_SpectateCatchupRate = (this->ui_SpectateCatchupRate <= 0.0)
+                        ? inst
+                        : (0.6 * this->ui_SpectateCatchupRate + 0.4 * inst);
+                    this->ui_SpectateRateLastBehind = behind;
+                    this->ui_SpectateRateLastMs     = nowMs;
+                }
+
+                // Progress over the backlog from start (initialBehind) down to the settle
+                // point, so it fills to 100% exactly as catch-up completes.
+                const int span = this->ui_SpectateInitialBehind - settle;
+                int pct = (span > 0)
+                    ? static_cast<int>(100.0 * (this->ui_SpectateInitialBehind - behind) / span)
+                    : 100;
+                if (pct < 0) pct = 0;
+                if (pct > 100) pct = 100;
+                constexpr int barW = 18;
+                const int filled = pct * barW / 100;
+                std::string msg = "Catching up  [" + std::string(filled, '#') +
+                                  std::string(barW - filled, '-') + "]  " + std::to_string(pct) + "%";
+                if (this->ui_SpectateCatchupRate > 1.0)
+                {
+                    const int rate   = static_cast<int>(this->ui_SpectateCatchupRate);
+                    const int etaSec = (behind + rate - 1) / rate; // ceil(behind/rate)
+                    msg += "  ~" + std::to_string(etaSec) + "s";
+                }
+                // Bar goes in the title (UI thread) so it updates even with zero presents.
+                this->setWindowTitle(QString::fromStdString(msg));
+            }
+            else if (this->ui_SpectateFastForward)
+            {
+                // Reached the live edge — restore the title, resume rendering at realtime;
+                // the next presented frame goes live.
+                OnScreenDisplaySetCenterMessage("");
+                this->setWindowTitle(this->ui_SpectateSavedTitle);
+                CoreSetFrameOutput(CoreFrameOutput_All);
+                CoreSetSpeedFactor(100);
+                this->ui_SpectateFastForward = false;
+                this->ui_SpectateBannerPending = false;
+            }
+        }
     }
 #endif // NETPLAY
 }
@@ -4066,6 +4197,151 @@ void MainWindow::on_Action_Settings_Input(void)
     }
 }
 
+#ifdef NETPLAY
+void MainWindow::ensureKailleraSessionManager()
+{
+    if (this->kailleraSessionManager != nullptr)
+    {
+        return;
+    }
+    this->kailleraSessionManager = new KailleraSessionManager(this);
+    connect(this->kailleraSessionManager, &KailleraSessionManager::gameStarted,
+            this, &MainWindow::on_Kaillera_GameStarted);
+    connect(this->kailleraSessionManager, &KailleraSessionManager::chatReceived,
+            this, &MainWindow::on_Kaillera_ChatReceived);
+    connect(&KailleraUIBridge::instance(), &KailleraUIBridge::kailleraGameChatReceived,
+            this, &MainWindow::on_Kaillera_ChatReceived);
+    connect(&KailleraUIBridge::instance(), &KailleraUIBridge::p2pChatReceived,
+            this, &MainWindow::on_Kaillera_ChatReceived);
+    connect(&KailleraUIBridge::instance(), &KailleraUIBridge::recordingFileClosed,
+            this, &MainWindow::on_Kaillera_RecordingFileClosed);
+    connect(this->kailleraSessionManager, &KailleraSessionManager::playerDropped,
+            this, &MainWindow::on_Kaillera_PlayerDropped);
+    connect(this->kailleraSessionManager, &KailleraSessionManager::gameEnded,
+            this, &MainWindow::on_Kaillera_GameEnded);
+}
+
+// Lobby spectate: launch a streaming-playback session for a broadcast match.
+// Reuses the playback path (n02 mode 2 → gameCallback → on_Kaillera_GameStarted
+// launches emulation once the krec header arrives); a timer drives the state
+// machine and fast-forwards toward the live edge.
+void MainWindow::on_Lobby_SpectateLaunch(quint64 matchId, QString gameName)
+{
+    if (this->ui_SpectateActive)
+    {
+        return; // already spectating
+    }
+    if (this->emulationThread->isRunning())
+    {
+        this->showErrorMessage("Busy", "Stop the current game before watching a live replay.");
+        if (this->rollbackLobbyDialog != nullptr)
+            this->rollbackLobbyDialog->stopSpectating();
+        return;
+    }
+    if (!CoreInitKaillera())
+    {
+        this->showErrorMessage("Live Replay Error", QString::fromStdString(CoreGetError()));
+        if (this->rollbackLobbyDialog != nullptr)
+            this->rollbackLobbyDialog->stopSpectating();
+        return;
+    }
+    this->ensureKailleraSessionManager();
+
+    n02::activateMode(2);
+    n02::playbackBeginStream();
+
+    this->ui_SpectateActive    = true;
+    this->ui_SpectateMatchId   = matchId;
+    this->ui_SpectateLiveFrame = 0; // updated from broadcaster-stamped SPECTATE_DATA
+    this->ui_SpectateNamesShown = false; // set once the krec header arrives
+    CoreClearSpectateKeyframe(); // drop any stale keyframe from a previous spectate
+
+    // ~60 Hz: drive the playback state machine + fast-forward.
+    if (this->ui_SpectateTimerId == 0)
+        this->ui_SpectateTimerId = this->startTimer(16);
+
+    OnScreenDisplaySetMessage(("Watching: " + gameName.toStdString()).c_str());
+}
+
+void MainWindow::on_Lobby_SpectateData(QByteArray bytes, int liveFrame)
+{
+    if (!this->ui_SpectateActive || bytes.isEmpty())
+    {
+        return;
+    }
+    // Track the broadcaster's live edge (monotonic) — the fast-forward target.
+    if (liveFrame > this->ui_SpectateLiveFrame)
+        this->ui_SpectateLiveFrame = liveFrame;
+    n02::playbackAppendBytes(bytes.constData(), static_cast<int>(bytes.size()));
+
+#ifdef _WIN32
+    // The krec header carries the slot-ordered player names; once it has been
+    // parsed (synchronously, in playbackAppendBytes above), label the OSD ports
+    // from it exactly like a live match does. Names ride in the stream, not a
+    // side channel, so the slot order is authoritative.
+    if (!this->ui_SpectateNamesShown && n02::playbackHeaderReady())
+    {
+        OnScreenDisplaySetKailleraPortLabels(n02::playbackNumPlayers(), GetLiveKailleraPortLabelNames());
+        this->ui_SpectateNamesShown = true;
+    }
+#endif
+}
+
+void MainWindow::on_Lobby_SpectateKeyframe(int frame, QByteArray savestate)
+{
+    if (!this->ui_SpectateActive || savestate.isEmpty() || frame < 0)
+    {
+        return;
+    }
+    // Stage the broadcaster's savestate so the spectator's emulation restores it (on
+    // its emulation thread) before consuming the first krec input. This arrives ahead
+    // of the SPECTATE_DATA krec tail (which starts at this frame), so it's staged
+    // before the emulation even starts — the load wins the race against the first poll
+    // and the replay continues from frame F's state instead of boot.
+    CoreStageSpectateKeyframe(reinterpret_cast<const unsigned char*>(savestate.constData()),
+                              static_cast<int>(savestate.size()), frame);
+}
+
+void MainWindow::on_Lobby_SpectateClosed(QString reason)
+{
+    (void)reason;
+    this->stopLobbySpectate();
+}
+
+void MainWindow::stopLobbySpectate()
+{
+    if (!this->ui_SpectateActive)
+    {
+        return;
+    }
+    this->ui_SpectateActive  = false; // set first so re-entry (via stop→finish) bails
+    this->ui_SpectateMatchId = 0;
+    if (this->ui_SpectateTimerId != 0)
+    {
+        this->killTimer(this->ui_SpectateTimerId);
+        this->ui_SpectateTimerId = 0;
+    }
+    if (this->ui_SpectateFastForward) // stopped mid-catch-up — put the title back
+        this->setWindowTitle(this->ui_SpectateSavedTitle);
+    this->ui_SpectateFastForward = false;
+    this->ui_SpectateBannerPending = false;
+    CoreClearSpectateKeyframe(); // drop any staged keyframe
+    OnScreenDisplaySetCenterMessage(""); // clear the buffering banner if we stop mid-catch-up
+    CoreSetSpeedFactor(100);
+    CoreSetFrameOutput(CoreFrameOutput_All); // undo any headless catch-up state
+    n02::playbackStopStream();
+    if (this->emulationThread->isRunning())
+    {
+        CoreStopEmulation();
+    }
+    // Tell the lobby to drop us from the broadcast (idempotent if already done).
+    if (this->rollbackLobbyDialog != nullptr)
+    {
+        this->rollbackLobbyDialog->stopSpectating();
+    }
+}
+#endif // NETPLAY
+
 void MainWindow::on_Action_Playback(void)
 {
 #ifdef NETPLAY
@@ -4088,24 +4364,7 @@ void MainWindow::on_Action_Playback(void)
     // Ensure session manager exists so gameCallback is wired up.
     // Without this, the state machine reaches state 1 but has no
     // callback to actually start emulation.
-    if (this->kailleraSessionManager == nullptr)
-    {
-        this->kailleraSessionManager = new KailleraSessionManager(this);
-        connect(this->kailleraSessionManager, &KailleraSessionManager::gameStarted,
-                this, &MainWindow::on_Kaillera_GameStarted);
-        connect(this->kailleraSessionManager, &KailleraSessionManager::chatReceived,
-                this, &MainWindow::on_Kaillera_ChatReceived);
-        connect(&KailleraUIBridge::instance(), &KailleraUIBridge::kailleraGameChatReceived,
-                this, &MainWindow::on_Kaillera_ChatReceived);
-        connect(&KailleraUIBridge::instance(), &KailleraUIBridge::p2pChatReceived,
-                this, &MainWindow::on_Kaillera_ChatReceived);
-        connect(&KailleraUIBridge::instance(), &KailleraUIBridge::recordingFileClosed,
-                this, &MainWindow::on_Kaillera_RecordingFileClosed);
-        connect(this->kailleraSessionManager, &KailleraSessionManager::playerDropped,
-                this, &MainWindow::on_Kaillera_PlayerDropped);
-        connect(this->kailleraSessionManager, &KailleraSessionManager::gameEnded,
-                this, &MainWindow::on_Kaillera_GameEnded);
-    }
+    this->ensureKailleraSessionManager();
 
     // Activate playback mode so the state machine uses the playback module
     n02::activateMode(2);
@@ -4308,7 +4567,7 @@ void MainWindow::on_Action_Netplay_CreateSession(void)
 #endif // NETPLAY
 }
 
-void MainWindow::on_Action_Netplay_BrowseSessions(void)
+void MainWindow::openNetplayLauncher(int initialTab)
 {
 #ifdef NETPLAY
     // Initialize Kaillera if not already initialized
@@ -4399,6 +4658,7 @@ void MainWindow::on_Action_Netplay_BrowseSessions(void)
 
     // Disable buttons while Kaillera dialog is open
     this->action_Netplay_BrowseSessions->setEnabled(false);
+    this->action_Netplay_P2P->setEnabled(false);
     this->action_Netplay_Start->setEnabled(false);
     this->action_System_StartRom->setEnabled(false);
 
@@ -4406,7 +4666,7 @@ void MainWindow::on_Action_Netplay_BrowseSessions(void)
     // This is a blocking call - user will select server, join/create game
     // When they start a game, gameStarted signal will be emitted
     // Dialog stays open until user closes it
-    this->kailleraSessionManager->showServerDialog();
+    this->kailleraSessionManager->showServerDialog(initialTab);
     if (!this->ui_RollbackNetplayLaunchActive)
     {
         this->ui_RollbackNetplayRoomActive = false;
@@ -4429,11 +4689,33 @@ void MainWindow::on_Action_Netplay_BrowseSessions(void)
 
         // Re-enable buttons and update UI
         this->action_Netplay_BrowseSessions->setEnabled(true);
+        this->action_Netplay_P2P->setEnabled(true);
         this->action_Netplay_Start->setEnabled(true);
         this->action_System_StartRom->setEnabled(true);
         this->updateUI(this->emulationThread->isRunning(), CoreIsEmulationPaused());
     }
+#else
+    (void)initialTab;
 #endif // NETPLAY
+}
+
+void MainWindow::on_Action_Netplay_BrowseSessions(void)
+{
+    // Legacy entry kept for auto-start-on-startup; opens the launcher at the
+    // persisted last tab.
+    this->openNetplayLauncher(-1);
+}
+
+void MainWindow::on_Action_Netplay_LegacyServer(void)
+{
+    // Menu "Legacy Server" → launcher on the delay-based Kaillera server tab.
+    this->openNetplayLauncher(0);
+}
+
+void MainWindow::on_Action_Netplay_P2P(void)
+{
+    // Menu "Peer to Peer" → launcher on the P2P tab.
+    this->openNetplayLauncher(1);
 }
 
 void MainWindow::on_Action_Netplay_ViewSession(void)
@@ -4444,6 +4726,60 @@ void MainWindow::on_Action_Netplay_ViewSession(void)
     {
         this->netplaySessionDialog->show();
     }
+#endif
+}
+
+#ifdef NETPLAY
+void MainWindow::ensureRollbackLobbyDialog()
+{
+    if (this->rollbackLobbyDialog != nullptr)
+    {
+        return;
+    }
+
+    // No parent — the lobby is its own top-level window with independent
+    // Z-order and taskbar entry, so the emulator can come to the
+    // foreground when running. Lifetime is managed in MainWindow::~.
+    this->rollbackLobbyDialog = new Dialog::RollbackLobbyDialog(nullptr);
+    this->rollbackLobbyDialog->setAttribute(Qt::WA_DeleteOnClose, false);
+    // Route the lobby's match-ready signal to the lobby-specific slot.
+    // That slot calls SetLobbyNetplay (LOBBY| address prefix) so
+    // CoreStartEmulation uses GekkoNet's default UDP adapter instead
+    // of the n02-backed P2P transport.
+    connect(this->rollbackLobbyDialog, &Dialog::RollbackLobbyDialog::matchReady,
+            this, &MainWindow::on_Lobby_SessionRequested);
+    // "Close Game" button (or peer-drop) → tear down emulation locally.
+    connect(this->rollbackLobbyDialog, &Dialog::RollbackLobbyDialog::closeMatchRequested,
+            this, [this]() {
+                if (this->emulationThread && this->emulationThread->isRunning())
+                    CoreStopEmulation();
+            });
+    // Remote room chat → in-game chat overlay (mirrors the P2P chat overlay).
+    connect(this->rollbackLobbyDialog, &Dialog::RollbackLobbyDialog::roomChatReceived,
+            this, &MainWindow::on_Lobby_RoomChatReceived);
+    // Spectating a broadcast match (streaming krec playback).
+    connect(this->rollbackLobbyDialog, &Dialog::RollbackLobbyDialog::spectateLaunch,
+            this, &MainWindow::on_Lobby_SpectateLaunch);
+    connect(this->rollbackLobbyDialog, &Dialog::RollbackLobbyDialog::spectateStreamData,
+            this, &MainWindow::on_Lobby_SpectateData);
+    connect(this->rollbackLobbyDialog, &Dialog::RollbackLobbyDialog::spectateStreamKeyframe,
+            this, &MainWindow::on_Lobby_SpectateKeyframe);
+    connect(this->rollbackLobbyDialog, &Dialog::RollbackLobbyDialog::spectateStreamClosed,
+            this, &MainWindow::on_Lobby_SpectateClosed);
+}
+#endif
+
+void MainWindow::on_Action_Rollback_Lobby(void)
+{
+#ifdef NETPLAY
+    this->ensureRollbackLobbyDialog();
+    // Refresh ROM library on every open so newly-added games show up.
+    this->rollbackLobbyDialog->setRomLibrary(this->ui_Widget_RomBrowser->GetModelData());
+    // The lobby shows its own inline connect screen (username + Connect) when
+    // not yet connected, then transforms into the live lobby in-place.
+    this->rollbackLobbyDialog->show();
+    this->rollbackLobbyDialog->raise();
+    this->rollbackLobbyDialog->activateWindow();
 #endif
 }
 
@@ -4463,6 +4799,10 @@ void MainWindow::on_Kaillera_GameStarted(QString gameName, int playerNum, int to
             "Could not find ROM: " + gameName + "\n\nPlease add it to your ROM directory and refresh the list.");
         // Just end the Kaillera game - full cleanup happens when dialog closes
         CoreEndKailleraGame();
+        // A spectate session can't proceed without the ROM — tear it down so its
+        // driver timer doesn't spin forever.
+        if (this->ui_SpectateActive)
+            this->stopLobbySpectate();
         return;
     }
 
@@ -4490,7 +4830,27 @@ void MainWindow::on_Kaillera_GameStarted(QString gameName, int playerNum, int to
 
 void MainWindow::on_Rollback_SessionRequested(QString gameName, QString remoteAddress, int localPort, int remotePort, int localPlayer, int frameDelay, int predictionWindow)
 {
+    {
+        char buf[512];
+        std::snprintf(buf, sizeof(buf),
+            "Lobby→Session: game='%s' remote=%s:%d localPort=%d slot=%d delay=%d pred=%d emuRunning=%d launchActive=%d",
+            gameName.toUtf8().constData(),
+            remoteAddress.toUtf8().constData(),
+            remotePort, localPort, localPlayer, frameDelay, predictionWindow,
+            int(this->emulationThread && this->emulationThread->isRunning()),
+            int(this->ui_RollbackNetplayLaunchActive));
+        CoreAddCallbackMessage(CoreDebugMessageType::Info, buf);
+    }
+
     QString romFile = this->findRomByName(gameName);
+    {
+        char buf[1024];
+        std::snprintf(buf, sizeof(buf),
+            "Lobby→Session findRomByName('%s') => '%s'",
+            gameName.toUtf8().constData(),
+            romFile.toUtf8().constData());
+        CoreAddCallbackMessage(CoreDebugMessageType::Info, buf);
+    }
     if (romFile.isEmpty())
     {
         this->showErrorMessage("ROM Not Found",
@@ -4500,6 +4860,8 @@ void MainWindow::on_Rollback_SessionRequested(QString gameName, QString remoteAd
 
     if (this->emulationThread->isRunning())
     {
+        CoreAddCallbackMessage(CoreDebugMessageType::Info,
+            "Lobby→Session: emulation thread running — stopping and retrying");
         CoreStopEmulation();
         QTimer::singleShot(50, this,
             [this, gameName, remoteAddress, localPort, remotePort, localPlayer, frameDelay, predictionWindow]()
@@ -4511,6 +4873,8 @@ void MainWindow::on_Rollback_SessionRequested(QString gameName, QString remoteAd
 
     if (this->ui_RollbackNetplayLaunchActive)
     {
+        CoreAddCallbackMessage(CoreDebugMessageType::Info,
+            "Lobby→Session: launch already active — bailing out");
         return;
     }
 
@@ -4522,10 +4886,126 @@ void MainWindow::on_Rollback_SessionRequested(QString gameName, QString remoteAd
         this->ui_CheckVideoSizeTimerId = 0;
     }
 
+    CoreAddCallbackMessage(CoreDebugMessageType::Info,
+        "Lobby→Session: launching emulation thread (rollback session)");
 #ifdef _WIN32
     OnScreenDisplaySetKailleraPortLabels(2, GetLiveKailleraPortLabelNames());
 #endif
     this->emulationThread->SetGekkoNetplay(remoteAddress, localPort, remotePort, localPlayer, frameDelay, predictionWindow);
+    this->launchEmulationThread(romFile, "", false, -1, true);
+}
+
+// Lobby-driven session start. Same flow as on_Rollback_SessionRequested
+// but routes through SetLobbyNetplay so CoreStartEmulation picks the
+// LOBBY| branch and uses GekkoNet's built-in UDP transport instead of
+// the n02 P2P transport (which the lobby never initializes).
+// remotePeers contains N-1 entries, each pre-formatted as "<slot>,<ip>,<port>".
+void MainWindow::on_Lobby_SessionRequested(QString gameName, QString romFile, QStringList remotePeers, int localPort, int localPlayer, int frameDelay, int predictionWindow)
+{
+    {
+        char buf[768];
+        std::snprintf(buf, sizeof(buf),
+            "Lobby→LobbySession: game='%s' rom='%s' peers=%d (%s) localPort=%d slot=%d delay=%d pred=%d emuRunning=%d launchActive=%d",
+            gameName.toUtf8().constData(),
+            romFile.toUtf8().constData(),
+            int(remotePeers.size()),
+            remotePeers.join("; ").toUtf8().constData(),
+            localPort, localPlayer, frameDelay, predictionWindow,
+            int(this->emulationThread && this->emulationThread->isRunning()),
+            int(this->ui_RollbackNetplayLaunchActive));
+        CoreAddCallbackMessage(CoreDebugMessageType::Info, buf);
+    }
+
+    // The lobby resolved romFile from the room's MD5 (localRomPathForMd5), so it
+    // points at the byte-identical ROM every seat verified they have — including
+    // romhacks absent from the database, where findRomByName(gameName) fails
+    // because the display name is the file's name, not the GoodName it matches.
+    // Fall back to the name lookup only if the path somehow arrived empty.
+    if (romFile.isEmpty())
+        romFile = this->findRomByName(gameName);
+    if (romFile.isEmpty())
+    {
+        this->showErrorMessage("ROM Not Found",
+            "Could not find ROM: " + gameName + "\n\nPlease add it to your ROM directory and refresh the list.");
+        // The lobby flagged itself "awaiting emulation" before emitting
+        // matchReady; clear it so the room doesn't stay stuck on "Connecting…".
+#ifdef NETPLAY
+        if (this->rollbackLobbyDialog != nullptr)
+            this->rollbackLobbyDialog->notifyEmulationFinished();
+#endif
+        return;
+    }
+
+    if (this->emulationThread->isRunning())
+    {
+        // ~2 s of 50 ms retries. If the previous game still won't stop after
+        // that it's wedged; bail out gracefully rather than retry forever (which
+        // left a hung game running in the background).
+        if (++this->ui_RollbackRelaunchAttempts > 40)
+        {
+            this->ui_RollbackRelaunchAttempts = 0;
+            CoreAddCallbackMessage(CoreDebugMessageType::Error,
+                "Lobby→LobbySession: previous emulation won't stop — giving up to avoid a hung instance");
+            this->showErrorMessage("Couldn't start match",
+                "The previous game is still shutting down. Please wait a moment and try again.");
+#ifdef NETPLAY
+            if (this->rollbackLobbyDialog != nullptr)
+                this->rollbackLobbyDialog->notifyEmulationFinished();
+#endif
+            return;
+        }
+        CoreAddCallbackMessage(CoreDebugMessageType::Info,
+            "Lobby→LobbySession: emulation thread running — stopping and retrying");
+        CoreStopEmulation();
+        QTimer::singleShot(50, this,
+            [this, gameName, romFile, remotePeers, localPort, localPlayer, frameDelay, predictionWindow]()
+            {
+                this->on_Lobby_SessionRequested(gameName, romFile, remotePeers, localPort, localPlayer, frameDelay, predictionWindow);
+            });
+        return;
+    }
+    this->ui_RollbackRelaunchAttempts = 0;
+
+    if (this->ui_RollbackNetplayLaunchActive)
+    {
+        CoreAddCallbackMessage(CoreDebugMessageType::Info,
+            "Lobby→LobbySession: launch already active — bailing out");
+        return;
+    }
+
+    this->ui_RollbackNetplayLaunchActive = true;
+    this->ui_LobbyNetplaySession = true;
+
+    if (this->ui_CheckVideoSizeTimerId != 0)
+    {
+        this->killTimer(this->ui_CheckVideoSizeTimerId);
+        this->ui_CheckVideoSizeTimerId = 0;
+    }
+
+    CoreAddCallbackMessage(CoreDebugMessageType::Info,
+        "Lobby→LobbySession: launching emulation thread (lobby UDP transport)");
+
+    // Open a .krec for this match if the player ticked "Record game" in the lobby
+    // room. recordingOpen self-gates on the shared recording flag and writes the
+    // same KRC1 header the p2p / kaillera paths do; the seated player names were
+    // captured in the lobby's onMatchBegin. Point n02 at the configured records
+    // dir + app id first, since the lobby path never runs CoreInitKaillera.
+    n02::setRecordsDirectory(CoreGetKailleraRecordsDirectory());
+    {
+        const std::string recAppName = "RMG-K " + CoreGetVersion();
+        n02::recordingOpen(recAppName.c_str(), gameName.toStdString().c_str(),
+                           localPlayer, int(remotePeers.size()) + 1);
+    }
+
+#ifdef _WIN32
+    // Label the OSD ports with the seated players' usernames. The lobby's
+    // onMatchBegin captured them (slot-indexed) into recording_player_names; the
+    // Kaillera and direct-rollback paths set the labels the same way, but this
+    // lobby path was missing it — so port labels never appeared in lobby matches.
+    OnScreenDisplaySetKailleraPortLabels(int(remotePeers.size()) + 1, GetLiveKailleraPortLabelNames());
+#endif
+
+    this->emulationThread->SetLobbyNetplay(remotePeers, localPort, localPlayer, frameDelay, predictionWindow);
     this->launchEmulationThread(romFile, "", false, -1, true);
 }
 
@@ -4572,6 +5052,29 @@ void MainWindow::on_Kaillera_ChatReceived(QString nickname, QString message)
         const std::string chatLine = "<" + nickname.toStdString() + "> " + message.toStdString();
         OnScreenDisplaySetKailleraChatMessage(chatLine);
     }
+}
+
+void MainWindow::on_Lobby_RoomChatReceived(QString nickname, QString message)
+{
+    // Mirror the lobby's room chat into the in-game overlay. roomChatReceived
+    // only fires while we're in a lobby room, so a running game here is the
+    // lobby match — gate on emulation alone (the lobby-session flag can briefly
+    // race during a rematch relaunch).
+    if (this->emulationThread == nullptr || !this->emulationThread->isRunning())
+    {
+        return;
+    }
+
+    nickname = nickname.trimmed();
+    message = NormalizeOsdKailleraChatMessage(message);
+
+    // Carry room chat into the krec so broadcast spectators (and saved replays)
+    // see it too — a no-op unless a recording is open. The spectator's playback
+    // routes the embedded 0x08 record to its OSD like any other chat line.
+    n02::recordingQueueChat(nickname.toUtf8().constData(), message.toUtf8().constData());
+
+    const std::string chatLine = "<" + nickname.toStdString() + "> " + message.toStdString();
+    OnScreenDisplaySetKailleraChatMessage(chatLine);
 }
 
 void MainWindow::on_Kaillera_PlayerDropped(QString nickname, int playerNum)
@@ -4627,8 +5130,10 @@ bool MainWindow::handleNetplayChatKeyPress(QKeyEvent *event)
         return false;
     }
 
-    if (this->kailleraSessionManager == nullptr ||
-        !this->kailleraSessionManager->isGameActive())
+    const bool lobbySession = this->ui_LobbyNetplaySession;
+    const bool kailleraSession = (this->kailleraSessionManager != nullptr &&
+                                  this->kailleraSessionManager->isGameActive());
+    if (!lobbySession && !kailleraSession)
     {
         return false;
     }
@@ -4648,31 +5153,45 @@ bool MainWindow::handleNetplayChatKeyPress(QKeyEvent *event)
             if (!message.isEmpty())
             {
                 const QString normalizedMessage = NormalizeOsdKailleraChatMessage(message);
-                this->kailleraSessionManager->sendChatMessage(normalizedMessage);
-
-                const QString localNickname = QString::fromStdString(CoreSettingsGetStringValue(SettingsID::Kaillera_Username)).trimmed();
-                const bool useImmediateLocalEcho = (n02::getActiveMode() != 1);
-                if (useImmediateLocalEcho && !localNickname.isEmpty())
+                if (lobbySession)
                 {
-                    const auto now = std::chrono::steady_clock::now();
-                    while (!this->ui_PendingLocalChatEchoes.empty())
+                    // Lobby room chat: just send over the lobby socket. The
+                    // server relays room chat back to every member (including
+                    // us), so our own line reaches the overlay via the normal
+                    // receive path — no local echo needed (and it would double).
+                    if (this->rollbackLobbyDialog != nullptr)
                     {
-                        const auto age = now - this->ui_PendingLocalChatEchoes.front().time;
-                        if (age <= kLocalEchoMaxAge)
+                        this->rollbackLobbyDialog->sendRoomChat(normalizedMessage);
+                    }
+                }
+                else
+                {
+                    this->kailleraSessionManager->sendChatMessage(normalizedMessage);
+
+                    const QString localNickname = QString::fromStdString(CoreSettingsGetStringValue(SettingsID::Kaillera_Username)).trimmed();
+                    const bool useImmediateLocalEcho = (n02::getActiveMode() != 1);
+                    if (useImmediateLocalEcho && !localNickname.isEmpty())
+                    {
+                        const auto now = std::chrono::steady_clock::now();
+                        while (!this->ui_PendingLocalChatEchoes.empty())
                         {
-                            break;
+                            const auto age = now - this->ui_PendingLocalChatEchoes.front().time;
+                            if (age <= kLocalEchoMaxAge)
+                            {
+                                break;
+                            }
+                            this->ui_PendingLocalChatEchoes.pop_front();
                         }
-                        this->ui_PendingLocalChatEchoes.pop_front();
-                    }
 
-                    this->ui_PendingLocalChatEchoes.push_back({normalizedMessage, std::chrono::steady_clock::now()});
-                    while (this->ui_PendingLocalChatEchoes.size() > kLocalEchoMaxEntries)
-                    {
-                        this->ui_PendingLocalChatEchoes.pop_front();
-                    }
+                        this->ui_PendingLocalChatEchoes.push_back({normalizedMessage, std::chrono::steady_clock::now()});
+                        while (this->ui_PendingLocalChatEchoes.size() > kLocalEchoMaxEntries)
+                        {
+                            this->ui_PendingLocalChatEchoes.pop_front();
+                        }
 
-                    const std::string chatLine = "<" + localNickname.toStdString() + "> " + normalizedMessage.toStdString();
-                    OnScreenDisplaySetKailleraChatMessageImmediate(chatLine);
+                        const std::string chatLine = "<" + localNickname.toStdString() + "> " + normalizedMessage.toStdString();
+                        OnScreenDisplaySetKailleraChatMessageImmediate(chatLine);
+                    }
                 }
             }
             this->closeNetplayChatPrompt();
@@ -4911,6 +5430,15 @@ void MainWindow::on_Emulation_Started(void)
 
     this->ui_MessageBoxList.clear();
     this->ui_DebugCallbackErrors.clear();
+
+#ifdef NETPLAY
+    if (this->rollbackLobbyDialog != nullptr)
+    {
+        // No-op if no lobby-driven match is awaiting (Kaillera / solo paths
+        // also fire this signal; the dialog gates internally).
+        this->rollbackLobbyDialog->notifyEmulationStarted();
+    }
+#endif
 }
 
 void MainWindow::on_Emulation_Finished(bool ret, QString error)
@@ -4931,6 +5459,26 @@ void MainWindow::on_Emulation_Finished(bool ret, QString error)
     this->ui_RollbackLivePumpActive = false;
     this->ui_RollbackNetplayRoomActive = false;
     this->ui_RollbackNetplayLaunchActive = false;
+
+    // If this was a spectate session, tear it down (no-op otherwise). Emulation
+    // already stopped, so this just kills the timer, resets speed, and notifies
+    // the lobby. Safe before the recording/lobby handling below.
+    this->stopLobbySpectate();
+
+    if (this->ui_LobbyNetplaySession)
+    {
+        // The GekkoNet lobby path appends inputs straight to the .krec via
+        // n02::recordingWriteInputs and never reaches n02's game-end close, so
+        // finalize the recording here (no-op when nothing was recorded).
+        n02::recordingClose();
+    }
+    this->ui_LobbyNetplaySession = false;
+
+    if (this->rollbackLobbyDialog != nullptr)
+    {
+        // No-op when no lobby-driven match is in progress.
+        this->rollbackLobbyDialog->notifyEmulationFinished();
+    }
     OnScreenDisplayClearKailleraPortLabels();
 #endif // NETPLAY
 

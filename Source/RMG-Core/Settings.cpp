@@ -59,23 +59,24 @@ static bool l_InputPluginSwitchRequested = false;
 // Local Functions
 //
 
-#define SETTING_SECTION_GUI         "Rosalie's Mupen GUI"
-#define SETTING_SECTION_NETPLAY     SETTING_SECTION_GUI  " Netplay"
-#define SETTING_SECTION_CORE        SETTING_SECTION_GUI  " Core"
-#define SETTING_SECTION_OVERLAY     SETTING_SECTION_CORE " Overlay"
-#define SETTING_SECTION_KEYBIND     SETTING_SECTION_GUI  " KeyBindings"
-#define SETTING_SECTION_ROMBROWSER  SETTING_SECTION_GUI  " RomBrowser"
-#define SETTING_SECTION_SETTINGS    SETTING_SECTION_CORE " Settings"
-#define SETTING_SECTION_64DD        SETTING_SECTION_CORE " 64DD"
-#define SETTING_SECTION_PIF         SETTING_SECTION_CORE " PIF"
-#define SETTING_SECTION_GB          SETTING_SECTION_CORE " Gameboy"
-#define SETTING_SECTION_M64P        "Core"
-#define SETTING_SECTION_AUDIO       SETTING_SECTION_GUI  " - Audio Plugin"
-#define SETTING_SECTION_INPUT       SETTING_SECTION_GUI  " - Input Plugin"
-#define SETTING_SECTION_GCA         SETTING_SECTION_GUI  " - GameCube Adapter Input Plugin"
-#define SETTING_SECTION_KAILLERA    SETTING_SECTION_GUI  " Kaillera"
-#define SETTING_SECTION_ROLLBACK    SETTING_SECTION_GUI  " Rollback"
-#define SETTING_SECTION_RSP         "Rsp-HLE"
+#define SETTING_SECTION_GUI             "Rosalie's Mupen GUI"
+#define SETTING_SECTION_NETPLAY         SETTING_SECTION_GUI  " Netplay"
+#define SETTING_SECTION_CORE            SETTING_SECTION_GUI  " Core"
+#define SETTING_SECTION_OVERLAY         SETTING_SECTION_CORE " Overlay"
+#define SETTING_SECTION_KEYBIND         SETTING_SECTION_GUI  " KeyBindings"
+#define SETTING_SECTION_ROMBROWSER      SETTING_SECTION_GUI  " RomBrowser"
+#define SETTING_SECTION_SETTINGS        SETTING_SECTION_CORE " Settings"
+#define SETTING_SECTION_64DD            SETTING_SECTION_CORE " 64DD"
+#define SETTING_SECTION_PIF             SETTING_SECTION_CORE " PIF"
+#define SETTING_SECTION_GB              SETTING_SECTION_CORE " Gameboy"
+#define SETTING_SECTION_M64P            "Core"
+#define SETTING_SECTION_AUDIO           SETTING_SECTION_GUI  " - Audio Plugin"
+#define SETTING_SECTION_INPUT           SETTING_SECTION_GUI  " - Input Plugin"
+#define SETTING_SECTION_GCA             SETTING_SECTION_GUI  " - GameCube Adapter Input Plugin"
+#define SETTING_SECTION_KAILLERA        SETTING_SECTION_GUI  " Kaillera"
+#define SETTING_SECTION_ROLLBACK        SETTING_SECTION_GUI  " Rollback"
+#define SETTING_SECTION_RAPHNET_INPUT   "Input-RaphnetRaw"
+#define SETTING_SECTION_RSP             "Rsp-HLE"
 
 // retrieves l_Setting from settingId
 static l_Setting get_setting(SettingsID settingId)
@@ -352,6 +353,18 @@ static l_Setting get_setting(SettingsID settingId)
     case SettingsID::Rollback_VerboseGlideInputLogging:
         setting = {SETTING_SECTION_ROLLBACK, "VerboseGlideInputLogging", false};
         break;
+    case SettingsID::Rollback_StallDiagnostics:
+        setting = {SETTING_SECTION_ROLLBACK, "StallDiagnostics", false};
+        break;
+    case SettingsID::Rollback_PacingTrace:
+        setting = {SETTING_SECTION_ROLLBACK, "PacingTrace", false};
+        break;
+    case SettingsID::Rollback_PacingMode:
+        // 0 = symmetric/aggressive, 1 = asymmetric/Slippi-style ("Smooth").
+        // The engine hardwires Smooth and ignores this setting; it only feeds
+        // the lobby's host-authoritative room-settings plumbing.
+        setting = {SETTING_SECTION_ROLLBACK, "PacingMode", 1};
+        break;
 
     case SettingsID::Core_GFX_Plugin:
         setting = {SETTING_SECTION_CORE, "GFX_Plugin", 
@@ -389,6 +402,12 @@ static l_Setting get_setting(SettingsID settingId)
 #endif // _WIN32
                   };
         break;
+		
+    case SettingsID::RaphnetInput_InputMode:
+        setting = {SETTING_SECTION_RAPHNET_INPUT, "InputMode", 0,
+            "0 = Default; 1 = Multithreaded/Cached/Adaptive/Nopak (recommended for USB latency > 2ms)"};
+        break;
+
 
     case SettingsID::Core_OverrideGameSpecificSettings:
         setting = {SETTING_SECTION_CORE, "OverrideGameSpecificSettings", false};

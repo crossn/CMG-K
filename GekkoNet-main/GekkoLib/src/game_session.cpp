@@ -339,6 +339,23 @@ void Gekko::GameSession::AddDisconnectedPlayerInputs()
 	}
 }
 
+void Gekko::GameSession::DisconnectPlayer(i32 handle)
+{
+	// Mirror MessageSystem::HandleTooFarBehindActors for a single actor, but
+	// without waiting out DISCONNECT_TIMEOUT — the caller already knows the peer
+	// is gone (e.g. the lobby server reported it). Once marked Disconnected,
+	// AddDisconnectedPlayerInputs feeds idle input for them and the session
+	// advances immediately instead of stalling on their missing frames.
+	for (auto& actor : _msg.remotes) {
+		if (actor->handle == handle && actor->GetStatus() == Connected) {
+			_msg.session_events.AddPlayerDisconnectedEvent(actor->handle);
+			actor->SetStatus(Disconnected);
+			actor->sync_num = 0;
+			return;
+		}
+	}
+}
+
 void Gekko::GameSession::SendSpectatorInputs()
 {
 	const Frame current = _msg.GetLastAddedInput(true) + 1;

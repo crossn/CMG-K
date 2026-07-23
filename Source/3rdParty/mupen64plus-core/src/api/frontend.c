@@ -411,6 +411,16 @@ EXPORT m64p_error CALL CoreDoCommand(m64p_command Command, int ParamInt, void *P
                 return M64ERR_INVALID_STATE;
             if (ParamPtr == NULL)
                 return M64ERR_INPUT_ASSERT;
+            /* checksum == ROLLBACK_SAVE_FULL_SENTINEL: spectate keyframe wants a FULL
+             * normal-format savestate (TLB LUT included, zeroed) for a cold spectator,
+             * not the stripped rollback variant. checksum is an output of the save, so
+             * overloading it as an input flag is free (no new command / ABI change). */
+            if (((m64p_rollback_state*)ParamPtr)->checksum == ROLLBACK_SAVE_FULL_SENTINEL)
+                return savestates_save_full_buffer(
+                    &((m64p_rollback_state*)ParamPtr)->buffer,
+                    &((m64p_rollback_state*)ParamPtr)->len,
+                    &((m64p_rollback_state*)ParamPtr)->checksum,
+                    ((m64p_rollback_state*)ParamPtr)->frame) ? M64ERR_SUCCESS : M64ERR_INTERNAL;
             return savestates_save_rollback_buffer(
                 &((m64p_rollback_state*)ParamPtr)->buffer,
                 &((m64p_rollback_state*)ParamPtr)->len,
@@ -421,6 +431,22 @@ EXPORT m64p_error CALL CoreDoCommand(m64p_command Command, int ParamInt, void *P
                 return M64ERR_INVALID_STATE;
             if (ParamPtr == NULL)
                 return M64ERR_INPUT_ASSERT;
+            /* checksum == ROLLBACK_LOAD_DEFER_SENTINEL: stage the load for the next safe
+             * interrupt boundary instead of loading now. The spectate keyframe path runs
+             * this from inside an SI DMA, where a synchronous load corrupts the restored
+             * state; deferring matches how normal savestate loads are timed. */
+            if (((m64p_rollback_state*)ParamPtr)->checksum == ROLLBACK_LOAD_DEFER_SENTINEL) {
+                /* Stash the buffer, then stage it as a normal load job. gen_interrupt's
+                 * proven `job==load -> savestates_load()` check (the same path single-player
+                 * loads use) drains it at a clean between-blocks boundary; savestates_load()
+                 * dispatches savestates_type_rollback_buffer to the stashed buffer. */
+                savestates_set_pending_rollback_load(
+                    ((m64p_rollback_state*)ParamPtr)->buffer,
+                    ((m64p_rollback_state*)ParamPtr)->len);
+                savestates_set_job(savestates_job_load, savestates_type_rollback_buffer, NULL);
+                DebugMessage(M64MSG_INFO, "RMGK-DEFER: deferred rollback load staged as load job");
+                return M64ERR_SUCCESS;
+            }
             return savestates_load_rollback_buffer(
                 ((m64p_rollback_state*)ParamPtr)->buffer,
                 ((m64p_rollback_state*)ParamPtr)->len) ? M64ERR_SUCCESS : M64ERR_INTERNAL;

@@ -8,11 +8,17 @@
 #define PB_MSG_STATUS	4
 #define PB_MSG_VERBOSE	5
 
+#define PB_INPUT_MODE_RAW_PIF 0
+#define PB_INPUT_MODE_CACHED_GETKEYS 1
+
 typedef void (*pb_debugFunc)(int level, const char *message, ...);
 
 int pb_init(pb_debugFunc debugFn);
 int pb_shutdown(void);
 int pb_scanControllers(void);
+void pb_setInputMode(int mode);
+int pb_getInputMode(void);
+int pb_usesRawData(void);
 int pb_getKeys(int Control, unsigned int *Keys);
 int pb_readController(int Control, unsigned char *Command);
 int pb_controllerCommand(int Control, unsigned char *Command);

@@ -19,9 +19,13 @@
 #include <cstring>
 #include <cstdlib>
 #include <climits>
+#include <cstdint>
+#include <atomic>
+#include <mutex>
 #include <fstream>
 #include <filesystem>
 #include <vector>
+#include <utility>
 
 #include "common/nThread.h"
 #include "common/k_socket.h"
@@ -104,6 +108,28 @@ char * gamelist = 0;
 static std::ofstream recording_file;
 static std::filesystem::path recording_directory_path = std::filesystem::path("records");
 
+// Optional sink that receives the exact same bytes written to the .krec
+// (header + every flushed record). Used by the broadcast path to stream a live
+// match to the lobby server. Set/cleared on the UI thread only while emulation
+// is stopped; invoked on the emulation thread during play. Null when not
+// broadcasting (the common case), so it costs a single null-check per flush.
+static std::function<void(const void*, int)> recording_stream_sink;
+
+// Count of input (0x12) records written so far for the current recording — i.e.
+// the broadcaster's live frame in the same units a spectator's playback counts.
+// Bumped on the emulation thread per record, read on the UI thread by the
+// broadcast drain to stamp BROADCAST_DATA so spectators know the live edge.
+static std::atomic<int> recording_frame_count{0};
+
+// Lobby room chat arrives on the UI thread, but RecordingBuffer is only safe to
+// touch on the emulation thread. Queue chat here and drain it into the krec (as
+// 0x08 records) on the emulation thread just before the next input frame, so the
+// buffer always has a single writer. recording_active gates enqueues so the
+// queue can't grow without bound while nothing is being recorded.
+static std::atomic<bool> recording_active{false};
+static std::mutex recording_chat_mutex;
+static std::vector<std::pair<std::string, std::string>> recording_chat_queue;
+
 static std::filesystem::path pathFromUtf8String(const std::string& utf8) {
 #if defined(__cpp_char8_t)
     std::u8string converted;
@@ -159,14 +185,22 @@ public:
 
     void write() {
         if (recording_file.is_open()) {
-            recording_file.write(buffer, len());
+            int n = len();
+            recording_file.write(buffer, n);
             recording_file.flush();
+            if (n > 0 && recording_stream_sink)
+                recording_stream_sink(buffer, n);
         }
         reset();
     }
 } RecordingBuffer;
 
 static void close_recording() {
+    recording_active.store(false, std::memory_order_release);
+    {
+        std::lock_guard<std::mutex> lk(recording_chat_mutex);
+        recording_chat_queue.clear();
+    }
     if (recording_file.is_open()) {
         if (RecordingBuffer.len() > 0)
             RecordingBuffer.write();
@@ -179,12 +213,33 @@ static void close_recording() {
     }
 }
 
-static int gameCallbackWrapper(char *game, int player, int numplayers_arg) {
-    close_recording();
+// Drain queued chat into the open krec as 0x08 records (nick\0 msg\0). Called on
+// the emulation thread before an input frame, so RecordingBuffer keeps a single
+// writer. Each record is flushed on its own; lines are length-bounded at enqueue
+// time so a record always fits RecordingBuffer's 500-byte buffer.
+static void drain_recording_chat() {
+    std::vector<std::pair<std::string, std::string>> pending;
+    {
+        std::lock_guard<std::mutex> lk(recording_chat_mutex);
+        if (recording_chat_queue.empty())
+            return;
+        pending.swap(recording_chat_queue);
+    }
+    for (auto& c : pending) {
+        RecordingBuffer.put_char(8);
+        RecordingBuffer.put_bytes(const_cast<char*>(c.first.c_str()),  (int)c.first.size()  + 1);
+        RecordingBuffer.put_bytes(const_cast<char*>(c.second.c_str()), (int)c.second.size() + 1);
+        RecordingBuffer.write();
+    }
+}
 
-    if (active_mod.RecordingEnabled && active_mod.RecordingEnabled()) {
-        n02_TRACE();
+// Open a fresh .krec recording and write its KRC1 header. The caller fills the
+// recording_player_names global first (used for both the filename and header).
+// Shared by the n02 game-start path (gameCallbackWrapper) and the rollback
+// lobby path (n02::recordingOpen) so every transport writes an identical layout.
+static void openRecordingFile(const char* appName, const char* game, int player, int numplayers_arg) {
         RecordingBuffer.reset();
+        recording_frame_count.store(0, std::memory_order_relaxed);
 
         // Create records directory
         std::filesystem::create_directories(recording_directory_path);
@@ -285,19 +340,42 @@ static int gameCallbackWrapper(char *game, int player, int numplayers_arg) {
             std::string pathString = recordingPath.string();
             kprintf("recording %s failed", pathString.c_str());
         } else {
-            char GameName[128];
-            strncpy(GameName, (game != NULL) ? game : "", sizeof(GameName) - 1);
-            GameName[sizeof(GameName) - 1] = 0;
+            // Build the 400-byte KRC1 header in one zero-filled buffer. Bounded
+            // strncpy avoids reading past appName/game (which may be shorter than
+            // their 128-byte fields), and writing it in one shot lets the live
+            // broadcast tee capture the header too.
+            char header[400];
+            memset(header, 0, sizeof(header));
+            memcpy(header + 0, "KRC1", 4);
+            if (appName) strncpy(header + 4, appName, 127);   // [4,132)  appName
+            if (game)    strncpy(header + 132, game, 127);    // [132,260) gameName
+            int32_t mytime = (int32_t)time(NULL);
+            memcpy(header + 260, &mytime, 4);                 // [260,264) timestamp
+            memcpy(header + 264, &player, 4);                 // [264,268) local player
+            memcpy(header + 268, &numplayers_arg, 4);         // [268,272) num players
+            memcpy(header + 272, recording_player_names, 128);// [272,400) player names
 
-            recording_file.write("KRC1", 4);
-            recording_file.write(infos_copy.appName ? infos_copy.appName : "", 128);
-            recording_file.write(GameName, 128);
-            time_t mytime = time(NULL);
-            recording_file.write((char*)&mytime, 4);
-            recording_file.write((char*)&player, 4);
-            recording_file.write((char*)&numplayers_arg, 4);
-            recording_file.write((char*)recording_player_names, 128);
+            recording_file.write(header, sizeof(header));
+            recording_file.flush();
+            if (recording_stream_sink)
+                recording_stream_sink(header, (int)sizeof(header));
         }
+
+        // Fresh recording: drop any chat queued before this session and arm chat
+        // capture only if the file actually opened.
+        {
+            std::lock_guard<std::mutex> lk(recording_chat_mutex);
+            recording_chat_queue.clear();
+        }
+        recording_active.store(recording_file.is_open(), std::memory_order_release);
+}
+
+static int gameCallbackWrapper(char *game, int player, int numplayers_arg) {
+    close_recording();
+
+    if (active_mod.RecordingEnabled && active_mod.RecordingEnabled()) {
+        n02_TRACE();
+        openRecordingFile(infos_copy.appName, game, player, numplayers_arg);
         n02_TRACE();
     }
 
@@ -383,77 +461,215 @@ static bool p2p_RecordingEnabled_stub() {
 static bool player_playing = false;
 static bool player_was_dropped[16] = {};
 
+// Playback buffer. Holds the krec bytes in a growable vector and tracks the
+// read / scan cursors as OFFSETS (not raw pointers) so the buffer can grow
+// under a live spectate stream without invalidating any cursor. File playback
+// fills `data` once; streaming appends to it via playbackAppendBytes().
 class PlayBackBufferC {
 public:
-    char* buffer = nullptr;
-    char* ptr = nullptr;
-    char* end = nullptr;
+    std::vector<char> data;          // krec bytes (grows while streaming)
+    size_t pos = 0;                  // read cursor
+    size_t headerSize = 0;
+    size_t scanPos = 0;              // incremental frame-index scan cursor
+    bool   streaming = false;        // live: wait at the live edge, don't end
+    bool   headerParsed = false;
 
-    std::vector<char*> frameIndex;
+    std::vector<size_t> frameIndex;  // offsets of 0x12 (input) records
     int currentFrameIdx = 0;
 
+    void reset_all() {
+        data.clear();
+        pos = 0; headerSize = 0; scanPos = 0;
+        streaming = false; headerParsed = false;
+        frameIndex.clear(); currentFrameIdx = 0;
+    }
+
+    size_t size() const { return data.size(); }
+
     void load_bytes(void* dest, unsigned int len) {
-        if (ptr + 10 < end) {
-            unsigned int avail = (unsigned int)(end - ptr);
-            unsigned int n = (len < avail) ? len : avail;
-            memcpy(dest, ptr, n);
-            ptr += n;
-        }
+        if (pos >= data.size()) return;
+        size_t avail = data.size() - pos;
+        size_t n = (len < avail) ? len : avail;
+        memcpy(dest, data.data() + pos, n);
+        pos += n;
     }
     void load_str(char* dest, unsigned int maxlen) {
-        unsigned int slen = (unsigned int)strlen(ptr) + 1;
+        if (maxlen == 0) return;
+        if (pos >= data.size()) { dest[0] = 0; return; }
+        size_t avail = data.size() - pos;
+        size_t slen = strnlen(data.data() + pos, avail) + 1; // include NUL
         if (slen > maxlen) slen = maxlen;
-        unsigned int avail = (unsigned int)(end - ptr + 1);
         if (slen > avail) slen = avail;
-        load_bytes(dest, slen);
-        dest[slen] = 0;
+        load_bytes(dest, (unsigned int)slen);
+        dest[(slen > 0) ? (slen - 1) : 0] = 0;
     }
-    int load_int() { int x; load_bytes(&x, 4); return x; }
-    unsigned char load_char() { unsigned char x; load_bytes(&x, 1); return x; }
-    unsigned short load_short() { unsigned short x; load_bytes(&x, 2); return x; }
+    int load_int() { int x = 0; load_bytes(&x, 4); return x; }
+    unsigned char load_char() { unsigned char x = 0; load_bytes(&x, 1); return x; }
+    unsigned short load_short() { unsigned short x = 0; load_bytes(&x, 2); return x; }
 } PlayBackBuffer;
+
+// Guards all PlayBackBuffer access. During a live spectate stream the buffer is
+// fed by playbackAppendBytes() on the UI thread while player_MPV() consumes it
+// on the emulation thread; without this lock a vector realloc on one thread races
+// the other's read (use-after-free → corrupted inputs → desync). Recursive
+// because player_MPV() re-enters itself for chat/drop records.
+static std::recursive_mutex playbackMutex;
+
+// Streaming: is a complete next record present at pb.pos? Guards against
+// consuming a record that has only partially arrived at the live edge.
+static bool streamRecordComplete(PlayBackBufferC& pb) {
+    const size_t n = pb.size();
+    size_t p = pb.pos;
+    if (p >= n) return false;
+    unsigned char t = (unsigned char)pb.data[p];
+    if (t == 0x12) {
+        if (p + 3 > n) return false;
+        unsigned short rlen;
+        memcpy(&rlen, pb.data.data() + p + 1, 2);
+        return p + 3 + (size_t)rlen <= n;
+    } else if (t == 0x14) {
+        size_t z = p + 1;
+        while (z < n && pb.data[z] != 0) z++;
+        if (z >= n) return false;     // nick NUL not yet present
+        z++;
+        return z + 4 <= n;
+    } else if (t == 0x08) {
+        size_t z = p + 1;
+        while (z < n && pb.data[z] != 0) z++;
+        if (z >= n) return false;
+        z++;
+        size_t z2 = z;
+        while (z2 < n && pb.data[z2] != 0) z2++;
+        return z2 < n;                // both strings terminated
+    }
+    return false;
+}
+
+// Parse the KRC1/KRC0 header (game name, player number/count). Returns false
+// until enough bytes are present.
+static bool parsePlaybackHeader() {
+    PlayBackBufferC& pb = PlayBackBuffer;
+    if (pb.size() < 272) return false;
+    bool isKRC1 = (memcmp(pb.data.data(), "KRC1", 4) == 0);
+    size_t hs = isKRC1 ? 400 : 272;
+    if (pb.size() < hs) return false;
+
+    pb.pos = 132;
+    pb.load_str(GAME, 128);
+    pb.pos = 264;
+    playerno = pb.load_int();
+    numplayers = pb.load_int();
+
+    // Player names live at [272,400) on KRC1. Copy them into the shared global so
+    // a spectator can label the OSD ports from the stream, just like a live match
+    // does (KRC0 has no names — leave them blank).
+    memset(recording_player_names, 0, sizeof(recording_player_names));
+    if (isKRC1)
+    {
+        memcpy(recording_player_names, pb.data.data() + 272, sizeof(recording_player_names));
+        for (int i = 0; i < 4; i++)
+            recording_player_names[i][31] = '\0';
+    }
+
+    pb.headerSize = hs;
+    pb.pos = hs;
+    pb.scanPos = hs;
+    pb.headerParsed = true;
+    return true;
+}
+
+// Extend frameIndex with any newly-complete records from scanPos forward. Stops
+// at the first partial record, so it's safe to call repeatedly as a live stream
+// grows.
+static void scanFrames() {
+    PlayBackBufferC& pb = PlayBackBuffer;
+    const size_t n = pb.size();
+    const char* d = pb.data.data();
+    size_t scan = pb.scanPos;
+    while (scan < n) {
+        unsigned char t = (unsigned char)d[scan];
+        if (t == 0x12) {
+            if (scan + 3 > n) break;
+            unsigned short rlen;
+            memcpy(&rlen, d + scan + 1, 2);
+            if (scan + 3 + (size_t)rlen > n) break;
+            pb.frameIndex.push_back(scan);
+            scan += 3 + (size_t)rlen;
+        } else if (t == 0x14) {
+            size_t z = scan + 1;
+            while (z < n && d[z] != 0) z++;
+            if (z >= n) break;
+            z++;
+            if (z + 4 > n) break;
+            scan = z + 4;
+        } else if (t == 0x08) {
+            size_t z = scan + 1;
+            while (z < n && d[z] != 0) z++;
+            if (z >= n) break;
+            z++;
+            size_t z2 = z;
+            while (z2 < n && d[z2] != 0) z2++;
+            if (z2 >= n) break;
+            scan = z2 + 1;
+        } else {
+            break;
+        }
+    }
+    pb.scanPos = scan;
+}
 
 static void player_EndGame();
 
 static int player_MPV(void* values, int size) {
-    if (player_playing) {
-        if (PlayBackBuffer.ptr + 10 < PlayBackBuffer.end) {
-            char b = PlayBackBuffer.load_char();
-            if (b == 0x12) {
-                int l = PlayBackBuffer.load_short();
-                if (l < 0) {
-                    player_EndGame();
-                    return -1;
-                }
-                if (l > 0)
-                    PlayBackBuffer.load_bytes((char*)values, l);
-                PlayBackBuffer.currentFrameIdx++;
-                return l;
-            }
-            if (b == 20) {
-                char playernick[100];
-                PlayBackBuffer.load_str(playernick, 100);
-                int pn = PlayBackBuffer.load_int();
-                if (pn >= 1 && pn <= 16)
-                    player_was_dropped[pn - 1] = true;
-                if (pn == playerno) {
-                    player_EndGame();
-                    return -1;
-                }
-                return player_MPV(values, size);
-            }
-            if (b == 8) {
-                char nick[100];
-                char msg[500];
-                PlayBackBuffer.load_str(nick, 100);
-                PlayBackBuffer.load_str(msg, 500);
-                if (infos.chatReceivedCallback)
-                    infos.chatReceivedCallback(nick, msg);
-                return player_MPV(values, size);
-            }
-        } else {
+    std::lock_guard<std::recursive_mutex> lock(playbackMutex);
+    if (!player_playing)
+        return -1;
+
+    PlayBackBufferC& pb = PlayBackBuffer;
+
+    // File playback uses the historical "more than 10 bytes left" guard; a live
+    // stream instead checks whether the full next record has actually arrived.
+    bool canRead = pb.streaming ? streamRecordComplete(pb)
+                                : (pb.pos + 10 < pb.size());
+    if (!canRead) {
+        if (pb.streaming)
+            return 0;          // at the live edge: idle this frame, don't end
+        player_EndGame();
+        return -1;
+    }
+
+    unsigned char b = pb.load_char();
+    if (b == 0x12) {
+        int l = pb.load_short();
+        if (l < 0) {
             player_EndGame();
+            return -1;
         }
+        if (l > 0)
+            pb.load_bytes((char*)values, l);
+        pb.currentFrameIdx++;
+        return l;
+    }
+    if (b == 20) {
+        char playernick[100];
+        pb.load_str(playernick, 100);
+        int pn = pb.load_int();
+        if (pn >= 1 && pn <= 16)
+            player_was_dropped[pn - 1] = true;
+        if (pn == playerno) {
+            player_EndGame();
+            return -1;
+        }
+        return player_MPV(values, size);
+    }
+    if (b == 8) {
+        char nick[100];
+        char msg[500];
+        pb.load_str(nick, 100);
+        pb.load_str(msg, 500);
+        if (infos.chatReceivedCallback)
+            infos.chatReceivedCallback(nick, msg);
+        return player_MPV(values, size);
     }
     return -1;
 }
@@ -471,10 +687,7 @@ static void player_EndGame() {
     }
     KSSDFA.input = KSSDFA_END_GAME;
     KSSDFA.state = 0;
-    if (PlayBackBuffer.buffer) {
-        free(PlayBackBuffer.buffer);
-        PlayBackBuffer.buffer = nullptr;
-    }
+    PlayBackBuffer.reset_all();
 }
 
 static bool player_SSDSTEP() {
@@ -490,6 +703,7 @@ static bool player_RecordingEnabled() {
 }
 
 static bool player_play(const char* fn) {
+    std::lock_guard<std::recursive_mutex> lock(playbackMutex);
     if (fn == nullptr)
         return false;
 
@@ -506,71 +720,19 @@ static bool player_play(const char* fn) {
         return false;
     }
 
-    PlayBackBuffer.buffer = (char*)malloc((size_t)len + 66);
-    if (!PlayBackBuffer.buffer) {
-        file.close();
-        return false;
-    }
-
-    file.read(PlayBackBuffer.buffer, len);
+    PlayBackBufferC& pb = PlayBackBuffer;
+    pb.reset_all();
+    pb.data.resize((size_t)len);
+    file.read(pb.data.data(), len);
     file.close();
 
-    PlayBackBuffer.end = PlayBackBuffer.buffer + len;
-
-    // Detect format version
-    bool isKRC1 = (memcmp(PlayBackBuffer.buffer, "KRC1", 4) == 0);
-    size_t headerSize = isKRC1 ? 400 : 272;
-
-    if ((size_t)len < headerSize) {
-        free(PlayBackBuffer.buffer);
-        PlayBackBuffer.buffer = nullptr;
+    if (!parsePlaybackHeader()) {
+        pb.reset_all();
         return false;
     }
+    scanFrames(); // whole file present → indexes every frame
 
-    PlayBackBuffer.ptr = PlayBackBuffer.buffer + 132;
-    PlayBackBuffer.load_str(GAME, 128);
-
-    PlayBackBuffer.ptr = PlayBackBuffer.buffer + 264;
-    playerno = PlayBackBuffer.load_int();
-    numplayers = PlayBackBuffer.load_int();
-
-    // Skip to record data
-    PlayBackBuffer.ptr = PlayBackBuffer.buffer + headerSize;
-
-    // Build frame index for seeking
-    PlayBackBuffer.frameIndex.clear();
-    {
-        char* scan = PlayBackBuffer.buffer + headerSize;
-        while (scan + 1 < PlayBackBuffer.end) {
-            unsigned char type = (unsigned char)*scan;
-            if (type == 0x12) {
-                PlayBackBuffer.frameIndex.push_back(scan);
-                scan++;
-                if (scan + 2 > PlayBackBuffer.end) break;
-                unsigned short rlen = *(unsigned short*)scan;
-                scan += 2;
-                if (rlen > 0) {
-                    if (scan + rlen > PlayBackBuffer.end) break;
-                    scan += rlen;
-                }
-            } else if (type == 0x14) {
-                scan++;
-                while (scan < PlayBackBuffer.end && *scan != 0) scan++;
-                if (scan < PlayBackBuffer.end) scan++;
-                scan += 4;
-            } else if (type == 0x08) {
-                scan++;
-                while (scan < PlayBackBuffer.end && *scan != 0) scan++;
-                if (scan < PlayBackBuffer.end) scan++;
-                while (scan < PlayBackBuffer.end && *scan != 0) scan++;
-                if (scan < PlayBackBuffer.end) scan++;
-            } else {
-                break;
-            }
-        }
-    }
-    PlayBackBuffer.currentFrameIdx = 0;
-
+    pb.streaming = false;
     player_playing = true;
     memset(player_was_dropped, 0, sizeof(player_was_dropped));
 
@@ -580,11 +742,53 @@ static bool player_play(const char* fn) {
 }
 
 static bool player_seekToFrame(int frameIdx) {
+    std::lock_guard<std::recursive_mutex> lock(playbackMutex);
     if (!player_playing) return false;
     if (frameIdx < 0 || frameIdx >= (int)PlayBackBuffer.frameIndex.size()) return false;
-    PlayBackBuffer.ptr = PlayBackBuffer.frameIndex[frameIdx];
+    PlayBackBuffer.pos = PlayBackBuffer.frameIndex[frameIdx];
     PlayBackBuffer.currentFrameIdx = frameIdx;
     return true;
+}
+
+// Live spectate: begin a stream fed incrementally by player_appendStream().
+static bool player_beginStream() {
+    std::lock_guard<std::recursive_mutex> lock(playbackMutex);
+    PlayBackBufferC& pb = PlayBackBuffer;
+    pb.reset_all();
+    pb.streaming = true;
+    player_playing = false; // becomes true once the header has been received
+    memset(player_was_dropped, 0, sizeof(player_was_dropped));
+    return true;
+}
+
+static void player_appendStream(const void* data, int len) {
+    if (data == nullptr || len <= 0)
+        return;
+    std::lock_guard<std::recursive_mutex> lock(playbackMutex);
+    PlayBackBufferC& pb = PlayBackBuffer;
+    if (!pb.streaming)
+        return;
+    const char* p = (const char*)data;
+    pb.data.insert(pb.data.end(), p, p + len);
+    if (!pb.headerParsed) {
+        if (parsePlaybackHeader()) {
+            // Header complete — start the game (state machine fires gameCallback).
+            player_playing = true;
+            KSSDFA.input = KSSDFA_START_GAME;
+        }
+    }
+    if (pb.headerParsed)
+        scanFrames();
+}
+
+static void player_stopStream() {
+    std::lock_guard<std::recursive_mutex> lock(playbackMutex);
+    if (PlayBackBuffer.streaming && player_playing) {
+        player_EndGame();
+    } else {
+        PlayBackBuffer.reset_all();
+        player_playing = false;
+    }
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -775,21 +979,62 @@ int modifyPlayValues(void *values, int size) {
             RecordingBuffer.put_short(siz);
             RecordingBuffer.put_bytes((char*)values, siz);
             RecordingBuffer.write();
+            recording_frame_count.fetch_add(1, std::memory_order_relaxed);
         }
         return siz;
     }
     return -1;
 }
 
+void recordingQueueChat(const char* nick, const char* msg) {
+    if (!recording_active.load(std::memory_order_acquire))
+        return;
+    std::string n(nick ? nick : "");
+    std::string m(msg ? msg : "");
+    // Bound so a 0x08 record always fits RecordingBuffer (500 bytes) and the
+    // playback reader (nick[100] / msg[500]).
+    if (n.size() > 31)  n.resize(31);
+    if (m.size() > 255) m.resize(255);
+    std::lock_guard<std::mutex> lk(recording_chat_mutex);
+    if (recording_chat_queue.size() < 256) // backstop against runaway growth
+        recording_chat_queue.emplace_back(std::move(n), std::move(m));
+}
+
 void recordingWriteInputs(const void* values, int size) {
     if (!recording_file.is_open() || values == nullptr || size <= 0) {
         return;
     }
+    drain_recording_chat(); // flush any queued chat just ahead of this frame
     const short siz = (size > 0x7FFF) ? 0x7FFF : (short)size;
     RecordingBuffer.put_char(0x12);
     RecordingBuffer.put_short(siz);
     RecordingBuffer.put_bytes((char*)values, siz);
     RecordingBuffer.write();
+    recording_frame_count.fetch_add(1, std::memory_order_relaxed);
+}
+
+int recordingFrameCount() {
+    return recording_frame_count.load(std::memory_order_relaxed);
+}
+
+void recordingOpen(const char* appName, const char* gameName, int localPlayer, int numPlayers) {
+    // Close any recording left open from a previous match, then start a fresh
+    // one only when recording is enabled. Mirrors gameCallbackWrapper's gate for
+    // the GekkoNet rollback path, which syncs input via GekkoNet and so never
+    // reaches that callback. The caller fills recording_player_names first.
+    close_recording();
+    if (!n02_kaillera_recording_enabled) {
+        return;
+    }
+    openRecordingFile(appName, gameName, localPlayer, numPlayers);
+}
+
+void recordingClose() {
+    close_recording();
+}
+
+void setRecordingStreamSink(std::function<void(const void*, int)> sink) {
+    recording_stream_sink = std::move(sink);
 }
 
 void chatSend(char *text) {
@@ -865,6 +1110,18 @@ bool playbackLoad(const char* filename) {
     return player_play(filename);
 }
 
+bool playbackBeginStream() {
+    return player_beginStream();
+}
+
+void playbackAppendBytes(const void* data, int len) {
+    player_appendStream(data, len);
+}
+
+void playbackStopStream() {
+    player_stopStream();
+}
+
 bool isPlaybackActive() {
     return player_playing;
 }
@@ -874,11 +1131,22 @@ bool playbackSeekToFrame(int frameIdx) {
 }
 
 int playbackGetCurrentFrame() {
+    std::lock_guard<std::recursive_mutex> lock(playbackMutex);
     return PlayBackBuffer.currentFrameIdx;
 }
 
 int playbackGetTotalFrames() {
+    std::lock_guard<std::recursive_mutex> lock(playbackMutex);
     return (int)PlayBackBuffer.frameIndex.size();
+}
+
+bool playbackHeaderReady() {
+    std::lock_guard<std::recursive_mutex> lock(playbackMutex);
+    return PlayBackBuffer.headerParsed;
+}
+
+int playbackNumPlayers() {
+    return numplayers;
 }
 
 } // namespace n02
