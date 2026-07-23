@@ -23,6 +23,7 @@
 
 #ifdef NETPLAY
 #include "Dialog/Netplay/NetplaySessionDialog.hpp"
+#include "Dialog/Lobby/RollbackLobbyDialog.hpp"
 #include "KailleraSessionManager.hpp"
 #endif // NETPLAY
 #include "Dialog/LogDialog.hpp"
@@ -33,6 +34,7 @@
 #endif // UPDATER
 #include <QGuiApplication>
 #include <QStackedWidget>
+#include <QStringList>
 #include <QCloseEvent>
 #include <QShowEvent>
 #include <QMainWindow>
@@ -142,14 +144,44 @@ class MainWindow : public QMainWindow, private Ui::MainWindow
     Dialog::LogDialog logDialog;
 #ifdef NETPLAY
     Dialog::NetplaySessionDialog* netplaySessionDialog = nullptr;
+    Dialog::RollbackLobbyDialog* rollbackLobbyDialog = nullptr;
     KailleraSessionManager* kailleraSessionManager = nullptr;
     bool ui_AutoStartNetplayOnStartupPending = false;
     bool ui_NetplayChatInputActive = false;
     QString ui_NetplayChatInput;
+    // True while a rollback *lobby* game is running, so the in-game chat
+    // overlay routes through the lobby room chat instead of Kaillera.
+    bool ui_LobbyNetplaySession = false;
     bool ui_RollbackLivePumpPending = false;
     bool ui_RollbackLivePumpActive = false;
     bool ui_RollbackNetplayRoomActive = false;
     bool ui_RollbackNetplayLaunchActive = false;
+    // Bounds the "stop the old game, retry in 50ms" relaunch loop so a previous
+    // emulation that refuses to stop can't spin forever (hung background game).
+    int  ui_RollbackRelaunchAttempts = 0;
+    // Spectating a broadcast match via streaming krec playback (distinct from the
+    // lobby *match* flow above — the spectator runs playback, not GekkoNet).
+    bool    ui_SpectateActive  = false;
+    quint64 ui_SpectateMatchId = 0;
+    int     ui_SpectateTimerId = 0;
+    bool    ui_SpectateNamesShown = false; // OSD port labels set from krec header
+
+    int     ui_SpectateLiveFrame   = 0;     // broadcaster's live krec frame (fast-forward target)
+    bool    ui_SpectateFastForward = false; // true while headless-catching-up to the live edge
+    bool    ui_SpectateBannerPending = false; // 1 video-on tick to bake the "buffering" banner in before going headless
+    // Catch-up loading-bar estimator (reset each time fast-forward engages).
+    int     ui_SpectateInitialBehind = 1;   // backlog (frames) when this catch-up started
+    double  ui_SpectateCatchupRate   = 0.0; // smoothed gap-closing rate (frames/sec)
+    int     ui_SpectateRateLastBehind = 0;  // "behind" at the last rate sample
+    qint64  ui_SpectateRateLastMs     = 0;  // wall-clock of the last rate sample
+    QString ui_SpectateSavedTitle;          // window title to restore after catch-up (bar lives in the title while headless)
+    // Lazily creates rollbackLobbyDialog and wires its signals (once).
+    void ensureRollbackLobbyDialog();
+    // Creates the KailleraSessionManager + callback wiring if absent. Shared by
+    // the playback dialog and the lobby spectate path (both drive n02 mode 2).
+    void ensureKailleraSessionManager();
+    // Lobby spectate lifecycle.
+    void stopLobbySpectate();
     struct PendingLocalChatEcho
     {
         QString message;
@@ -159,6 +191,11 @@ class MainWindow : public QMainWindow, private Ui::MainWindow
 #endif // NETPLAY
 
     bool ui_CheckRaphnetPluginMismatchPending = false;
+
+    // Opens the Kaillera launcher; initialTab >= 0 jumps to that tab
+    // (0=Server delay, 1=Peer to Peer), -1 uses the persisted last tab.
+    // No-op when built without NETPLAY.
+    void openNetplayLauncher(int initialTab);
 
     void closeEvent(QCloseEvent *) Q_DECL_OVERRIDE;
 
@@ -279,15 +316,24 @@ class MainWindow : public QMainWindow, private Ui::MainWindow
 
     void on_Action_Netplay_CreateSession(void);
     void on_Action_Netplay_BrowseSessions(void);
+    void on_Action_Netplay_P2P(void);
+    void on_Action_Netplay_LegacyServer(void);
     void on_Action_Netplay_ViewSession(void);
+    void on_Action_Rollback_Lobby(void);
 
 #ifdef NETPLAY
     void on_Kaillera_GameStarted(QString gameName, int playerNum, int totalPlayers);
     void on_Kaillera_ChatReceived(QString nickname, QString message);
+    void on_Lobby_RoomChatReceived(QString nickname, QString message);
     void on_Kaillera_PlayerDropped(QString nickname, int playerNum);
     void on_Kaillera_GameEnded(void);
     void on_Kaillera_RecordingFileClosed(void);
     void on_Rollback_SessionRequested(QString gameName, QString remoteAddress, int localPort, int remotePort, int localPlayer, int frameDelay, int predictionWindow);
+    void on_Lobby_SessionRequested(QString gameName, QString romFile, QStringList remotePeers, int localPort, int localPlayer, int frameDelay, int predictionWindow);
+    void on_Lobby_SpectateLaunch(quint64 matchId, QString gameName);
+    void on_Lobby_SpectateData(QByteArray bytes, int liveFrame);
+    void on_Lobby_SpectateKeyframe(int frame, QByteArray savestate);
+    void on_Lobby_SpectateClosed(QString reason);
     void on_RomBrowser_RomListRefreshFinished(bool canceled);
 #endif
 

@@ -15,6 +15,8 @@
 #include "Library.hpp"
 #include "Settings.hpp"
 
+#include "PreciseWait.hpp"
+
 #ifdef RMGK_HAVE_GEKKONET
 #include <gekkonet.h>
 #ifdef RMGK_HAVE_P2P_TRANSPORT
@@ -32,6 +34,7 @@
 #include <atomic>
 #include <chrono>
 #include <ctime>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <exception>
@@ -50,7 +53,34 @@ namespace
 constexpr unsigned int kGekkoStateCapacity = 24u * 1024u * 1024u;
 constexpr int kGekkoMaxLoggedFrames = 600;
 constexpr int kGekkoWaitSleepUs = 100;
-// Slippi-style asymmetric time-sync (see project-slippi Ishiiruka,
+// Lightweight stall diagnostics: don't treat a wait as a stall until it exceeds a
+// normal sub-frame hitch (~a frame), then snapshot per-peer stats at a coarse
+// wall-clock cadence. This keeps a multi-second freeze down to a handful of log
+// lines instead of the verbose per-frame firehose.
+constexpr long long kGekkoStallReportThresholdMs = 20;
+constexpr long long kGekkoStallSnapshotIntervalMs = 250;
+
+// ---------------------------------------------------------------------------
+// Frame-pacing / time-sync tuning. Two selectable models share the per-frame
+// lerp + CoreRollbackSetTimesyncScale tail in apply_gekko_frame_pacing(); the
+// active one is chosen per session by g_GekkoPacingMode (the Rollback_PacingMode
+// setting, or the RMGK_GEKKO_PACING_MODE env override). See GekkoPacingMode.
+// ---------------------------------------------------------------------------
+
+// Symmetric ("aggressive") model — the default. Recomputes every frame and
+// pulls a drifting client back hard from either side: a single signed
+// strength*frames_ahead correction clamped to a wide scale window. Reacts fast,
+// at the cost of nudging the ahead player's framerate a touch more visibly.
+constexpr float  kGekkoSymTimesyncDeadzone       = 0.20f;
+constexpr double kGekkoSymTimesyncStrength       = 0.015;
+constexpr double kGekkoSymTimesyncMinScale       = 0.97;
+constexpr double kGekkoSymTimesyncMaxScale       = 1.03;
+constexpr double kGekkoSymTimesyncLerp           = 0.35;
+// Recompute timesync every frame so clients that drift ahead are pulled back
+// immediately instead of waiting on a coarse lockstep interval.
+constexpr int    kGekkoSymTimesyncIntervalFrames = 1;
+
+// Asymmetric (Slippi-style) model (see project-slippi Ishiiruka,
 // EXI_DeviceSlippi.cpp shouldAdvanceOnlineFrame). The behind player speeds up
 // at twice the authority the ahead player slows down, and the deadzone is
 // biased so each client happily sits slightly ahead. This keeps the ahead
@@ -60,19 +90,19 @@ constexpr int kGekkoWaitSleepUs = 100;
 // Slippi works in microseconds of clock offset; we work in gekko_frames_ahead()
 // (signed frames, +ve = local ahead), so the windows/deadzones below are the
 // frame-unit equivalents of Slippi's 8000us / -250us deadzone and 3-frame ramp.
-constexpr float  kGekkoTimesyncAheadDeadzone  = 0.48f;  // tolerate being ahead by ~half a frame
-constexpr float  kGekkoTimesyncBehindDeadzone = 0.015f; // but correct almost immediately when behind
-constexpr double kGekkoTimesyncSpeedUpWindow  = 3.0;    // frames behind to reach full speed-up
-constexpr double kGekkoTimesyncSlowDownWindow = 3.0;    // frames ahead to reach full slow-down
-constexpr double kGekkoTimesyncMaxSpeedUp     = 0.01;   // behind: up to +1.0% (scale -> 1.01)
-constexpr double kGekkoTimesyncMaxSlowDown    = 0.005;  // ahead:  up to -0.5% (scale -> 0.995)
-constexpr double kGekkoTimesyncLerp = 0.15;
-// Sample gekko_frames_ahead() this often when recomputing the target
-// emulation speed. Mirrors Slippi's SLIPPI_ONLINE_LOCKSTEP_INTERVAL (30
-// frames @ 60Hz = once per ~500ms) — single-frame jitter spikes no
-// longer kick the speed scale around; the lerp keeps speed_scale
-// converging toward the cached target on every frame in between.
-constexpr int kGekkoTimesyncIntervalFrames = 30;
+constexpr float  kGekkoAsymTimesyncAheadDeadzone  = 0.48f;  // tolerate being ahead by ~half a frame
+constexpr float  kGekkoAsymTimesyncBehindDeadzone = 0.015f; // but correct almost immediately when behind
+constexpr double kGekkoAsymTimesyncSpeedUpWindow  = 3.0;    // frames behind to reach full speed-up
+constexpr double kGekkoAsymTimesyncSlowDownWindow = 3.0;    // frames ahead to reach full slow-down
+constexpr double kGekkoAsymTimesyncMaxSpeedUp     = 0.01;   // behind: up to +1.0% (scale -> 1.01)
+constexpr double kGekkoAsymTimesyncMaxSlowDown    = 0.005;  // ahead:  up to -0.5% (scale -> 0.995)
+constexpr double kGekkoAsymTimesyncLerp           = 0.15;
+// Sample gekko_frames_ahead() this often when recomputing the target emulation
+// speed in the asymmetric model. Mirrors Slippi's SLIPPI_ONLINE_LOCKSTEP_INTERVAL
+// (30 frames @ 60Hz = once per ~500ms) — single-frame jitter spikes no longer
+// kick the speed scale around; the lerp keeps speed_scale converging toward the
+// cached target on every frame in between.
+constexpr int    kGekkoAsymTimesyncIntervalFrames = 30;
 constexpr size_t kGekkoClientReplayFrames = 600;
 
 #ifdef RMGK_HAVE_GEKKONET
@@ -81,6 +111,16 @@ enum class ClientInputReplayMode
     Off,
     Recording,
     Playing
+};
+
+// Rollback time-sync model. Smooth (asymmetric) is the only supported model;
+// symmetric survives solely behind the RMGK_GEKKO_PACING_MODE dev override.
+// Cached per session in reset_gekko_log() so apply_gekko_frame_pacing() —
+// which runs every frame — never hits the environment on the hot path.
+enum class GekkoPacingMode
+{
+    Symmetric  = 0, // aggressive per-frame correction (dev override only)
+    Asymmetric = 1, // Slippi-style biased correction (the default)
 };
 
 struct PendingGekkoSave
@@ -117,6 +157,13 @@ constexpr int kGekkoRecordingRollbackHorizon = 32;
 std::atomic_bool g_GekkoExecuting{false};
 std::atomic_bool g_GekkoStopRequested{false};
 std::vector<PendingGekkoSave> g_GekkoPendingSaves;
+
+// Slots (1-indexed) queued by request_disconnect_player() on another thread,
+// drained on the emulation thread before each frame's update_session. Guarded
+// by its own mutex so the lobby/UI thread can push without touching the
+// GekkoNet session (which is single-threaded on the emulation thread).
+std::mutex g_GekkoDisconnectMutex;
+std::vector<int> g_GekkoPendingDisconnectSlots;
 std::mutex g_GekkoLogMutex;
 std::filesystem::path g_GekkoLogDirectory;
 std::string g_GekkoLogPrefix;
@@ -127,12 +174,20 @@ int g_GekkoWaitingLoops = 0;
 int g_GekkoLocalInputLogRepeats = 0;
 int g_GekkoPacingLogFrames = 0;
 double g_GekkoSpeedScale = 1.0;
-// Timesync sample state. Counter wraps every kGekkoTimesyncIntervalFrames
-// to trigger a fresh frames_ahead sample. TargetScale is what g_GekkoSpeedScale
-// lerps toward between samples.
+// Timesync state. TargetScale is recomputed on sample frames (cadence depends on
+// the active pacing mode); SpeedScale lerps toward it so pacing is smooth.
 int g_GekkoTimesyncSampleCounter = 0;
 double g_GekkoTimesyncTargetScale = 1.0;
+// Active frame-pacing model, cached at session start (see GekkoPacingMode).
+GekkoPacingMode g_GekkoPacingMode = GekkoPacingMode::Asymmetric;
 bool g_GekkoLogEnabled = false;
+// Lightweight stall diagnostics, independent of verbose logging. Only emits while a
+// rollback session is genuinely stalled (waiting on a peer's input), so the log
+// stays tiny during smooth play.
+bool g_GekkoStallLogEnabled = false;
+bool g_GekkoStallReported = false;
+std::chrono::steady_clock::time_point g_GekkoStallBeginTime;
+std::chrono::steady_clock::time_point g_GekkoStallLastSnapshotTime;
 std::mutex g_GekkoClientReplayMutex;
 ClientInputReplayMode g_GekkoClientReplayMode = ClientInputReplayMode::Off;
 std::vector<uint32_t> g_GekkoClientReplayInputs;
@@ -145,6 +200,434 @@ long long g_GekkoLastLoadStateUs = 0;
 long long g_GekkoLastSaveStateUs = 0;
 long long g_GekkoLastRunFrameUs = 0;
 long long g_GekkoLastPendingSaveUs = 0;
+
+// ---------------------------------------------------------------------------
+// Buffered rollback pacing trace.
+//
+// Enabled by Settings -> Rollback -> Logging -> Pacing Trace. Rows remain in
+// memory during gameplay and are written only when rollback execution ends,
+// avoiding per-frame disk I/O.
+// ---------------------------------------------------------------------------
+constexpr std::size_t kRmgkPacingTraceCapacity = 60000;
+constexpr std::size_t kRmgkPacingTraceInvalidRow =
+    static_cast<std::size_t>(-1);
+
+struct RmgkPacingTraceRow
+{
+    std::uint64_t sequence = 0;
+    long long timestampUs = 0;
+
+    int coreFrameBegin = -1;
+    int coreFrameSwap = -1;
+    int coreFrameEnd = -1;
+
+    float framesAhead = 0.0f;
+    double targetScale = 1.0;
+    double internalScale = 1.0;
+    double clampedScale = 1.0;
+    int pacingMode = 0;
+    int sampleFrame = 0;
+
+    int events = 0;
+    int saves = 0;
+    int loads = 0;
+    int rollbackAdvances = 0;
+    int runaheadAdvances = 0;
+    int waitLoops = 0;
+
+    long long debugBeginUs = 0;
+    long long beginTotalUs = 0;
+    long long networkPollUs = 0;
+    long long pacingCalcUs = 0;
+    long long submitInputUs = 0;
+    long long updateSessionUs = 0;
+    long long latchInputUs = 0;
+    long long saveTotalUs = 0;
+    long long loadTotalUs = 0;
+    long long resimTotalUs = 0;
+    long long resimMaxUs = 0;
+    long long waitTotalUs = 0;
+    long long waitMaxUs = 0;
+
+    int presentPacerActive = 0;
+    int presentPacerFirstFrame = 0;
+    int presentPacerDeadlineMiss = 0;
+    double presentPacerScale = 1.0;
+    double presentPacerPeriodUs = 0.0;
+    long long presentIntervalBeforeWaitUs = 0;
+    long long presentWaitRequestedUs = 0;
+    long long presentWaitActualUs = 0;
+    long long presentLateUs = 0;
+    long long presentIntervalAfterWaitUs = 0;
+
+    long long swapUs = 0;
+    long long makeCurrentUs = 0;
+    int swapPath = 0; // 1 = native WGL, 2 = Qt OpenGL
+
+    long long endTotalUs = 0;
+    long long pendingSaveUs = 0;
+    long long debugEndUs = 0;
+};
+
+std::vector<RmgkPacingTraceRow> g_RmgkPacingTraceRows;
+bool g_RmgkPacingTraceEnabled = false;
+std::size_t g_RmgkPacingTraceActiveRow =
+    kRmgkPacingTraceInvalidRow;
+
+float g_RmgkTraceFramesAhead = 0.0f;
+double g_RmgkTraceTargetScale = 1.0;
+double g_RmgkTraceInternalScale = 1.0;
+double g_RmgkTraceClampedScale = 1.0;
+int g_RmgkTracePacingMode = 0;
+int g_RmgkTraceSampleFrame = 0;
+
+// ---------------------------------------------------------------------------
+// Rollback presentation pacer.
+//
+// The ordinary core limiter is bypassed for visible rollback frames. The
+// emulation thread then waits here, immediately before SwapBuffers(), until the
+// next phase-locked presentation deadline. Hidden rollback work therefore
+// consumes idle time instead of being added after an earlier core sleep.
+//
+// The core publishes the exact nominal VI rate before the first swap.
+// RMGK_ROLLBACK_PRESENT_HZ may be used as an explicit diagnostic override.
+// ---------------------------------------------------------------------------
+bool g_RollbackPresentPacerEnabled = true;
+double g_RollbackPresentBaseHz = 60.0;
+bool g_RollbackPresentBaseHzOverridden = false;
+bool g_RollbackPresentPacerInitialized = false;
+std::chrono::steady_clock::time_point g_RollbackPresentLastSwapTime;
+std::chrono::steady_clock::time_point g_RollbackPresentTargetTime;
+
+void reset_rollback_present_pacer()
+{
+    // The rollback presentation pacer is a permanent part of the rollback
+    // frame path. It remains gated below by the active session/execution checks.
+    g_RollbackPresentPacerEnabled = true;
+
+    g_RollbackPresentBaseHz = 60.0;
+    g_RollbackPresentBaseHzOverridden = false;
+
+    const char* hzEnv =
+        std::getenv("RMGK_ROLLBACK_PRESENT_HZ");
+
+    if (hzEnv != nullptr && hzEnv[0] != '\0')
+    {
+        char* end = nullptr;
+        const double value = std::strtod(hzEnv, &end);
+
+        if (end != hzEnv &&
+            value >= 30.0 &&
+            value <= 240.0)
+        {
+            g_RollbackPresentBaseHz = value;
+            g_RollbackPresentBaseHzOverridden = true;
+        }
+    }
+
+    g_RollbackPresentPacerInitialized = false;
+    g_RollbackPresentLastSwapTime =
+        std::chrono::steady_clock::time_point{};
+    g_RollbackPresentTargetTime =
+        std::chrono::steady_clock::time_point{};
+}
+
+void record_rollback_present_pacing(
+    int active,
+    int firstFrame,
+    int deadlineMiss,
+    double scale,
+    double periodUs,
+    long long intervalBeforeWaitUs,
+    long long waitRequestedUs,
+    long long waitActualUs,
+    long long lateUs,
+    long long intervalAfterWaitUs)
+{
+    if (!g_RmgkPacingTraceEnabled ||
+        g_RmgkPacingTraceActiveRow ==
+            kRmgkPacingTraceInvalidRow ||
+        g_RmgkPacingTraceActiveRow >=
+            g_RmgkPacingTraceRows.size())
+    {
+        return;
+    }
+
+    auto& row =
+        g_RmgkPacingTraceRows[
+            g_RmgkPacingTraceActiveRow];
+
+    row.presentPacerActive = active;
+    row.presentPacerFirstFrame = firstFrame;
+    row.presentPacerDeadlineMiss = deadlineMiss;
+    row.presentPacerScale = scale;
+    row.presentPacerPeriodUs = periodUs;
+    row.presentIntervalBeforeWaitUs =
+        intervalBeforeWaitUs;
+    row.presentWaitRequestedUs = waitRequestedUs;
+    row.presentWaitActualUs = waitActualUs;
+    row.presentLateUs = lateUs;
+    row.presentIntervalAfterWaitUs =
+        intervalAfterWaitUs;
+}
+
+long long rmgk_pacing_trace_now_us()
+{
+    return std::chrono::duration_cast<std::chrono::microseconds>(
+        std::chrono::steady_clock::now().time_since_epoch()).count();
+}
+
+void rmgk_pacing_trace_flush()
+{
+    g_RmgkPacingTraceActiveRow = kRmgkPacingTraceInvalidRow;
+
+    if (!g_RmgkPacingTraceEnabled ||
+        g_RmgkPacingTraceRows.empty())
+    {
+        g_RmgkPacingTraceRows.clear();
+        return;
+    }
+
+    const std::string filename =
+        g_GekkoLogPrefix + "_pacing_frontend.csv";
+
+    const std::filesystem::path path =
+        g_GekkoLogDirectory.empty()
+            ? std::filesystem::path(filename)
+            : g_GekkoLogDirectory / filename;
+
+    std::ofstream file(path, std::ios::out | std::ios::trunc);
+    if (file)
+    {
+        file
+            << "sequence,timestamp_us,"
+            << "core_frame_begin,core_frame_swap,core_frame_end,"
+            << "frames_ahead,target_scale,internal_scale,clamped_scale,"
+            << "pacing_mode,sample_frame,"
+            << "events,saves,loads,rollback_advances,runahead_advances,"
+            << "wait_loops,debug_begin_us,begin_total_us,"
+            << "network_poll_us,pacing_calc_us,submit_input_us,"
+            << "update_session_us,latch_input_us,save_total_us,"
+            << "load_total_us,resim_total_us,resim_max_us,"
+            << "wait_total_us,wait_max_us,"
+            << "present_pacer_active,present_pacer_first_frame,"
+            << "present_pacer_deadline_miss,"
+            << "present_pacer_scale,present_pacer_period_us,"
+            << "present_interval_before_wait_us,"
+            << "present_wait_requested_us,present_wait_actual_us,"
+            << "present_late_us,present_interval_after_wait_us,"
+            << "swap_us,make_current_us,swap_path,"
+            << "end_total_us,pending_save_us,debug_end_us\n";
+
+        file << std::fixed << std::setprecision(9);
+
+        for (const auto& row : g_RmgkPacingTraceRows)
+        {
+            file
+                << row.sequence << ','
+                << row.timestampUs << ','
+                << row.coreFrameBegin << ','
+                << row.coreFrameSwap << ','
+                << row.coreFrameEnd << ','
+                << row.framesAhead << ','
+                << row.targetScale << ','
+                << row.internalScale << ','
+                << row.clampedScale << ','
+                << row.pacingMode << ','
+                << row.sampleFrame << ','
+                << row.events << ','
+                << row.saves << ','
+                << row.loads << ','
+                << row.rollbackAdvances << ','
+                << row.runaheadAdvances << ','
+                << row.waitLoops << ','
+                << row.debugBeginUs << ','
+                << row.beginTotalUs << ','
+                << row.networkPollUs << ','
+                << row.pacingCalcUs << ','
+                << row.submitInputUs << ','
+                << row.updateSessionUs << ','
+                << row.latchInputUs << ','
+                << row.saveTotalUs << ','
+                << row.loadTotalUs << ','
+                << row.resimTotalUs << ','
+                << row.resimMaxUs << ','
+                << row.waitTotalUs << ','
+                << row.waitMaxUs << ','
+                << row.presentPacerActive << ','
+                << row.presentPacerFirstFrame << ','
+                << row.presentPacerDeadlineMiss << ','
+                << row.presentPacerScale << ','
+                << row.presentPacerPeriodUs << ','
+                << row.presentIntervalBeforeWaitUs << ','
+                << row.presentWaitRequestedUs << ','
+                << row.presentWaitActualUs << ','
+                << row.presentLateUs << ','
+                << row.presentIntervalAfterWaitUs << ','
+                << row.swapUs << ','
+                << row.makeCurrentUs << ','
+                << row.swapPath << ','
+                << row.endTotalUs << ','
+                << row.pendingSaveUs << ','
+                << row.debugEndUs
+                << '\n';
+        }
+    }
+
+    g_RmgkPacingTraceRows.clear();
+}
+
+void rmgk_pacing_trace_reset()
+{
+    g_RmgkPacingTraceRows.clear();
+    g_RmgkPacingTraceActiveRow =
+        kRmgkPacingTraceInvalidRow;
+
+    g_RmgkPacingTraceEnabled =
+        CoreSettingsGetBoolValue(
+            SettingsID::Rollback_PacingTrace);
+
+    if (g_RmgkPacingTraceEnabled)
+    {
+        g_RmgkPacingTraceRows.reserve(
+            kRmgkPacingTraceCapacity);
+    }
+
+    g_RmgkTraceFramesAhead = 0.0f;
+    g_RmgkTraceTargetScale = 1.0;
+    g_RmgkTraceInternalScale = 1.0;
+    g_RmgkTraceClampedScale = 1.0;
+    g_RmgkTracePacingMode = 0;
+    g_RmgkTraceSampleFrame = 0;
+}
+
+void rmgk_pacing_trace_begin_frame(
+    int events,
+    int saves,
+    int loads,
+    int rollbackAdvances,
+    int runaheadAdvances,
+    int waitLoops,
+    long long debugBeginUs,
+    long long beginTotalUs,
+    long long networkPollUs,
+    long long pacingCalcUs,
+    long long submitInputUs,
+    long long updateSessionUs,
+    long long latchInputUs,
+    long long saveTotalUs,
+    long long loadTotalUs,
+    long long resimTotalUs,
+    long long resimMaxUs,
+    long long waitTotalUs,
+    long long waitMaxUs)
+{
+    g_RmgkPacingTraceActiveRow =
+        kRmgkPacingTraceInvalidRow;
+
+    if (!g_RmgkPacingTraceEnabled ||
+        g_RmgkPacingTraceRows.size() >=
+            kRmgkPacingTraceCapacity)
+    {
+        return;
+    }
+
+    RmgkPacingTraceRow row;
+
+    row.sequence =
+        static_cast<std::uint64_t>(
+            g_RmgkPacingTraceRows.size());
+
+    row.timestampUs = rmgk_pacing_trace_now_us();
+    row.coreFrameBegin = CoreGetCurrentFrameCount();
+
+    row.framesAhead = g_RmgkTraceFramesAhead;
+    row.targetScale = g_RmgkTraceTargetScale;
+    row.internalScale = g_RmgkTraceInternalScale;
+    row.clampedScale = g_RmgkTraceClampedScale;
+    row.pacingMode = g_RmgkTracePacingMode;
+    row.sampleFrame = g_RmgkTraceSampleFrame;
+
+    row.events = events;
+    row.saves = saves;
+    row.loads = loads;
+    row.rollbackAdvances = rollbackAdvances;
+    row.runaheadAdvances = runaheadAdvances;
+    row.waitLoops = waitLoops;
+
+    row.debugBeginUs = debugBeginUs;
+    row.beginTotalUs = beginTotalUs;
+    row.networkPollUs = networkPollUs;
+    row.pacingCalcUs = pacingCalcUs;
+    row.submitInputUs = submitInputUs;
+    row.updateSessionUs = updateSessionUs;
+    row.latchInputUs = latchInputUs;
+    row.saveTotalUs = saveTotalUs;
+    row.loadTotalUs = loadTotalUs;
+    row.resimTotalUs = resimTotalUs;
+    row.resimMaxUs = resimMaxUs;
+    row.waitTotalUs = waitTotalUs;
+    row.waitMaxUs = waitMaxUs;
+
+    g_RmgkPacingTraceRows.push_back(row);
+    g_RmgkPacingTraceActiveRow =
+        g_RmgkPacingTraceRows.size() - 1;
+}
+
+void rmgk_pacing_trace_end_frame(
+    long long endTotalUs,
+    long long pendingSaveUs,
+    long long debugEndUs)
+{
+    if (!g_RmgkPacingTraceEnabled ||
+        g_RmgkPacingTraceActiveRow ==
+            kRmgkPacingTraceInvalidRow ||
+        g_RmgkPacingTraceActiveRow >=
+            g_RmgkPacingTraceRows.size())
+    {
+        return;
+    }
+
+    auto& row =
+        g_RmgkPacingTraceRows[
+            g_RmgkPacingTraceActiveRow];
+
+    row.coreFrameEnd = CoreGetCurrentFrameCount();
+    row.endTotalUs = endTotalUs;
+    row.pendingSaveUs = pendingSaveUs;
+    row.debugEndUs = debugEndUs;
+
+    g_RmgkPacingTraceActiveRow =
+        kRmgkPacingTraceInvalidRow;
+}
+
+// --- Spectate keyframe capture-and-hold (broadcaster side) ---
+// The UI requests a keyframe; we snapshot the live frame's state, then HOLD it until
+// the recording confirms that frame (flushes it to the krec, past the rollback
+// horizon) with no rollback having touched frame <= it since the snapshot. Only then
+// is it a state a spectator can restore and replay the confirmed krec from without
+// desyncing. The snapshot is taken right after the live frame's input is latched into
+// PIF RAM, so its "next" input to apply is the following frame — hence the replay
+// frame the spectator starts at is the captured frame + this offset. We snapshot via
+// GekkoNet's own per-frame save (the safe VI-boundary point), whose state is "before
+// frame F's input" — the rollback load+replay convention — so the spectator replays
+// from frame F itself (offset 0). If testing reveals a 1-frame misalignment, nudge this.
+constexpr int kKeyframeReplayFrameOffset = 0;
+std::atomic<bool> g_GekkoKeyframeRequested{false};
+bool g_GekkoKeyframePending = false;
+int  g_GekkoKeyframePendingLiveFrame = -1; // the live frame F we snapshotted (confirm when flushed)
+std::vector<unsigned char> g_GekkoKeyframePendingBuf;
+std::mutex g_GekkoKeyframeReadyMutex;
+bool g_GekkoKeyframeReady = false;
+int  g_GekkoKeyframeReadyFrame = -1; // krec frame the spectator replays from (F + offset)
+std::vector<unsigned char> g_GekkoKeyframeReadyBuf;
+
+// Spectate keyframe divergence probe (diagnostic): once a keyframe is captured, log a
+// content hash of the broadcaster's confirmed state for the keyframe frame and the next
+// kSpectateProbeWindow frames, so they can be diffed against the spectator's replayed-
+// state hashes (see Emulation.cpp) to find the first divergent frame. -1 = inactive.
+constexpr int kSpectateProbeWindow = 30;
+int g_GekkoSpectateProbeStartFrame = -1;
 rmgk_gekko::InputProvider g_GekkoDebugInputProvider = nullptr;
 rmgk_gekko::FrameCallback g_GekkoDebugBeginFrame = nullptr;
 rmgk_gekko::FrameCallback g_GekkoDebugEndFrame = nullptr;
@@ -251,12 +734,32 @@ std::filesystem::path get_gekko_log_path()
 
 void reset_gekko_log()
 {
+    rmgk_pacing_trace_flush();
     reset_rollback_log_session();
+    rmgk_pacing_trace_reset();
+    reset_rollback_present_pacer();
 
     const char* logEnv = std::getenv("RMGK_GEKKO_LOG");
     g_GekkoLogEnabled = CoreSettingsGetBoolValue(SettingsID::Rollback_VerboseStats) ||
         (logEnv != nullptr && std::strcmp(logEnv, "0") != 0);
-    if (!g_GekkoLogEnabled)
+    const char* stallEnv = std::getenv("RMGK_GEKKO_STALL_LOG");
+    g_GekkoStallLogEnabled = CoreSettingsGetBoolValue(SettingsID::Rollback_StallDiagnostics) ||
+        (stallEnv != nullptr && std::strcmp(stallEnv, "0") != 0);
+    g_GekkoStallReported = false;
+
+    // Frame-pacing model, cached per session regardless of logging (this runs
+    // before the early-out below). Smooth (asymmetric) is the only supported
+    // model now — the UI selector is gone and the persisted Rollback_PacingMode
+    // setting is ignored, so stale configs and room-sync writes are inert.
+    // RMGK_GEKKO_PACING_MODE=0 survives as a dev-only A/B override for the old
+    // symmetric model.
+    const char* pacingEnv = std::getenv("RMGK_GEKKO_PACING_MODE");
+    g_GekkoPacingMode = (pacingEnv != nullptr &&
+            std::atoi(pacingEnv) == static_cast<int>(GekkoPacingMode::Symmetric))
+        ? GekkoPacingMode::Symmetric
+        : GekkoPacingMode::Asymmetric;
+
+    if (!g_GekkoLogEnabled && !g_GekkoStallLogEnabled)
     {
         g_GekkoLogFrames = 0;
         g_GekkoLastSubmittedInput = 0xffffffffu;
@@ -277,7 +780,8 @@ void reset_gekko_log()
     std::lock_guard<std::mutex> lock(g_GekkoLogMutex);
     const std::filesystem::path path = get_gekko_log_path();
     std::ofstream file(path, std::ios::out | std::ios::trunc);
-    file << "RMG-K GekkoNet input log\n";
+    file << "RMG-K GekkoNet log (verbose=" << (g_GekkoLogEnabled ? 1 : 0)
+         << " stall_only=" << ((g_GekkoStallLogEnabled && !g_GekkoLogEnabled) ? 1 : 0) << ")\n";
     g_GekkoLogFrames = 0;
     g_GekkoLastSubmittedInput = 0xffffffffu;
     g_GekkoLastLatchedInput.clear();
@@ -296,6 +800,23 @@ void reset_gekko_log()
 void write_gekko_log(const std::string& message)
 {
     if (!g_GekkoLogEnabled)
+    {
+        return;
+    }
+
+    std::lock_guard<std::mutex> lock(g_GekkoLogMutex);
+    const std::filesystem::path path = get_gekko_log_path();
+    std::ofstream file(path, std::ios::out | std::ios::app);
+    file << "core_frame=" << CoreGetCurrentFrameCount() << " " << message << "\n";
+}
+
+// Stall-diagnostics writer: fires when EITHER verbose logging or the lightweight
+// stall-only toggle is on, so stall records show up in both modes (and in the
+// stall-only mode they are the only thing written). Same one-line-append shape as
+// write_gekko_log.
+void write_gekko_stall_log(const std::string& message)
+{
+    if (!g_GekkoLogEnabled && !g_GekkoStallLogEnabled)
     {
         return;
     }
@@ -535,6 +1056,56 @@ bool save_gekko_state(const PendingGekkoSave& save)
         write_gekko_log(stream.str());
     }
 
+    // Spectate keyframe: when the UI asked for one and we aren't already holding a snapshot,
+    // capture a FULL normal-format savestate of THIS frame (not GekkoNet's stripped rollback
+    // save in save.state). A cold spectator must load a complete state via the normal path;
+    // the rollback variant omits the TLB LUT and isn't zeroed (fine for a warm same-machine
+    // reload, wrong for a cold join). Taken here at the same frame-aligned VI boundary GekkoNet
+    // just saved at, so it stays aligned with the krec. The full save is read-only on the
+    // device and calls no plugins (verified in savestates_save_m64p), so it cannot disturb the
+    // live rollback. Core mallocs the buffer; we copy it out and free it. HOLD the snapshot —
+    // it's only committed once the recording flushes this frame to the krec without an
+    // intervening rollback, so the bytes match the confirmed krec a spectator replays.
+    if (g_GekkoKeyframeRequested.load(std::memory_order_relaxed) && !g_GekkoKeyframePending &&
+        save.frame >= 0 && state.len > 0 && save.state != nullptr)
+    {
+        CoreRollbackState fullState{};
+        if (CoreRollbackSaveFullStateInto(fullState, nullptr, 0, save.frame) &&
+            fullState.buffer != nullptr && fullState.len > 0)
+        {
+            g_GekkoKeyframePendingBuf.assign(fullState.buffer, fullState.buffer + fullState.len);
+            g_GekkoKeyframePendingLiveFrame = save.frame;
+            g_GekkoKeyframePending = true;
+            g_GekkoKeyframeRequested.store(false, std::memory_order_relaxed);
+            // Arm the divergence probe window for this keyframe's neighborhood.
+            g_GekkoSpectateProbeStartFrame = save.frame;
+            if (g_GekkoLogEnabled)
+            {
+                std::ostringstream stream;
+                stream << "keyframe snapshot frame=" << save.frame
+                       << " full_len=" << fullState.len << " rollback_len=" << state.len;
+                write_gekko_log(stream.str());
+            }
+        }
+        CoreRollbackFreeGameState(fullState);
+    }
+
+    // Spectate divergence probe (diagnostic): hash the broadcaster's confirmed state for
+    // the keyframe frame and the following frames so a spectator's replayed-state hashes
+    // can be diffed against them (see Emulation.cpp). Rollback can re-save a frame more
+    // than once; when reading the log, take the LAST hash logged per frame number.
+    if (g_GekkoSpectateProbeStartFrame >= 0 &&
+        save.frame >= g_GekkoSpectateProbeStartFrame &&
+        save.frame <= g_GekkoSpectateProbeStartFrame + kSpectateProbeWindow)
+    {
+        const uint64_t h = rmgk_gekko::hash_bytes(save.state, static_cast<size_t>(state.len));
+        std::ostringstream stream;
+        stream << "spectate_probe side=host frame=" << save.frame
+               << " hash=" << std::hex << h << std::dec
+               << " len=" << state.len;
+        rmgk_gekko::write_spectate_probe(stream.str());
+    }
+
     return true;
 }
 
@@ -594,7 +1165,7 @@ bool submit_local_input()
         uint32_t input = localOnlySession ? physicalInputs[playerIndex] : physicalInputs[0];
         {
             std::lock_guard<std::mutex> lock(g_GekkoClientReplayMutex);
-            if (!localOnlySession && g_GekkoLocalPlayer == 2 && g_GekkoClientReplayMode == ClientInputReplayMode::Recording)
+            if (!localOnlySession && g_GekkoLocalPlayer > 1 && g_GekkoClientReplayMode == ClientInputReplayMode::Recording)
             {
                 g_GekkoClientReplayInputs.push_back(input);
                 if (g_GekkoClientReplayInputs.size() >= kGekkoClientReplayFrames)
@@ -604,7 +1175,7 @@ bool submit_local_input()
                     write_gekko_log("client_input_replay mode=playing recorded_frames=600");
                 }
             }
-            else if (!localOnlySession && g_GekkoLocalPlayer == 2 && g_GekkoClientReplayMode == ClientInputReplayMode::Playing &&
+            else if (!localOnlySession && g_GekkoLocalPlayer > 1 && g_GekkoClientReplayMode == ClientInputReplayMode::Playing &&
                 !g_GekkoClientReplayInputs.empty())
             {
                 input = g_GekkoClientReplayInputs[g_GekkoClientReplayIndex++];
@@ -762,63 +1333,159 @@ bool process_pending_saves()
     return true;
 }
 
+// Append per-peer GekkoNet network stats (one labelled segment per remote actor)
+// to a log stream. The session only exposes counters per handle via
+// gekko_network_stats(), and the rest of this file historically logged just
+// g_GekkoRemoteHandle (the FIRST remote) — blind to peers 2 and 3 in a 4-player
+// mesh. Since the local sim blocks until EVERY peer's input arrives, a freeze is
+// almost always one specific peer stalling; logging all of them lets a single
+// logging client name the culprit (whichever peer's kb_recv flatlines / ping goes
+// stale during the stall).
+void append_peer_network_stats(std::ostringstream& stream)
+{
+    if (g_GekkoSession == nullptr)
+    {
+        return;
+    }
+    for (int player = 1; player <= g_GekkoPlayers; player++)
+    {
+        if (player == g_GekkoLocalPlayer)
+        {
+            continue;
+        }
+        if (player > static_cast<int>(g_GekkoPlayerHandles.size()))
+        {
+            continue;
+        }
+        const int handle = g_GekkoPlayerHandles[static_cast<size_t>(player - 1)];
+        if (handle < 0)
+        {
+            continue;
+        }
+        GekkoNetworkStats stats = {};
+        gekko_network_stats(g_GekkoSession, handle, &stats);
+        stream << " peer" << player << "_handle=" << handle
+               << " peer" << player << "_ping_ms=" << stats.last_ping
+               << " peer" << player << "_avg_ping_ms=" << std::fixed << std::setprecision(1) << stats.avg_ping
+               << " peer" << player << "_jitter_ms=" << stats.jitter
+               << " peer" << player << "_kb_sent=" << std::setprecision(2) << stats.kb_sent
+               << " peer" << player << "_kb_recv=" << stats.kb_received;
+    }
+}
+
 void apply_gekko_frame_pacing()
 {
     // Read frames_ahead every call (cheap, just a member access in
-    // GekkoSession) but only recompute the target scale once per
-    // sampling interval. The per-frame lerp below carries the speed scale
-    // toward the cached target between samples.
+    // GekkoSession) but only recompute the target scale on sample frames. The
+    // per-frame lerp below carries the speed scale toward the cached target
+    // between samples. Both the sample cadence and the target computation depend
+    // on the active pacing model (see GekkoPacingMode); the lerp tail is shared.
     const float framesAhead = gekko_frames_ahead(g_GekkoSession);
+    const bool asymmetric = (g_GekkoPacingMode == GekkoPacingMode::Asymmetric);
+    const int intervalFrames =
+        asymmetric ? kGekkoAsymTimesyncIntervalFrames : kGekkoSymTimesyncIntervalFrames;
+    const double lerp = asymmetric ? kGekkoAsymTimesyncLerp : kGekkoSymTimesyncLerp;
     const bool isSampleFrame =
-        (g_GekkoTimesyncSampleCounter % kGekkoTimesyncIntervalFrames) == 0;
+        (g_GekkoTimesyncSampleCounter % intervalFrames) == 0;
     if (isSampleFrame)
     {
-        // Asymmetric correction: the behind player speeds up at twice the
-        // authority the ahead player slows down, with a deadzone biased toward
-        // sitting slightly ahead. Ramp linearly to the cap over the configured
-        // frame window, matching Slippi's shouldAdvanceOnlineFrame.
-        double deviation = 0.0;
-        if (framesAhead < -kGekkoTimesyncBehindDeadzone)
+        if (asymmetric)
         {
-            const double multiplier =
-                std::min(-static_cast<double>(framesAhead) / kGekkoTimesyncSpeedUpWindow, 1.0);
-            deviation = multiplier * kGekkoTimesyncMaxSpeedUp;
+            // Asymmetric correction: the behind player speeds up at twice the
+            // authority the ahead player slows down, with a deadzone biased
+            // toward sitting slightly ahead. Ramp linearly to the cap over the
+            // configured frame window, matching Slippi's shouldAdvanceOnlineFrame.
+            double deviation = 0.0;
+            if (framesAhead < -kGekkoAsymTimesyncBehindDeadzone)
+            {
+                const double multiplier =
+                    std::min(-static_cast<double>(framesAhead) / kGekkoAsymTimesyncSpeedUpWindow, 1.0);
+                deviation = multiplier * kGekkoAsymTimesyncMaxSpeedUp;
+            }
+            else if (framesAhead > kGekkoAsymTimesyncAheadDeadzone)
+            {
+                const double multiplier =
+                    std::min(static_cast<double>(framesAhead) / kGekkoAsymTimesyncSlowDownWindow, 1.0);
+                deviation = multiplier * -kGekkoAsymTimesyncMaxSlowDown;
+            }
+            g_GekkoTimesyncTargetScale = 1.0 + deviation;
         }
-        else if (framesAhead > kGekkoTimesyncAheadDeadzone)
+        else
         {
-            const double multiplier =
-                std::min(static_cast<double>(framesAhead) / kGekkoTimesyncSlowDownWindow, 1.0);
-            deviation = multiplier * -kGekkoTimesyncMaxSlowDown;
+            // Symmetric correction: a single signed strength*frames_ahead nudge
+            // clamped to a wide scale window, recomputed every frame so a client
+            // drifting ahead is pulled back immediately. Stronger and more
+            // reactive than the asymmetric model.
+            double newTarget = 1.0;
+            if (framesAhead >= kGekkoSymTimesyncDeadzone || framesAhead <= -kGekkoSymTimesyncDeadzone)
+            {
+                newTarget = 1.0 - (static_cast<double>(framesAhead) * kGekkoSymTimesyncStrength);
+                newTarget = std::clamp(newTarget, kGekkoSymTimesyncMinScale, kGekkoSymTimesyncMaxScale);
+            }
+            g_GekkoTimesyncTargetScale = newTarget;
         }
-        g_GekkoTimesyncTargetScale = 1.0 + deviation;
     }
     g_GekkoTimesyncSampleCounter++;
 
-    g_GekkoSpeedScale += (g_GekkoTimesyncTargetScale - g_GekkoSpeedScale) * kGekkoTimesyncLerp;
+    g_GekkoSpeedScale += (g_GekkoTimesyncTargetScale - g_GekkoSpeedScale) * lerp;
     CoreRollbackSetTimesyncScale(g_GekkoSpeedScale);
+
+    g_RmgkTraceFramesAhead = framesAhead;
+    g_RmgkTraceTargetScale = g_GekkoTimesyncTargetScale;
+    g_RmgkTraceInternalScale = g_GekkoSpeedScale;
+    g_RmgkTraceClampedScale =
+        std::clamp(g_GekkoSpeedScale, 0.99, 1.01);
+    g_RmgkTracePacingMode =
+        static_cast<int>(g_GekkoPacingMode);
+    g_RmgkTraceSampleFrame = isSampleFrame ? 1 : 0;
 
     g_GekkoPacingLogFrames++;
     if (g_GekkoLogEnabled &&
         (g_GekkoTimesyncTargetScale != 1.0 || g_GekkoPacingLogFrames <= 10 || (g_GekkoPacingLogFrames % 60) == 0))
     {
         std::ostringstream stream;
-        stream << "pacing frames_ahead=" << std::fixed << std::setprecision(2) << framesAhead
+        stream << "pacing mode=" << (asymmetric ? "asym" : "sym")
+               << " frames_ahead=" << std::fixed << std::setprecision(2) << framesAhead
                << " sample=" << (isSampleFrame ? 1 : 0)
                << " target_scale=" << std::setprecision(4) << g_GekkoTimesyncTargetScale
                << " speed_scale=" << g_GekkoSpeedScale;
 
-        if (g_GekkoRemoteHandle >= 0)
-        {
-            GekkoNetworkStats stats = {};
-            gekko_network_stats(g_GekkoSession, g_GekkoRemoteHandle, &stats);
-            stream << " remote_handle=" << g_GekkoRemoteHandle
-                   << " ping_ms=" << stats.last_ping
-                   << " avg_ping_ms=" << std::setprecision(1) << stats.avg_ping
-                   << " jitter_ms=" << stats.jitter
-                   << " kb_sent=" << stats.kb_sent
-                   << " kb_recv=" << stats.kb_received;
-        }
+        append_peer_network_stats(stream);
 
+        write_gekko_log(stream.str());
+    }
+}
+
+// Drain slots queued by request_disconnect_player() and force GekkoNet to drop
+// those actors now. Runs on the emulation thread (inside the frame pump), so it
+// touches the GekkoNet session safely; the cross-thread hand-off is just the
+// mutex-guarded slot list. (Already inside the file's RMGK_HAVE_GEKKONET block.)
+void process_pending_disconnects()
+{
+    std::vector<int> slots;
+    {
+        std::lock_guard<std::mutex> lock(g_GekkoDisconnectMutex);
+        if (g_GekkoPendingDisconnectSlots.empty())
+        {
+            return;
+        }
+        slots.swap(g_GekkoPendingDisconnectSlots);
+    }
+    for (int slot : slots)
+    {
+        if (slot < 1 || slot > g_GekkoPlayers || slot == g_GekkoLocalPlayer)
+        {
+            continue;
+        }
+        const int handle = g_GekkoPlayerHandles[static_cast<size_t>(slot - 1)];
+        if (handle < 0)
+        {
+            continue;
+        }
+        gekko_disconnect_player(g_GekkoSession, handle);
+        std::ostringstream stream;
+        stream << "force_disconnect slot=" << slot << " handle=" << handle
+               << " reason=lobby_peer_left";
         write_gekko_log(stream.str());
     }
 }
@@ -842,6 +1509,8 @@ int rollback_execute_begin_frame(void* userData)
     long long summaryLoadUs = 0;
     long long summaryResimUs = 0;
     long long summaryMaxResimUs = 0;
+    long long summaryWaitUs = 0;
+    long long summaryMaxWaitUs = 0;
     long long summaryDebugBeginUs = 0;
 
     if (g_GekkoSession == nullptr)
@@ -871,6 +1540,10 @@ int rollback_execute_begin_frame(void* userData)
 
     const auto networkPollTime = std::chrono::steady_clock::now();
     gekko_network_poll(g_GekkoSession);
+    // Apply any lobby-driven force-disconnects before update_session, so a known
+    // peer drop substitutes idle input this very frame instead of stalling out
+    // GekkoNet's 5 s silence timeout.
+    process_pending_disconnects();
     summaryNetworkPollUs =
         std::chrono::duration_cast<std::chrono::microseconds>(
             std::chrono::steady_clock::now() - networkPollTime).count();
@@ -906,10 +1579,62 @@ int rollback_execute_begin_frame(void* userData)
                 std::chrono::steady_clock::now() - updateSessionTime).count();
         log_session_events();
 
+        // Lightweight stall diagnostics: a stall we reported has now resolved
+        // (events arrived) — emit one compact end record before the wait counter is
+        // cleared below, so the log captures the freeze's total wall-clock duration.
+        if (count != 0 && g_GekkoStallReported &&
+            (g_GekkoStallLogEnabled || g_GekkoLogEnabled))
+        {
+            const long long waitedMs =
+                std::chrono::duration_cast<std::chrono::milliseconds>(
+                    std::chrono::steady_clock::now() - g_GekkoStallBeginTime).count();
+            std::ostringstream stream;
+            stream << "stall end waited_ms=" << waitedMs
+                   << " loops=" << g_GekkoWaitingLoops
+                   << " frames_ahead=" << std::fixed << std::setprecision(2)
+                   << gekko_frames_ahead(g_GekkoSession);
+            append_peer_network_stats(stream);
+            write_gekko_stall_log(stream.str());
+            g_GekkoStallReported = false;
+        }
+
         if (count == 0)
         {
+            if (g_GekkoWaitingLoops == 0)
+            {
+                g_GekkoStallBeginTime = std::chrono::steady_clock::now();
+                g_GekkoStallReported = false;
+            }
             g_GekkoWaitingLoops++;
             summaryWaitLoops++;
+
+            // Lightweight stall diagnostics: once a wait grows past a normal
+            // sub-frame hitch, snapshot per-peer network stats at a coarse
+            // wall-clock cadence. A peer whose kb_recv stops climbing across these
+            // snapshots is the one starving the mesh.
+            if (g_GekkoStallLogEnabled || g_GekkoLogEnabled)
+            {
+                const auto stallNow = std::chrono::steady_clock::now();
+                const long long waitedMs =
+                    std::chrono::duration_cast<std::chrono::milliseconds>(stallNow - g_GekkoStallBeginTime).count();
+                const long long sinceSnapMs =
+                    std::chrono::duration_cast<std::chrono::milliseconds>(stallNow - g_GekkoStallLastSnapshotTime).count();
+                if (waitedMs >= kGekkoStallReportThresholdMs &&
+                    (!g_GekkoStallReported || sinceSnapMs >= kGekkoStallSnapshotIntervalMs))
+                {
+                    g_GekkoStallLastSnapshotTime = stallNow;
+                    std::ostringstream stream;
+                    stream << "stall " << (g_GekkoStallReported ? "ongoing" : "begin")
+                           << " waited_ms=" << waitedMs
+                           << " loops=" << g_GekkoWaitingLoops
+                           << " frames_ahead=" << std::fixed << std::setprecision(2)
+                           << gekko_frames_ahead(g_GekkoSession);
+                    append_peer_network_stats(stream);
+                    write_gekko_stall_log(stream.str());
+                    g_GekkoStallReported = true;
+                }
+            }
+
             if (g_GekkoLogEnabled &&
                 (g_GekkoWaitingLoops <= 20 || (g_GekkoWaitingLoops % 60) == 0))
             {
@@ -993,6 +1718,15 @@ int rollback_execute_begin_frame(void* userData)
             case GekkoLoadEvent:
                 summaryLoadCount++;
                 write_gekko_log("load_state begin");
+                // A rollback to frame <= a held keyframe means that frame may be
+                // re-simulated differently than we snapshotted — discard the pending
+                // keyframe so we never commit a state that diverges from the krec.
+                if (g_GekkoKeyframePending &&
+                    event->data.load.frame <= g_GekkoKeyframePendingLiveFrame)
+                {
+                    g_GekkoKeyframePending = false;
+                    write_gekko_log("keyframe discarded reason=rollback");
+                }
                 if (!load_gekko_state(event))
                 {
                     return 0;
@@ -1183,15 +1917,61 @@ int rollback_execute_begin_frame(void* userData)
                            << " last_run_frame_us=" << g_GekkoLastRunFrameUs
                            << " pending_save_us=" << g_GekkoLastPendingSaveUs
                            << " frames_ahead=" << std::fixed << std::setprecision(2)
-                           << gekko_frames_ahead(g_GekkoSession);
+                           << gekko_frames_ahead(g_GekkoSession)
+                           << " target_scale=" << std::setprecision(4) << g_GekkoTimesyncTargetScale
+                           << " speed_scale=" << g_GekkoSpeedScale;
+                    if (summaryWaitLoops > 0 || summaryLoadCount > 0)
+                    {
+                        append_peer_network_stats(stream);
+                    }
                     write_gekko_log(stream.str());
                 }
             }
+            const auto traceBeginTotalUs =
+                std::chrono::duration_cast<std::chrono::microseconds>(
+                    std::chrono::steady_clock::now() - beginTime).count();
+
+            rmgk_pacing_trace_begin_frame(
+                summaryEventCount,
+                summarySaveCount,
+                summaryLoadCount,
+                summaryRollbackAdvanceCount,
+                summaryRunaheadAdvanceCount,
+                summaryWaitLoops,
+                summaryDebugBeginUs,
+                traceBeginTotalUs,
+                summaryNetworkPollUs,
+                summaryPacingUs,
+                summarySubmitInputUs,
+                summaryUpdateSessionUs,
+                summaryLatchInputUs,
+                summarySaveUs,
+                summaryLoadUs,
+                summaryResimUs,
+                summaryMaxResimUs,
+                summaryWaitUs,
+                summaryMaxWaitUs);
+
             write_gekko_log("begin_frame result=real_frame");
             return 1;
         }
 
-        std::this_thread::sleep_for(std::chrono::microseconds(kGekkoWaitSleepUs));
+        //std::this_thread::sleep_for(std::chrono::microseconds(kGekkoWaitSleepUs)); // Not accurate enough in windows
+        const auto traceWaitBegin =
+            std::chrono::steady_clock::now();
+
+        rmgk::timing::PreciseWaitFor(
+            std::chrono::microseconds{kGekkoWaitSleepUs},
+            std::chrono::microseconds{kGekkoWaitSleepUs});
+
+        const long long traceWaitUs =
+            std::chrono::duration_cast<std::chrono::microseconds>(
+                std::chrono::steady_clock::now() -
+                traceWaitBegin).count();
+
+        summaryWaitUs += traceWaitUs;
+        summaryMaxWaitUs =
+            std::max(summaryMaxWaitUs, traceWaitUs);
     }
 }
 
@@ -1223,6 +2003,16 @@ int rollback_execute_end_frame(void* userData)
                 std::chrono::steady_clock::now() - debugEndBeginTime).count();
     }
     g_GekkoHasLatchedInput = false;
+
+    const auto traceEndTotalUs =
+        std::chrono::duration_cast<std::chrono::microseconds>(
+            std::chrono::steady_clock::now() - beginTime).count();
+
+    rmgk_pacing_trace_end_frame(
+        traceEndTotalUs,
+        pendingSaveUs,
+        debugEndUs);
+
     if (g_GekkoLogEnabled)
     {
         const auto totalUs =
@@ -1424,6 +2214,220 @@ CORE_EXPORT bool rmgk_gekko::start_p2p_session(const char* gameName, int players
 #endif
 }
 
+CORE_EXPORT bool rmgk_gekko::start_lobby_session(const char* gameName, int players, int inputSize,
+    int localPlayer, unsigned short localPort,
+    const LobbyRemotePeer* remotes, int numRemotes,
+    int localDelay, int predictionWindow)
+{
+#ifndef RMGK_HAVE_GEKKONET
+    (void)gameName;
+    (void)players;
+    (void)inputSize;
+    (void)localPlayer;
+    (void)localPort;
+    (void)remotes;
+    (void)numRemotes;
+    (void)localDelay;
+    (void)predictionWindow;
+    return false;
+#else
+    close_session();
+
+    g_GekkoLocalPlayer = localPlayer;
+    g_GekkoStopRequested.store(false, std::memory_order_relaxed);
+    reset_gekko_log();
+
+    if (gameName == nullptr || players < 2 || players > 4 || inputSize != static_cast<int>(sizeof(uint32_t)) ||
+        localPlayer < 1 || localPlayer > players || remotes == nullptr || numRemotes != players - 1)
+    {
+        write_gekko_log("start_lobby_session result=fail reason=invalid_params");
+        return false;
+    }
+
+    // Validate per-remote endpoints and slot uniqueness before we touch GekkoNet.
+    bool slotSeen[5] = { false, false, false, false, false }; // index 1..4
+    slotSeen[localPlayer] = true;
+    for (int i = 0; i < numRemotes; i++)
+    {
+        const LobbyRemotePeer& peer = remotes[i];
+        if (peer.slot < 1 || peer.slot > players || peer.slot == localPlayer ||
+            peer.ip.empty() || peer.port == 0 || slotSeen[peer.slot])
+        {
+            write_gekko_log("start_lobby_session result=fail reason=bad_remote_peer");
+            return false;
+        }
+        slotSeen[peer.slot] = true;
+    }
+
+    if (!gekko_create(&g_GekkoSession, GekkoGameSession))
+    {
+        write_gekko_log("gekko_create result=fail");
+        return false;
+    }
+
+    const int clampedLocalDelay = std::clamp(localDelay, 0, 10);
+    const int clampedPredictionWindow = std::clamp(predictionWindow, 1, 10);
+
+    GekkoConfig config = {};
+    config.num_players = static_cast<unsigned char>(players);
+    config.max_spectators = 0;
+    config.input_prediction_window = static_cast<unsigned char>(clampedPredictionWindow);
+    config.input_size = static_cast<unsigned int>(inputSize);
+    config.state_size = kGekkoStateCapacity;
+    config.limited_saving = false;
+    config.desync_detection = true;
+    config.check_distance = 10;
+    gekko_start(g_GekkoSession, &config);
+
+    // Use GekkoNet's built-in UDP adapter directly — the lobby doesn't
+    // initialize n02's P2P core, so the n02-based transport used by
+    // start_p2p_session would have no socket to ride on. The lobby's
+    // anchor socket was released just before this call so the OS port
+    // is free for gekko_default_adapter to bind.
+    try
+    {
+        gekko_net_adapter_set(g_GekkoSession, gekko_default_adapter(localPort));
+    }
+    catch (const std::exception& e)
+    {
+        std::ostringstream stream;
+        stream << "start_lobby_session result=fail reason=adapter local_port=" << localPort
+               << " error=" << e.what();
+        write_gekko_log(stream.str());
+        CoreSetError("GekkoNet adapter initialization failed: " + std::string(e.what()));
+        close_session();
+        return false;
+    }
+
+    gekko_set_runahead(g_GekkoSession, 0);
+
+    g_GekkoPlayers = players;
+    g_GekkoInputSize = inputSize;
+    g_GekkoLocalHandle = -1;
+    g_GekkoRemoteHandle = -1;
+    g_GekkoPlayerHandles.assign(static_cast<size_t>(players), -1);
+    g_GekkoLocalHandles.assign(static_cast<size_t>(players), -1);
+    g_GekkoLatchedInput.assign(static_cast<size_t>(players * inputSize), 0);
+    g_GekkoHasLatchedInput = false;
+    g_GekkoPendingSaves.clear();
+
+    if (g_GekkoLogEnabled)
+    {
+        std::ostringstream stream;
+        stream << "start_lobby_session game=" << gameName
+               << " players=" << players
+               << " input_size=" << inputSize
+               << " local_player=" << localPlayer
+               << " local_port=" << localPort
+               << " local_delay=" << localDelay
+               << " clamped_local_delay=" << clampedLocalDelay
+               << " prediction_window=" << predictionWindow
+               << " clamped_prediction_window=" << clampedPredictionWindow
+               << " transport=gekko_default_udp"
+               << " num_remotes=" << numRemotes;
+        for (int i = 0; i < numRemotes; i++)
+        {
+            stream << " remote[" << i << "]=slot" << remotes[i].slot
+                   << "@" << remotes[i].ip << ":" << remotes[i].port;
+        }
+        write_gekko_log(stream.str());
+    }
+
+    // Pre-build per-remote endpoint strings. These need to outlive the
+    // gekko_add_actor calls because GekkoNetAddress.data is a raw pointer.
+    std::vector<std::string> remoteAddrStrings(static_cast<size_t>(numRemotes));
+    for (int i = 0; i < numRemotes; i++)
+    {
+        remoteAddrStrings[static_cast<size_t>(i)] = remotes[i].ip + ":" + std::to_string(remotes[i].port);
+    }
+
+    for (int player = 1; player <= players; player++)
+    {
+        if (player == localPlayer)
+        {
+            const int handle = gekko_add_actor(g_GekkoSession, GekkoLocalPlayer, nullptr);
+            if (handle < 0)
+            {
+                write_gekko_log("gekko_add_actor result=fail type=local");
+                close_session();
+                return false;
+            }
+            g_GekkoLocalHandle = handle;
+            g_GekkoPlayerHandles[static_cast<size_t>(player - 1)] = handle;
+            g_GekkoLocalHandles[static_cast<size_t>(player - 1)] = handle;
+            gekko_set_local_delay(g_GekkoSession, handle, static_cast<unsigned char>(clampedLocalDelay));
+            if (g_GekkoLogEnabled)
+            {
+                std::ostringstream stream;
+                stream << "gekko_add_actor result=ok player=" << player
+                       << " type=local handle=" << handle
+                       << " local_delay=" << clampedLocalDelay;
+                write_gekko_log(stream.str());
+            }
+        }
+        else
+        {
+            // Find the remote entry that owns this slot.
+            int remoteIndex = -1;
+            for (int i = 0; i < numRemotes; i++)
+            {
+                if (remotes[i].slot == player)
+                {
+                    remoteIndex = i;
+                    break;
+                }
+            }
+            if (remoteIndex < 0)
+            {
+                write_gekko_log("gekko_add_actor result=fail type=remote reason=no_endpoint_for_slot");
+                close_session();
+                return false;
+            }
+            std::string& addrString = remoteAddrStrings[static_cast<size_t>(remoteIndex)];
+            GekkoNetAddress address = {};
+            address.data = addrString.data();
+            address.size = static_cast<unsigned int>(addrString.size());
+            const int handle = gekko_add_actor(g_GekkoSession, GekkoRemotePlayer, &address);
+            if (handle < 0)
+            {
+                write_gekko_log("gekko_add_actor result=fail type=remote");
+                close_session();
+                return false;
+            }
+            if (g_GekkoRemoteHandle < 0)
+            {
+                g_GekkoRemoteHandle = handle;
+            }
+            g_GekkoPlayerHandles[static_cast<size_t>(player - 1)] = handle;
+            if (g_GekkoLogEnabled)
+            {
+                std::ostringstream stream;
+                stream << "gekko_add_actor result=ok player=" << player
+                       << " type=remote handle=" << handle
+                       << " remote=" << addrString;
+                write_gekko_log(stream.str());
+            }
+        }
+    }
+
+    if (g_GekkoLocalHandle < 0)
+    {
+        write_gekko_log("start_lobby_session result=fail reason=no_local_handle");
+        close_session();
+        return false;
+    }
+
+    if (!install_core_input_callback())
+    {
+        write_gekko_log("install_core_input_callback result=fail");
+        close_session();
+        return false;
+    }
+    write_gekko_log("install_core_input_callback result=ok");
+    return true;
+#endif
+}
+
 CORE_EXPORT bool rmgk_gekko::start_local_session(const char* gameName, int players, int inputSize, int localDelay)
 {
 #ifndef RMGK_HAVE_GEKKONET
@@ -1525,6 +2529,7 @@ CORE_EXPORT bool rmgk_gekko::start_local_session(const char* gameName, int playe
 CORE_EXPORT void rmgk_gekko::close_session()
 {
 #ifdef RMGK_HAVE_GEKKONET
+    rmgk_pacing_trace_flush();
     g_GekkoStopRequested.store(false, std::memory_order_relaxed);
     clear_core_input_callback();
     if (g_GekkoSession != nullptr)
@@ -1540,6 +2545,10 @@ CORE_EXPORT void rmgk_gekko::close_session()
     g_GekkoRemoteHandle = -1;
     g_GekkoPlayerHandles.clear();
     g_GekkoLocalHandles.clear();
+    {
+        std::lock_guard<std::mutex> lock(g_GekkoDisconnectMutex);
+        g_GekkoPendingDisconnectSlots.clear();
+    }
     g_GekkoLatchedInput.clear();
     g_GekkoHasLatchedInput = false;
     g_GekkoLatchedFrame = -1;
@@ -1555,6 +2564,18 @@ CORE_EXPORT void rmgk_gekko::close_session()
     g_GekkoMaxObservedFrame = -1;
     g_GekkoExecuting.store(false, std::memory_order_relaxed);
     g_GekkoPendingSaves.clear();
+    // Reset spectate keyframe capture state for the next session.
+    g_GekkoKeyframeRequested.store(false, std::memory_order_relaxed);
+    g_GekkoKeyframePending = false;
+    g_GekkoKeyframePendingLiveFrame = -1;
+    g_GekkoKeyframePendingBuf.clear();
+    g_GekkoSpectateProbeStartFrame = -1;
+    {
+        std::lock_guard<std::mutex> lock(g_GekkoKeyframeReadyMutex);
+        g_GekkoKeyframeReady = false;
+        g_GekkoKeyframeReadyFrame = -1;
+        g_GekkoKeyframeReadyBuf.clear();
+    }
     g_GekkoDebugInputProvider = nullptr;
     g_GekkoDebugBeginFrame = nullptr;
     g_GekkoDebugEndFrame = nullptr;
@@ -1586,6 +2607,27 @@ CORE_EXPORT void rmgk_gekko::request_stop()
 #endif
 }
 
+CORE_EXPORT void rmgk_gekko::request_disconnect_player(int slot)
+{
+#ifdef RMGK_HAVE_GEKKONET
+    if (slot < 1 || slot > 4)
+    {
+        return;
+    }
+    std::lock_guard<std::mutex> lock(g_GekkoDisconnectMutex);
+    for (int queued : g_GekkoPendingDisconnectSlots)
+    {
+        if (queued == slot)
+        {
+            return; // already queued — de-dup
+        }
+    }
+    g_GekkoPendingDisconnectSlots.push_back(slot);
+#else
+    (void)slot;
+#endif
+}
+
 CORE_EXPORT bool rmgk_gekko::is_netplay_session_active()
 {
 #ifdef RMGK_HAVE_GEKKONET
@@ -1593,6 +2635,213 @@ CORE_EXPORT bool rmgk_gekko::is_netplay_session_active()
 #else
     return false;
 #endif
+}
+
+
+CORE_EXPORT void rmgk_gekko::pace_before_present()
+{
+#ifdef RMGK_HAVE_GEKKONET
+    if (!g_RollbackPresentPacerEnabled ||
+        g_GekkoSession == nullptr ||
+        !g_GekkoExecuting.load(std::memory_order_relaxed))
+    {
+        return;
+    }
+
+    /*
+     * The core publishes the exact nominal VI rate before the first bypassed
+     * visible-frame limiter call. An explicit environment override wins.
+     */
+    if (!g_RollbackPresentBaseHzOverridden)
+    {
+        const char* effectiveHzEnv =
+            std::getenv(
+                "RMGK_ROLLBACK_PRESENT_HZ_EFFECTIVE");
+
+        if (effectiveHzEnv != nullptr &&
+            effectiveHzEnv[0] != '\0')
+        {
+            char* end = nullptr;
+            const double value =
+                std::strtod(effectiveHzEnv, &end);
+
+            if (end != effectiveHzEnv &&
+                value >= 30.0 &&
+                value <= 240.0)
+            {
+                g_RollbackPresentBaseHz = value;
+            }
+        }
+    }
+
+    const double scale =
+        std::clamp(g_GekkoSpeedScale, 0.99, 1.01);
+
+    const double periodUs =
+        1000000.0 /
+        (g_RollbackPresentBaseHz * scale);
+
+    auto now = std::chrono::steady_clock::now();
+
+    if (!g_RollbackPresentPacerInitialized)
+    {
+        g_RollbackPresentPacerInitialized = true;
+        g_RollbackPresentLastSwapTime = now;
+        g_RollbackPresentTargetTime = now;
+
+        record_rollback_present_pacing(
+            1,
+            1,
+            0,
+            scale,
+            periodUs,
+            0,
+            0,
+            0,
+            0,
+            0);
+        return;
+    }
+
+    const auto period =
+        std::chrono::duration_cast<
+            std::chrono::steady_clock::duration>(
+                std::chrono::duration<
+                    double,
+                    std::micro>(periodUs));
+
+    const auto deadline =
+        g_RollbackPresentTargetTime + period;
+
+    const long long intervalBeforeWaitUs =
+        std::chrono::duration_cast<
+            std::chrono::microseconds>(
+                now -
+                g_RollbackPresentLastSwapTime).count();
+
+    long long waitRequestedUs = 0;
+    long long waitActualUs = 0;
+    long long lateUs = 0;
+    int deadlineMiss = 0;
+
+    if (now < deadline)
+    {
+        const auto remainingNs =
+            std::chrono::duration_cast<
+                std::chrono::nanoseconds>(
+                    deadline - now).count();
+
+        /*
+         * Round upward so microsecond conversion never intentionally
+         * shortens the requested deadline.
+         */
+        waitRequestedUs =
+            (remainingNs + 999) / 1000;
+
+        const auto waitBegin =
+            std::chrono::steady_clock::now();
+
+        rmgk::timing::PreciseWaitFor(
+            std::chrono::microseconds{
+                waitRequestedUs},
+            std::chrono::microseconds{
+                std::min<long long>(
+                    waitRequestedUs,
+                    100)});
+
+        now = std::chrono::steady_clock::now();
+
+        waitActualUs =
+            std::chrono::duration_cast<
+                std::chrono::microseconds>(
+                    now - waitBegin).count();
+    }
+    else
+    {
+        deadlineMiss = 1;
+        lateUs =
+            std::chrono::duration_cast<
+                std::chrono::microseconds>(
+                    now - deadline).count();
+    }
+
+    const long long intervalAfterWaitUs =
+        std::chrono::duration_cast<
+            std::chrono::microseconds>(
+                now -
+                g_RollbackPresentLastSwapTime).count();
+
+    /*
+     * Advance from the scheduled deadline rather than the actual late wake.
+     * Normal wait overshoot is therefore removed from the next wait instead
+     * of being permanently added to every frame interval.
+     *
+     * A stall which leaves us at least one complete period behind is rebased
+     * to the current time. This prevents a long pause from causing a burst of
+     * immediate catch-up swaps while still preserving phase across ordinary
+     * sub-frame scheduler jitter.
+     */
+    if (now >= deadline + period)
+    {
+        g_RollbackPresentTargetTime = now;
+    }
+    else
+    {
+        g_RollbackPresentTargetTime = deadline;
+    }
+
+    g_RollbackPresentLastSwapTime = now;
+
+    record_rollback_present_pacing(
+        1,
+        0,
+        deadlineMiss,
+        scale,
+        periodUs,
+        intervalBeforeWaitUs,
+        waitRequestedUs,
+        waitActualUs,
+        lateUs,
+        intervalAfterWaitUs);
+#else
+    return;
+#endif
+}
+
+CORE_EXPORT void rmgk_gekko::trace_swap_duration(
+    long long swapUs,
+    long long makeCurrentUs,
+    int path)
+{
+#ifdef RMGK_HAVE_GEKKONET
+    if (!g_RmgkPacingTraceEnabled ||
+        g_RmgkPacingTraceActiveRow ==
+            kRmgkPacingTraceInvalidRow ||
+        g_RmgkPacingTraceActiveRow >=
+            g_RmgkPacingTraceRows.size())
+    {
+        return;
+    }
+
+    auto& row =
+        g_RmgkPacingTraceRows[
+            g_RmgkPacingTraceActiveRow];
+
+    row.coreFrameSwap = CoreGetCurrentFrameCount();
+    row.swapUs = swapUs;
+    row.makeCurrentUs = makeCurrentUs;
+    row.swapPath = path;
+#else
+    (void)swapUs;
+    (void)makeCurrentUs;
+    (void)path;
+#endif
+}
+
+static void rollback_pace_before_present(void* userData)
+{
+    (void)userData;
+    rmgk_gekko::pace_before_present();
 }
 
 CORE_EXPORT bool rmgk_gekko::execute()
@@ -1608,9 +2857,14 @@ CORE_EXPORT bool rmgk_gekko::execute()
     m64p_rollback_execute_callbacks callbacks = {};
     callbacks.begin_frame = rollback_execute_begin_frame;
     callbacks.end_frame = rollback_execute_end_frame;
+    callbacks.pace_before_present = rollback_pace_before_present;
+    callbacks.pacing_trace_enabled =
+        g_RmgkPacingTraceEnabled ? 1 : 0;
     g_GekkoExecuting.store(true, std::memory_order_relaxed);
     bool result = CoreRollbackExecute(callbacks);
     g_GekkoExecuting.store(false, std::memory_order_relaxed);
+    rmgk_pacing_trace_flush();
+    g_RollbackPresentPacerInitialized = false;
     return result;
 #endif
 }
@@ -1676,6 +2930,65 @@ CORE_EXPORT bool rmgk_gekko::synchronize_input(void* values, int size, int playe
                     break;
                 }
                 n02::recordingWriteInputs(it->second.data(), static_cast<int>(it->second.size()));
+                // Spectate input probe: log the confirmed krec input per frame (the exact
+                // bytes a spectator must replay) so it can be diffed against the
+                // spectator's applied input — revealing whether the boundary divergence is
+                // an input misalignment or hidden state.
+                if (g_GekkoSpectateProbeStartFrame >= 0 &&
+                    it->first >= g_GekkoSpectateProbeStartFrame &&
+                    it->first <= g_GekkoSpectateProbeStartFrame + kSpectateProbeWindow &&
+                    g_GekkoInputSize >= 4)
+                {
+                    // Label by krec RECORD INDEX (not the GekkoNet frame) so it shares the
+                    // spectator's coordinate system — the spectator counts records from 0.
+                    // The record for this frame was just written above, so its 0-based index
+                    // is recordingFrameCount() - 1.
+                    const int hostRecordIdx = n02::recordingFrameCount() - 1;
+                    std::ostringstream istream;
+                    istream << "spectate_input side=host frame=" << hostRecordIdx
+                            << " gekko=" << it->first;
+                    const std::vector<unsigned char>& in = it->second;
+                    const int players = static_cast<int>(in.size()) / g_GekkoInputSize;
+                    for (int p = 0; p < players && p < 2; p++)
+                    {
+                        const size_t off = static_cast<size_t>(p) * g_GekkoInputSize;
+                        char buf[32];
+                        snprintf(buf, sizeof(buf), " p%d=%02x%02x%02x%02x", p,
+                                 in[off], in[off + 1], in[off + 2], in[off + 3]);
+                        istream << buf;
+                    }
+                    rmgk_gekko::write_spectate_probe(istream.str());
+                }
+                // Confirm a held keyframe once its frame has flushed to the krec: it's
+                // now past the rollback horizon and survived any rollback (else the
+                // Load handler would have discarded it), so the snapshot matches the
+                // confirmed krec. Hand it to the UI thread to compress + upload.
+                if (g_GekkoKeyframePending && it->first == g_GekkoKeyframePendingLiveFrame)
+                {
+                    {
+                        std::lock_guard<std::mutex> lock(g_GekkoKeyframeReadyMutex);
+                        g_GekkoKeyframeReadyBuf = g_GekkoKeyframePendingBuf;
+                        // The spectator restores at the krec RECORD INDEX, not the GekkoNet
+                        // frame: the server (krecFrameOffset) and the spectator's frameIndex
+                        // both count 0x12 records from 0, but recording starts ~N frames into
+                        // the match (handshake/rollback-horizon warmup), so record_index =
+                        // gekko_frame - N. recordingWriteInputs just wrote THIS frame's record
+                        // (line above), so its 0-based index is recordingFrameCount() - 1.
+                        // Sending the gekko frame instead shifted the spectator's inputs by N.
+                        g_GekkoKeyframeReadyFrame =
+                            n02::recordingFrameCount() - 1 + kKeyframeReplayFrameOffset;
+                        g_GekkoKeyframeReady = true;
+                    }
+                    g_GekkoKeyframePending = false;
+                    if (g_GekkoLogEnabled)
+                    {
+                        std::ostringstream stream;
+                        stream << "keyframe confirmed live_frame=" << g_GekkoKeyframePendingLiveFrame
+                               << " replay_frame=" << g_GekkoKeyframeReadyFrame
+                               << " len=" << g_GekkoKeyframeReadyBuf.size();
+                        write_gekko_log(stream.str());
+                    }
+                }
                 g_GekkoFrameInputBuffer.erase(it);
             }
         }
@@ -1687,6 +3000,53 @@ CORE_EXPORT bool rmgk_gekko::synchronize_input(void* values, int size, int playe
     (void)size;
     (void)players;
     return true;
+}
+
+CORE_EXPORT void rmgk_gekko::request_keyframe()
+{
+    // Just arm the request; the emulation thread snapshots at its next save and
+    // commits once confirmed (see save_gekko_state + the recording flush).
+    g_GekkoKeyframeRequested.store(true, std::memory_order_relaxed);
+}
+
+CORE_EXPORT bool rmgk_gekko::take_keyframe(std::vector<unsigned char>& out, int& frame)
+{
+    std::lock_guard<std::mutex> lock(g_GekkoKeyframeReadyMutex);
+    if (!g_GekkoKeyframeReady)
+    {
+        return false;
+    }
+    out = std::move(g_GekkoKeyframeReadyBuf);
+    g_GekkoKeyframeReadyBuf.clear();
+    frame = g_GekkoKeyframeReadyFrame;
+    g_GekkoKeyframeReady = false;
+    return true;
+}
+
+CORE_EXPORT uint64_t rmgk_gekko::hash_bytes(const unsigned char* data, size_t len)
+{
+    uint64_t h = 1469598103934665603ull; // FNV-1a 64-bit offset basis
+    if (data != nullptr)
+    {
+        for (size_t i = 0; i < len; i++)
+        {
+            h ^= static_cast<uint64_t>(data[i]);
+            h *= 1099511628211ull; // FNV-1a 64-bit prime
+        }
+    }
+    return h;
+}
+
+CORE_EXPORT void rmgk_gekko::write_spectate_probe(const std::string& message)
+{
+    std::lock_guard<std::mutex> lock(g_GekkoLogMutex);
+    get_gekko_log_path(); // side effect: ensures g_GekkoLogPrefix / g_GekkoLogDirectory are set
+    const std::string filename = g_GekkoLogPrefix + "_spectate.log";
+    const std::filesystem::path path = g_GekkoLogDirectory.empty()
+        ? std::filesystem::path(filename)
+        : g_GekkoLogDirectory / filename;
+    std::ofstream file(path, std::ios::out | std::ios::app);
+    file << message << "\n";
 }
 
 CORE_EXPORT void rmgk_gekko::set_debug_hooks(InputProvider inputProvider, FrameCallback beginFrame, FrameCallback endFrame, void* userData)
@@ -1809,7 +3169,7 @@ CORE_EXPORT bool rmgk_gekko::debug_run_frame_with_inputs(const uint32_t* inputs,
 CORE_EXPORT bool rmgk_gekko::toggle_client_input_replay()
 {
 #ifdef RMGK_HAVE_GEKKONET
-    if (g_GekkoSession == nullptr || g_GekkoLocalPlayer != 2)
+    if (g_GekkoSession == nullptr || g_GekkoLocalPlayer <= 1)
     {
         return false;
     }

@@ -35,6 +35,13 @@
 
 #include <stdio.h>
 #include <string.h>
+
+#if defined(_WIN32)
+#include <windows.h>
+#else
+#include <pthread.h>
+#include <unistd.h>
+#endif
 #include "plugin_back.h"
 #include "gcn64.h"
 #include "gcn64lib.h"
@@ -84,6 +91,11 @@ struct rawChannel {
 	int chn;
 };
 
+struct cachedKeys {
+	unsigned int keys;
+	int valid;
+};
+
 /* Multiple adapters are supported, some are single player, others
  * two-player. As they are discovered during scan, their
  * channels (corresponding to physical controller ports) are added
@@ -93,12 +105,24 @@ struct rawChannel {
  */
 static struct rawChannel g_channels[MAX_CHANNELS] = { };
 static int g_n_channels = 0;
+static volatile struct cachedKeys g_cached_keys[MAX_CHANNELS] = { };
+static volatile int g_getKeys_polling = 0;
+static int g_getKeys_thread_running = 0;
+static int g_threading_initialized = 0;
 
 static int pb_commandIsValid(int Control, unsigned char *Command);
+
+static void pb_threadingInit(void);
+static void pb_threadingShutdown(void);
+static void pb_startGetKeysPolling(void);
+static void pb_stopGetKeysPolling(void);
+static void pb_mutexLockIo(void);
+static void pb_mutexUnlockIo(void);
 
 int pb_init(pb_debugFunc debugFn)
 {
 	DebugMessage = debugFn;
+	pb_threadingInit();
 	gcn64_init(1);
 	return 0;
 }
@@ -106,6 +130,8 @@ int pb_init(pb_debugFunc debugFn)
 static void pb_freeAllAdapters(void)
 {
 	int i;
+
+	pb_stopGetKeysPolling();
 
 	for (i=0; i<g_n_adapters; i++) {
 		if (g_adapters[i].handle) {
@@ -125,6 +151,7 @@ static void pb_freeAllAdapters(void)
 int pb_shutdown(void)
 {
 	pb_freeAllAdapters();
+	pb_threadingShutdown();
 	gcn64_shutdown();
 
 	return 0;
@@ -204,15 +231,53 @@ int pb_scanControllers(void)
 	return g_n_channels;
 }
 
+static int g_input_mode = PB_INPUT_MODE_RAW_PIF;
+
+void pb_setInputMode(int mode)
+{
+    if (mode != PB_INPUT_MODE_CACHED_GETKEYS)
+    {
+        mode = PB_INPUT_MODE_RAW_PIF;
+    }
+	
+	
+	if (g_input_mode == mode) {
+        return;
+    }
+
+    if (mode == PB_INPUT_MODE_RAW_PIF) {
+        pb_stopGetKeysPolling();
+    }
+
+    g_input_mode = mode;
+}
+
+int pb_getInputMode(void)
+{
+    return g_input_mode;
+}
+
+int pb_usesRawData(void)
+{
+    return g_input_mode == PB_INPUT_MODE_RAW_PIF;
+}
+
 int pb_romOpen(void)
 {
 	int i;
-
+	
 	for (i=0; i<MAX_ADAPTERS; i++) {
 		if (g_adapters[i].handle) {
 			gcn64lib_suspendPolling(g_adapters[i].handle, 1);
 		}
 	}
+	
+	pb_stopGetKeysPolling(); // safety
+
+    if (g_input_mode == PB_INPUT_MODE_CACHED_GETKEYS)
+    {
+        pb_startGetKeysPolling();
+    }
 
 	return 0;
 }
@@ -221,6 +286,8 @@ int pb_romClosed(void)
 {
 	int i;
 
+	pb_stopGetKeysPolling();
+
 	for (i=0; i<MAX_ADAPTERS; i++) {
 		if (g_adapters[i].handle) {
 			gcn64lib_suspendPolling(g_adapters[i].handle, 0);
@@ -228,6 +295,189 @@ int pb_romClosed(void)
 	}
 
 	return 0;
+}
+
+#if defined(_WIN32)
+static CRITICAL_SECTION g_io_mutex;
+static HANDLE g_getKeys_thread = NULL;
+#define PB_THREAD_RETURN DWORD WINAPI
+#else
+static pthread_mutex_t g_io_mutex;
+static pthread_t g_getKeys_thread;
+#define PB_THREAD_RETURN void *
+#endif
+
+static void pb_threadingInit(void)
+{
+	if (g_threading_initialized) {
+		return;
+	}
+
+#if defined(_WIN32)
+	InitializeCriticalSection(&g_io_mutex);
+#else
+	pthread_mutex_init(&g_io_mutex, NULL);
+#endif
+	g_threading_initialized = 1;
+}
+
+static void pb_threadingShutdown(void)
+{
+	if (!g_threading_initialized) {
+		return;
+	}
+
+	pb_stopGetKeysPolling();
+
+#if defined(_WIN32)
+	DeleteCriticalSection(&g_io_mutex);
+#else
+	pthread_mutex_destroy(&g_io_mutex);
+#endif
+	g_threading_initialized = 0;
+}
+
+static void pb_mutexLockIo(void)
+{
+	pb_threadingInit(); // safety
+	
+#if defined(_WIN32)
+	EnterCriticalSection(&g_io_mutex);
+#else
+	pthread_mutex_lock(&g_io_mutex);
+#endif
+}
+
+static void pb_mutexUnlockIo(void)
+{
+#if defined(_WIN32)
+	LeaveCriticalSection(&g_io_mutex);
+#else
+	pthread_mutex_unlock(&g_io_mutex);
+#endif
+}
+
+static int pb_pollGetKeysOnce(int Control, unsigned int *Keys)
+{
+	unsigned char command[7] = { 0x01, 0x04, 0x01, 0x00, 0x00, 0x00, 0x00 };
+	unsigned char *rx = command + 3;
+	struct rawChannel *channel;
+	struct adapter *adap;
+	struct blockio_op bio;
+	int res;
+
+	if (!Keys) {
+		return 0;
+	}
+
+	*Keys = 0;
+
+	if (!pb_commandIsValid(Control, command)) {
+		return 0;
+	}
+
+	channel = &g_channels[Control];
+	adap = channel->adapter;
+	if (!adap || !adap->handle) {
+		return 0;
+	}
+
+	memset(&bio, 0, sizeof(bio));
+	bio.chn = channel->chn;
+	bio.tx_len = command[0] & BIO_RXTX_MASK;
+	bio.rx_len = command[1] & BIO_RXTX_MASK;
+	bio.tx_data = command + 2;
+	bio.rx_data = rx;
+
+	pb_mutexLockIo();
+	res = gcn64lib_blockIO(adap->handle, &bio, 1);
+	pb_mutexUnlockIo();
+
+	if (res != 0) {
+		return 0;
+	}
+
+	if ((bio.rx_len & (BIO_RX_LEN_TIMEDOUT | BIO_RX_LEN_PARTIAL)) || ((bio.rx_len & BIO_RXTX_MASK) < 4)) {
+		return 0;
+	}
+
+	*Keys = ((unsigned int)rx[0])
+		| ((unsigned int)rx[1] << 8)
+		| ((unsigned int)rx[2] << 16)
+		| ((unsigned int)rx[3] << 24);
+	return 1;
+}
+
+static PB_THREAD_RETURN pb_getKeysPollingThread(void *unused)
+{
+	int i;
+	(void)unused;
+
+	while (g_getKeys_polling) {
+		for (i=0; i<g_n_channels && i<MAX_CHANNELS && g_getKeys_polling; i++) {
+			unsigned int keys;
+			if (pb_pollGetKeysOnce(i, &keys)) {
+				g_cached_keys[i].keys = keys;
+				g_cached_keys[i].valid = 1;
+			}
+		}
+	}
+
+#if defined(_WIN32)
+	return 0;
+#else
+	return NULL;
+#endif
+}
+
+static void pb_startGetKeysPolling(void)
+{
+	pb_threadingInit(); // safety
+	
+	if (g_getKeys_thread_running) {
+		return;
+	}
+
+	memset(g_cached_keys, 0, sizeof(g_cached_keys));
+
+	g_getKeys_polling = 1;
+
+#if defined(_WIN32)
+	g_getKeys_thread = CreateThread(NULL, 0, pb_getKeysPollingThread, NULL, 0, NULL);
+	if (!g_getKeys_thread) {
+		g_getKeys_polling = 0;
+		DebugMessage(PB_MSG_ERROR, "Could not start GetKeys polling thread");
+		return;
+	}
+#else
+	if (pthread_create(&g_getKeys_thread, NULL, pb_getKeysPollingThread, NULL) != 0) {
+		g_getKeys_polling = 0;
+		DebugMessage(PB_MSG_ERROR, "Could not start GetKeys polling thread");
+		return;
+	}
+#endif
+
+	g_getKeys_thread_running = 1;
+}
+
+static void pb_stopGetKeysPolling(void)
+{
+	if (!g_getKeys_thread_running) {
+		g_getKeys_polling = 0;
+		return;
+	}
+
+	g_getKeys_polling = 0;
+
+#if defined(_WIN32)
+	WaitForSingleObject(g_getKeys_thread, INFINITE);
+	CloseHandle(g_getKeys_thread);
+	g_getKeys_thread = NULL;
+#else
+	pthread_join(g_getKeys_thread, NULL);
+#endif
+
+	g_getKeys_thread_running = 0;
 }
 
 #if defined(TIME_RAW_IO) || defined(TIME_COMMAND_TO_READ)
@@ -303,7 +553,13 @@ int pb_controllerCommand(int Control, unsigned char *Command)
 int pb_getKeys(int Control, unsigned int *Keys)
 {
 	unsigned char command[7] = { 0x01, 0x04, 0x01, 0x00, 0x00, 0x00, 0x00 };
-	unsigned char *rx = command + 3;
+	int valid;
+	
+	// Normal path
+    if (g_input_mode != PB_INPUT_MODE_CACHED_GETKEYS)
+    {
+        return pb_pollGetKeysOnce(Control, Keys);
+    }
 
 	if (!Keys) {
 		return 0;
@@ -315,18 +571,13 @@ int pb_getKeys(int Control, unsigned int *Keys)
 		return 0;
 	}
 
-	pb_readController(Control, command);
-	pb_readController(-1, NULL);
-
-	if ((command[1] & (BIO_RX_LEN_TIMEDOUT | BIO_RX_LEN_PARTIAL)) || ((command[1] & BIO_RXTX_MASK) < 4)) {
-		return 0;
+	// Cached path
+	valid = g_cached_keys[Control].valid;
+	if (valid) {
+		*Keys = g_cached_keys[Control].keys;
 	}
 
-	*Keys = ((unsigned int)rx[0])
-		| ((unsigned int)rx[1] << 8)
-		| ((unsigned int)rx[2] << 16)
-		| ((unsigned int)rx[3] << 24);
-	return 1;
+	return valid;
 }
 
 static int pb_performIo(void)
@@ -361,7 +612,9 @@ static int pb_performIo(void)
 #ifdef TIME_RAW_IO
 		timing(1, NULL);
 #endif
+		pb_mutexLockIo();
 		res = gcn64lib_blockIO(adap->handle, biops, adap->n_ops);
+		pb_mutexUnlockIo();
 #ifdef TIME_RAW_IO
 		timing(0, "blockIO");
 #endif

@@ -38,6 +38,7 @@ public:
 private slots:
     void onPollTimer();
     void onResetStatsClicked();
+    void onInputModeChanged(int index);
 
 private:
     enum class ExchangeFailure
@@ -113,6 +114,7 @@ private:
 
     QLabel* m_StatusLabel = nullptr;
     QComboBox* m_PortComboBox = nullptr;
+    QComboBox* m_InputModeComboBox = nullptr;
     QLabel* m_StatsPollsLabel = nullptr;
     QLabel* m_StatsLatencyLabel = nullptr;
     QLabel* m_StatsSlowPollsLabel = nullptr;
