@@ -234,10 +234,22 @@ SettingsDialog::SettingsDialog(QWidget *parent, QString file) : QDialog(parent)
     QVBoxLayout* rollbackLoggingLayout = new QVBoxLayout(rollbackLoggingGroupBox);
     this->rollbackEnableLocalTestingCheckBox = new QCheckBox("Use rollback engine for local play", rollbackTab);
     this->rollbackVerboseStatsCheckBox = new QCheckBox("Enable verbose rollback stats logging", rollbackLoggingGroupBox);
+    this->rollbackStallDiagnosticsCheckBox = new QCheckBox("Log netplay stalls only (lightweight freeze diagnostics)", rollbackLoggingGroupBox);
+    this->rollbackStallDiagnosticsCheckBox->setToolTip(
+        "Logs only when a rollback session stalls (a multi-second freeze), with per-peer\n"
+        "network stats so you can see which player's input stopped arriving. Writes nothing\n"
+        "during smooth play, so the log stays tiny — unlike verbose stats, which writes every\n"
+        "frame. Safe to leave on; one player logging is enough to identify the culprit.");
+    this->rollbackPacingTraceCheckBox = new QCheckBox("Enable pacing trace logging", rollbackLoggingGroupBox);
+    this->rollbackPacingTraceCheckBox->setToolTip(
+        "Writes detailed frontend and core pacing CSV logs when a rollback session ends.\n"
+        "Enable this only while diagnosing frame pacing; it is disabled by default.");
     this->rollbackVerbosePifInputLoggingCheckBox = new QCheckBox("Enable verbose PIF input logging", rollbackLoggingGroupBox);
     this->rollbackVerboseGlideInputLoggingCheckBox = new QCheckBox("Enable verbose Glide input logging", rollbackLoggingGroupBox);
     rollbackLayout->addWidget(this->rollbackEnableLocalTestingCheckBox);
     rollbackLoggingLayout->addWidget(this->rollbackVerboseStatsCheckBox);
+    rollbackLoggingLayout->addWidget(this->rollbackStallDiagnosticsCheckBox);
+    rollbackLoggingLayout->addWidget(this->rollbackPacingTraceCheckBox);
     rollbackLoggingLayout->addWidget(this->rollbackVerbosePifInputLoggingCheckBox);
     rollbackLoggingLayout->addWidget(this->rollbackVerboseGlideInputLoggingCheckBox);
     rollbackLayout->addWidget(rollbackLoggingGroupBox);
@@ -978,6 +990,8 @@ void SettingsDialog::loadInterfaceNetplaySettings(void)
 void SettingsDialog::loadRollbackSettings(void)
 {
     this->rollbackVerboseStatsCheckBox->setChecked(CoreSettingsGetBoolValue(SettingsID::Rollback_VerboseStats));
+    this->rollbackStallDiagnosticsCheckBox->setChecked(CoreSettingsGetBoolValue(SettingsID::Rollback_StallDiagnostics));
+    this->rollbackPacingTraceCheckBox->setChecked(CoreSettingsGetBoolValue(SettingsID::Rollback_PacingTrace));
     this->rollbackEnableLocalTestingCheckBox->setChecked(CoreSettingsGetBoolValue(SettingsID::Rollback_EnableLocalTesting));
     this->rollbackVerbosePifInputLoggingCheckBox->setChecked(CoreSettingsGetBoolValue(SettingsID::Rollback_VerbosePifInputLogging));
     this->rollbackVerboseGlideInputLoggingCheckBox->setChecked(CoreSettingsGetBoolValue(SettingsID::Rollback_VerboseGlideInputLogging));
@@ -1194,6 +1208,8 @@ void SettingsDialog::loadDefaultInterfaceNetplaySettings(void)
 void SettingsDialog::loadDefaultRollbackSettings(void)
 {
     this->rollbackVerboseStatsCheckBox->setChecked(CoreSettingsGetDefaultBoolValue(SettingsID::Rollback_VerboseStats));
+    this->rollbackStallDiagnosticsCheckBox->setChecked(CoreSettingsGetDefaultBoolValue(SettingsID::Rollback_StallDiagnostics));
+    this->rollbackPacingTraceCheckBox->setChecked(CoreSettingsGetDefaultBoolValue(SettingsID::Rollback_PacingTrace));
     this->rollbackEnableLocalTestingCheckBox->setChecked(CoreSettingsGetDefaultBoolValue(SettingsID::Rollback_EnableLocalTesting));
     this->rollbackVerbosePifInputLoggingCheckBox->setChecked(CoreSettingsGetDefaultBoolValue(SettingsID::Rollback_VerbosePifInputLogging));
     this->rollbackVerboseGlideInputLoggingCheckBox->setChecked(CoreSettingsGetDefaultBoolValue(SettingsID::Rollback_VerboseGlideInputLogging));
@@ -1468,6 +1484,8 @@ void SettingsDialog::saveInterfaceNetplaySettings(void)
 void SettingsDialog::saveRollbackSettings(void)
 {
     CoreSettingsSetValue(SettingsID::Rollback_VerboseStats, this->rollbackVerboseStatsCheckBox->isChecked());
+    CoreSettingsSetValue(SettingsID::Rollback_StallDiagnostics, this->rollbackStallDiagnosticsCheckBox->isChecked());
+    CoreSettingsSetValue(SettingsID::Rollback_PacingTrace, this->rollbackPacingTraceCheckBox->isChecked());
     CoreSettingsSetValue(SettingsID::Rollback_EnableLocalTesting, this->rollbackEnableLocalTestingCheckBox->isChecked());
     CoreSettingsSetValue(SettingsID::Rollback_VerbosePifInputLogging, this->rollbackVerbosePifInputLoggingCheckBox->isChecked());
     CoreSettingsSetValue(SettingsID::Rollback_VerboseGlideInputLogging, this->rollbackVerboseGlideInputLoggingCheckBox->isChecked());

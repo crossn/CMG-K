@@ -50,6 +50,10 @@ void OnScreenDisplaySetKailleraPortLabels(int playerCount, const std::array<std:
 // clears live Kaillera port labels
 void OnScreenDisplayClearKailleraPortLabels(void);
 
+// Sets a large message box centered on screen, drawn over everything (e.g. the
+// spectate "Stream is buffering..." banner). Pass an empty string to hide it.
+void OnScreenDisplaySetCenterMessage(const std::string& message);
+
 // renders the OSD
 void OnScreenDisplayRender(void);
 

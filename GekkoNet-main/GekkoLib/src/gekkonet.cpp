@@ -94,6 +94,11 @@ void gekko_network_poll(GekkoSession* session)
     session->NetworkPoll();
 }
 
+void gekko_disconnect_player(GekkoSession* session, int handle)
+{
+    session->DisconnectPlayer(handle);
+}
+
 #ifndef GEKKONET_NO_ASIO
 
 #ifdef _WIN32
