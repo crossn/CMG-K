@@ -214,6 +214,9 @@ enum class SettingsDialogTab
 SettingsDialog::SettingsDialog(QWidget *parent, QString file) : QDialog(parent)
 {
     this->setupUi(this);
+    this->languageComboBox->setItemData(0, "system");
+    this->languageComboBox->setItemData(1, "en");
+    this->languageComboBox->setItemData(2, "ja_JP");
 
     connect(this->showLegacyThemesCheckBox, &QCheckBox::toggled, this, [this](bool checked)
     {
@@ -863,6 +866,9 @@ void SettingsDialog::loadInterfaceGeneralSettings(void)
     this->showLegacyThemesCheckBox->blockSignals(blocked);
     populateThemeCombo(this->themeComboBox, themeOptions, showLegacy, currentTheme);
     this->iconThemeComboBox->setCurrentText(QString::fromStdString(CoreSettingsGetStringValue(SettingsID::GUI_IconTheme)));
+    const QString language = QString::fromStdString(CoreSettingsGetStringValue(SettingsID::GUI_Language));
+    const int languageIndex = this->languageComboBox->findData(language);
+    this->languageComboBox->setCurrentIndex(languageIndex >= 0 ? languageIndex : 0);
     this->autoStartNetplayOnStartupCheckBox->setChecked(CoreSettingsGetBoolValue(SettingsID::GUI_AutoStartNetplayOnStartup));
 #ifdef UPDATER
     this->checkForUpdatesCheckBox->setChecked(CoreSettingsGetBoolValue(SettingsID::GUI_CheckForUpdates));
@@ -1127,6 +1133,7 @@ void SettingsDialog::loadDefaultInterfaceGeneralSettings(void)
     this->showLegacyThemesCheckBox->blockSignals(blocked);
     populateThemeCombo(this->themeComboBox, themeOptions, showLegacy, defaultTheme);
     this->iconThemeComboBox->setCurrentText(QString::fromStdString(CoreSettingsGetDefaultStringValue(SettingsID::GUI_IconTheme)));
+    this->languageComboBox->setCurrentIndex(this->languageComboBox->findData("system"));
     this->autoStartNetplayOnStartupCheckBox->setChecked(CoreSettingsGetDefaultBoolValue(SettingsID::GUI_AutoStartNetplayOnStartup));
 #ifdef UPDATER
     this->checkForUpdatesCheckBox->setChecked(CoreSettingsGetDefaultBoolValue(SettingsID::GUI_CheckForUpdates));
@@ -1410,6 +1417,7 @@ void SettingsDialog::saveInterfaceGeneralSettings(void)
 {
     CoreSettingsSetValue(SettingsID::GUI_Theme, selectedThemeValue(this->themeComboBox).toStdString());
     CoreSettingsSetValue(SettingsID::GUI_IconTheme, this->iconThemeComboBox->currentText().toStdString());
+    CoreSettingsSetValue(SettingsID::GUI_Language, this->languageComboBox->currentData().toString().toStdString());
     CoreSettingsSetValue(SettingsID::GUI_AutoStartNetplayOnStartup, this->autoStartNetplayOnStartupCheckBox->isChecked());
 #ifdef UPDATER
     CoreSettingsSetValue(SettingsID::GUI_CheckForUpdates, this->checkForUpdatesCheckBox->isChecked());
