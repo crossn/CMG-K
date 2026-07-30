@@ -2209,7 +2209,7 @@ void MainWindow::showErrorMessage(QString text, QString details, bool force)
 
     QMessageBox* msgBox = new QMessageBox(this);
     msgBox->setIcon(QMessageBox::Icon::Critical);
-    msgBox->setWindowTitle("Error");
+    msgBox->setWindowTitle(tr("Error"));
     msgBox->setText(text);
     msgBox->setDetailedText(details);
     msgBox->addButton(QMessageBox::Ok);
@@ -2521,7 +2521,7 @@ void MainWindow::launchEmulationThread(QString cartRom, QString diskRom, bool re
 #ifdef NETPLAY
     if (this->netplaySessionDialog != nullptr && !netplay)
     {
-        this->showErrorMessage("EmulationThread::run Failed", "Cannot start emulation when netplay session is active");
+        this->showErrorMessage("EmulationThread::run Failed", tr("Cannot start emulation when netplay session is active"));
         return;
     }
 
@@ -2533,7 +2533,7 @@ void MainWindow::launchEmulationThread(QString cartRom, QString diskRom, bool re
 
     if (!dragdrop && this->emulationThread->isRunning())
     {
-        this->showErrorMessage("EmulationThread::run Failed", "Cannot start emulation when emulation is already running or being started");
+        this->showErrorMessage("EmulationThread::run Failed", tr("Cannot start emulation when emulation is already running or being started"));
         return;
     }
 
@@ -3754,7 +3754,7 @@ void MainWindow::on_networkAccessManager_Finished(QNetworkReply* reply)
     {
         if (!this->ui_SilentUpdateCheck)
         {
-            this->showErrorMessage("Failed to check for updates", reply->errorString());
+            this->showErrorMessage(tr("Failed to check for updates"), reply->errorString());
         }
         reply->deleteLater();
         return;
@@ -3825,7 +3825,7 @@ void MainWindow::on_Action_System_OpenRom(void)
         this->on_Action_System_Pause();
     }
 
-    QString romFile = QFileDialog::getOpenFileName(this, tr("Open N64 ROM or 64DD Disk"), "", "N64 ROMs & Disks (*.n64 *.z64 *.v64 *.ndd *.d64 *.zip *.7z)");
+    QString romFile = QFileDialog::getOpenFileName(this, tr("Open N64 ROM or 64DD Disk"), "", tr("N64 ROMs & Disks (*.n64 *.z64 *.v64 *.ndd *.d64 *.zip *.7z)"));
     if (romFile.isEmpty())
     {
         if (isRunning && !isPaused)
@@ -3853,7 +3853,7 @@ void MainWindow::on_Action_System_OpenCombo(void)
         this->on_Action_System_Pause();
     }
 
-    QString cartRom = QFileDialog::getOpenFileName(this, tr("Open N64 ROM"), "", "N64 ROMs (*.n64 *.z64 *.v64 *.zip *.7z)");
+    QString cartRom = QFileDialog::getOpenFileName(this, tr("Open N64 ROM"), "", tr("N64 ROMs (*.n64 *.z64 *.v64 *.zip *.7z)"));
     if (cartRom.isEmpty())
     {
         if (isRunning && !isPaused)
@@ -3864,7 +3864,7 @@ void MainWindow::on_Action_System_OpenCombo(void)
     }
 
 
-    QString diskRom = QFileDialog::getOpenFileName(this, tr("Open 64DD Disk"), "", "N64DD Disk Image (*.ndd *.d64 *.zip *.7z)");
+    QString diskRom = QFileDialog::getOpenFileName(this, tr("Open 64DD Disk"), "", tr("N64DD Disk Image (*.ndd *.d64 *.zip *.7z)"));
     if (diskRom.isEmpty())
     {
         if (isRunning && !isPaused)
@@ -4224,14 +4224,14 @@ void MainWindow::on_Lobby_SpectateLaunch(quint64 matchId, QString gameName)
     }
     if (this->emulationThread->isRunning())
     {
-        this->showErrorMessage("Busy", "Stop the current game before watching a live replay.");
+        this->showErrorMessage(tr("Busy"), tr("Stop the current game before watching a live replay."));
         if (this->rollbackLobbyDialog != nullptr)
             this->rollbackLobbyDialog->stopSpectating();
         return;
     }
     if (!CoreInitKaillera())
     {
-        this->showErrorMessage("Live Replay Error", QString::fromStdString(CoreGetError()));
+        this->showErrorMessage(tr("Live Replay Error"), QString::fromStdString(CoreGetError()));
         if (this->rollbackLobbyDialog != nullptr)
             this->rollbackLobbyDialog->stopSpectating();
         return;
@@ -4251,7 +4251,7 @@ void MainWindow::on_Lobby_SpectateLaunch(quint64 matchId, QString gameName)
     if (this->ui_SpectateTimerId == 0)
         this->ui_SpectateTimerId = this->startTimer(16);
 
-    OnScreenDisplaySetMessage(("Watching: " + gameName.toStdString()).c_str());
+    OnScreenDisplaySetMessage(tr("Watching: %1").arg(gameName).toStdString().c_str());
 }
 
 void MainWindow::on_Lobby_SpectateData(QByteArray bytes, int liveFrame)
@@ -4348,7 +4348,7 @@ void MainWindow::on_Action_Playback(void)
     // Initialize Kaillera if not already initialized
     if (!CoreInitKaillera())
     {
-        this->showErrorMessage("Kaillera Error", QString::fromStdString(CoreGetError()));
+        this->showErrorMessage(tr("Kaillera Error"), QString::fromStdString(CoreGetError()));
         return;
     }
 
@@ -4564,7 +4564,7 @@ void MainWindow::openNetplayLauncher(int initialTab)
     // Initialize Kaillera if not already initialized
     if (!CoreInitKaillera())
     {
-        this->showErrorMessage("Kaillera Error", QString::fromStdString(CoreGetError()));
+        this->showErrorMessage(tr("Kaillera Error"), QString::fromStdString(CoreGetError()));
         return;
     }
 
@@ -4786,8 +4786,8 @@ void MainWindow::on_Kaillera_GameStarted(QString gameName, int playerNum, int to
     QString romFile = this->findRomByName(gameName);
     if (romFile.isEmpty())
     {
-        this->showErrorMessage("ROM Not Found",
-            "Could not find ROM: " + gameName + "\n\nPlease add it to your ROM directory and refresh the list.");
+        this->showErrorMessage(tr("ROM Not Found"),
+            tr("Could not find ROM: %1\n\nPlease add it to your ROM directory and refresh the list.").arg(gameName));
         // Just end the Kaillera game - full cleanup happens when dialog closes
         CoreEndKailleraGame();
         // A spectate session can't proceed without the ROM — tear it down so its
@@ -4844,8 +4844,8 @@ void MainWindow::on_Rollback_SessionRequested(QString gameName, QString remoteAd
     }
     if (romFile.isEmpty())
     {
-        this->showErrorMessage("ROM Not Found",
-            "Could not find ROM: " + gameName + "\n\nPlease add it to your ROM directory and refresh the list.");
+        this->showErrorMessage(tr("ROM Not Found"),
+            tr("Could not find ROM: %1\n\nPlease add it to your ROM directory and refresh the list.").arg(gameName));
         return;
     }
 
@@ -4916,8 +4916,8 @@ void MainWindow::on_Lobby_SessionRequested(QString gameName, QString romFile, QS
         romFile = this->findRomByName(gameName);
     if (romFile.isEmpty())
     {
-        this->showErrorMessage("ROM Not Found",
-            "Could not find ROM: " + gameName + "\n\nPlease add it to your ROM directory and refresh the list.");
+        this->showErrorMessage(tr("ROM Not Found"),
+            tr("Could not find ROM: %1\n\nPlease add it to your ROM directory and refresh the list.").arg(gameName));
         // The lobby flagged itself "awaiting emulation" before emitting
         // matchReady; clear it so the room doesn't stay stuck on "Connecting…".
 #ifdef NETPLAY
@@ -4937,8 +4937,8 @@ void MainWindow::on_Lobby_SessionRequested(QString gameName, QString romFile, QS
             this->ui_RollbackRelaunchAttempts = 0;
             CoreAddCallbackMessage(CoreDebugMessageType::Error,
                 "Lobby→LobbySession: previous emulation won't stop — giving up to avoid a hung instance");
-            this->showErrorMessage("Couldn't start match",
-                "The previous game is still shutting down. Please wait a moment and try again.");
+            this->showErrorMessage(tr("Couldn't start match"),
+                tr("The previous game is still shutting down. Please wait a moment and try again."));
 #ifdef NETPLAY
             if (this->rollbackLobbyDialog != nullptr)
                 this->rollbackLobbyDialog->notifyEmulationFinished();
@@ -5547,11 +5547,11 @@ void MainWindow::on_RomBrowser_PlayGameWith(CoreRomType type, QString file)
     if (type == CoreRomType::Cartridge)
     { // cartridge
         mainRom = file;
-        otherRom = QFileDialog::getOpenFileName(this, tr("Open 64DD Disk"), "", "N64DD Disk Image (*.ndd *.d64 *.zip *.7z)");
+        otherRom = QFileDialog::getOpenFileName(this, tr("Open 64DD Disk"), "", tr("N64DD Disk Image (*.ndd *.d64 *.zip *.7z)"));
     }
     else
     { // disk
-        mainRom = QFileDialog::getOpenFileName(this, tr("Open N64 ROM"), "", "N64 ROMs (*.n64 *.z64 *.v64 *.zip *.7z)");
+        mainRom = QFileDialog::getOpenFileName(this, tr("Open N64 ROM"), "", tr("N64 ROMs (*.n64 *.z64 *.v64 *.zip *.7z)"));
         otherRom = file;
     }
 
@@ -6057,7 +6057,7 @@ void MainWindow::on_Core_DebugCallback(QList<CoreCallbackMessage> messages)
         // emulation run, we'll stop displaying it
         if (this->ui_DebugCallbackErrors.count(statusbarMessage.Message) < 50)
         {
-            this->showErrorMessage("Core Error", statusbarMessage.Message, false);
+            this->showErrorMessage(tr("Core Error"), statusbarMessage.Message, false);
         }
         this->ui_DebugCallbackErrors.append(statusbarMessage.Message);
         return;
@@ -6157,7 +6157,7 @@ void MainWindow::on_Core_StateCallback(CoreStateCallbackType type, int value)
                 this->ui_LoadSaveStateSlotCounter++;
                 if (this->ui_LoadSaveStateSlotCounter >= 5)
                 { // give up after 5 attempts
-                    this->showErrorMessage("Failed to load save state");
+                    this->showErrorMessage(tr("Failed to load save state"));
                     this->ui_LoadSaveStateSlotCounter = 0;
                     this->ui_LoadSaveStateSlotTimerId = -1;
                     this->ui_LoadSaveStateSlot        = -1;
@@ -6226,7 +6226,7 @@ void MainWindow::on_Action_Rollback_SaveState(void)
 {
     if (!RollbackDebugEnsureStableFrameControl())
     {
-        this->showErrorMessage("Save Rollback State Failed", QString::fromStdString(CoreGetError()));
+        this->showErrorMessage(tr("Save Rollback State Failed"), QString::fromStdString(CoreGetError()));
         return;
     }
 
@@ -6235,7 +6235,7 @@ void MainWindow::on_Action_Rollback_SaveState(void)
 
     if (!CoreRollbackSaveGameState(this->ui_RollbackDebugState, CoreGetCurrentFrameCount()))
     {
-        this->showErrorMessage("Save Rollback State Failed", QString::fromStdString(CoreGetError()));
+        this->showErrorMessage(tr("Save Rollback State Failed"), QString::fromStdString(CoreGetError()));
         return;
     }
 
@@ -6247,7 +6247,7 @@ void MainWindow::on_Action_Rollback_LoadState(void)
 {
     if (!RollbackDebugEnsureStableFrameControl())
     {
-        this->showErrorMessage("Load Rollback State Failed", QString::fromStdString(CoreGetError()));
+        this->showErrorMessage(tr("Load Rollback State Failed"), QString::fromStdString(CoreGetError()));
         return;
     }
 
@@ -6258,7 +6258,7 @@ void MainWindow::on_Action_Rollback_LoadState(void)
 
     if (!CoreRollbackLoadGameState(this->ui_RollbackDebugState))
     {
-        this->showErrorMessage("Load Rollback State Failed", QString::fromStdString(CoreGetError()));
+        this->showErrorMessage(tr("Load Rollback State Failed"), QString::fromStdString(CoreGetError()));
         return;
     }
 
@@ -6269,7 +6269,7 @@ void MainWindow::on_Action_Rollback_StartDebugReplay(void)
 {
     if (!RollbackDebugEnsureStableFrameControl())
     {
-        this->showErrorMessage("Debug Replay Pause Failed", QString::fromStdString(CoreGetError()));
+        this->showErrorMessage(tr("Debug Replay Pause Failed"), QString::fromStdString(CoreGetError()));
         return;
     }
 
@@ -6305,7 +6305,7 @@ void MainWindow::on_Action_Rollback_StartDebugReplay(void)
 
     if (!CoreRollbackSetDeterministic(true))
     {
-        this->showErrorMessage("Debug Replay Deterministic Mode Failed", QString::fromStdString(CoreGetError()));
+        this->showErrorMessage(tr("Debug Replay Deterministic Mode Failed"), QString::fromStdString(CoreGetError()));
         return;
     }
 
@@ -6400,7 +6400,7 @@ void MainWindow::startVerifyDebugReplay(bool withGraphics, bool stress)
 {
     if (!RollbackDebugEnsureStableFrameControl())
     {
-        this->showErrorMessage("Debug Replay Pause Failed", QString::fromStdString(CoreGetError()));
+        this->showErrorMessage(tr("Debug Replay Pause Failed"), QString::fromStdString(CoreGetError()));
         return;
     }
 
@@ -6448,7 +6448,7 @@ void MainWindow::startVerifyDebugReplay(bool withGraphics, bool stress)
 
     if (!CoreRollbackSetDeterministic(true))
     {
-        this->showErrorMessage("Debug Replay Deterministic Mode Failed", QString::fromStdString(CoreGetError()));
+        this->showErrorMessage(tr("Debug Replay Deterministic Mode Failed"), QString::fromStdString(CoreGetError()));
         return;
     }
 
