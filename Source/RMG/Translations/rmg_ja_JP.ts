@@ -4,6 +4,42 @@
     <context>
         <name>SettingsDialog</name>
         <message>
+            <source>Settings</source>
+            <translation>設定</translation>
+        </message>
+        <message>
+            <source>Interface</source>
+            <translation>インターフェース</translation>
+        </message>
+        <message>
+            <source>General</source>
+            <translation>一般</translation>
+        </message>
+        <message>
+            <source>Theme</source>
+            <translation>テーマ</translation>
+        </message>
+        <message>
+            <source>Show legacy themes</source>
+            <translation>旧テーマを表示</translation>
+        </message>
+        <message>
+            <source>Icon theme</source>
+            <translation>アイコンテーマ</translation>
+        </message>
+        <message>
+            <source>Automatic</source>
+            <translation>自動</translation>
+        </message>
+        <message>
+            <source>White</source>
+            <translation>白</translation>
+        </message>
+        <message>
+            <source>Black</source>
+            <translation>黒</translation>
+        </message>
+        <message>
             <source>Language</source>
             <translation>言語</translation>
         </message>
@@ -18,6 +54,18 @@
         <message>
             <source>Language changes take effect after restarting the application.</source>
             <translation>言語の変更は、アプリケーションの再起動後に反映されます。</translation>
+        </message>
+        <message>
+            <source>Check for updates</source>
+            <translation>アップデートを確認</translation>
+        </message>
+        <message>
+            <source>Start netplay automatically on application start</source>
+            <translation>アプリ起動時にネットプレイを自動開始</translation>
+        </message>
+        <message>
+            <source>Theme changes apply immediately</source>
+            <translation>テーマの変更はすぐに反映されます</translation>
         </message>
     </context>
     <context>
