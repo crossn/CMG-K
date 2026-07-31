@@ -152,6 +152,12 @@ static QString selectedThemeValue(const QComboBox* comboBox)
     return comboBox->currentText();
 }
 
+static void selectIconThemeValue(QComboBox* comboBox, const QString& value)
+{
+    const int index = comboBox->findData(value);
+    comboBox->setCurrentIndex(index >= 0 ? index : 0);
+}
+
 static void populateThemeCombo(QComboBox* comboBox, const QList<ThemeOption>& options, bool showLegacy, const QString& selectedValue)
 {
     if (comboBox == nullptr)
@@ -214,6 +220,9 @@ enum class SettingsDialogTab
 SettingsDialog::SettingsDialog(QWidget *parent, QString file) : QDialog(parent)
 {
     this->setupUi(this);
+    this->iconThemeComboBox->setItemData(0, "Automatic");
+    this->iconThemeComboBox->setItemData(1, "White");
+    this->iconThemeComboBox->setItemData(2, "Black");
     this->languageComboBox->setItemData(0, "system");
     this->languageComboBox->setItemData(1, "en");
     this->languageComboBox->setItemData(2, "ja_JP");
@@ -865,7 +874,8 @@ void SettingsDialog::loadInterfaceGeneralSettings(void)
     this->showLegacyThemesCheckBox->setChecked(showLegacy);
     this->showLegacyThemesCheckBox->blockSignals(blocked);
     populateThemeCombo(this->themeComboBox, themeOptions, showLegacy, currentTheme);
-    this->iconThemeComboBox->setCurrentText(QString::fromStdString(CoreSettingsGetStringValue(SettingsID::GUI_IconTheme)));
+    selectIconThemeValue(this->iconThemeComboBox,
+                         QString::fromStdString(CoreSettingsGetStringValue(SettingsID::GUI_IconTheme)));
     const QString language = QString::fromStdString(CoreSettingsGetStringValue(SettingsID::GUI_Language));
     const int languageIndex = this->languageComboBox->findData(language);
     this->languageComboBox->setCurrentIndex(languageIndex >= 0 ? languageIndex : 0);
@@ -1132,7 +1142,8 @@ void SettingsDialog::loadDefaultInterfaceGeneralSettings(void)
     this->showLegacyThemesCheckBox->setChecked(showLegacy);
     this->showLegacyThemesCheckBox->blockSignals(blocked);
     populateThemeCombo(this->themeComboBox, themeOptions, showLegacy, defaultTheme);
-    this->iconThemeComboBox->setCurrentText(QString::fromStdString(CoreSettingsGetDefaultStringValue(SettingsID::GUI_IconTheme)));
+    selectIconThemeValue(this->iconThemeComboBox,
+                         QString::fromStdString(CoreSettingsGetDefaultStringValue(SettingsID::GUI_IconTheme)));
     this->languageComboBox->setCurrentIndex(this->languageComboBox->findData("system"));
     this->autoStartNetplayOnStartupCheckBox->setChecked(CoreSettingsGetDefaultBoolValue(SettingsID::GUI_AutoStartNetplayOnStartup));
 #ifdef UPDATER
@@ -1416,7 +1427,7 @@ void SettingsDialog::saveHotkeySettings(void)
 void SettingsDialog::saveInterfaceGeneralSettings(void)
 {
     CoreSettingsSetValue(SettingsID::GUI_Theme, selectedThemeValue(this->themeComboBox).toStdString());
-    CoreSettingsSetValue(SettingsID::GUI_IconTheme, this->iconThemeComboBox->currentText().toStdString());
+    CoreSettingsSetValue(SettingsID::GUI_IconTheme, this->iconThemeComboBox->currentData().toString().toStdString());
     CoreSettingsSetValue(SettingsID::GUI_Language, this->languageComboBox->currentData().toString().toStdString());
     CoreSettingsSetValue(SettingsID::GUI_AutoStartNetplayOnStartup, this->autoStartNetplayOnStartupCheckBox->isChecked());
 #ifdef UPDATER
