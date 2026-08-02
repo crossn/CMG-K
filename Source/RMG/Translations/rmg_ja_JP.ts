@@ -67,6 +67,107 @@
             <source>Theme changes apply immediately</source>
             <translation>テーマの変更はすぐに反映されます</translation>
         </message>
+        <message>
+            <source>Emulation</source>
+            <translation>エミュレーション</translation>
+        </message>
+        <message>
+            <source>Hide cursor during emulation</source>
+            <translation>エミュレーション中はカーソルを隠す</translation>
+        </message>
+        <message>
+            <source>Hide cursor during fullscreen emulation</source>
+            <translation>全画面エミュレーション中はカーソルを隠す</translation>
+        </message>
+        <message>
+            <source>Pause emulation on focus loss</source>
+            <translation>フォーカスを失ったら一時停止する</translation>
+        </message>
+        <message>
+            <source>Resume emulation on focus gain</source>
+            <translation>フォーカスを得たら再開する</translation>
+        </message>
+        <message>
+            <source>Automatically switch to fullscreen on emulation start</source>
+            <translation>エミュレーション開始時に自動で全画面表示にする</translation>
+        </message>
+        <message>
+            <source>Exclusive Fullscreen</source>
+            <translation>全画面表示</translation>
+        </message>
+        <message>
+            <source>Use exclusive fullscreen instead of borderless</source>
+            <translation>ゲーム専用の全画面表示を使用する</translation>
+        </message>
+        <message>
+            <source>Switches the display resolution and refresh rate for the game. The screen may briefly go black when switching applications.</source>
+            <translation>ゲームに合わせて解像度やリフレッシュレートを切り替えます。アプリの切り替え時に画面が暗転する場合があります。</translation>
+        </message>
+        <message>
+            <source>Use experimental fullscreen mode</source>
+            <translation>新しい全画面表示方式を使用する（試験機能）</translation>
+        </message>
+        <message>
+            <source>This fullscreen mode is beta and does not support toggling fullscreen or OSD messages.</source>
+            <translation>この方式は試験機能です。全画面表示の切り替えとOSDメッセージには対応していません。</translation>
+        </message>
+        <message>
+            <source>Monitor</source>
+            <translation>モニター</translation>
+        </message>
+        <message>
+            <source>Resolution</source>
+            <translation>解像度</translation>
+        </message>
+        <message>
+            <source>Refresh rate</source>
+            <translation>リフレッシュレート</translation>
+        </message>
+        <message>
+            <source>Ask for confirmation during drag and drop</source>
+            <translation>ドラッグ＆ドロップ時に確認する</translation>
+        </message>
+        <message>
+            <source>Ask for confirmation on exit</source>
+            <translation>終了時に確認する</translation>
+        </message>
+        <message>
+            <source>OpenGL type</source>
+            <translation>OpenGLの種類</translation>
+        </message>
+        <message>
+            <source>Statusbar message duration</source>
+            <translation>ステータスバーのメッセージ表示時間</translation>
+        </message>
+        <message>
+            <source> seconds</source>
+            <comment>Interface &gt; Emulation</comment>
+            <translation> 秒</translation>
+        </message>
+        <message>
+            <source>Changes will be applied on next emulation run</source>
+            <comment>Interface &gt; Emulation</comment>
+            <translation>変更は次回のエミュレーション開始時に反映されます</translation>
+        </message>
+    </context>
+    <context>
+        <name>UserInterface::Dialog::SettingsDialog</name>
+        <message>
+            <source>Primary Monitor</source>
+            <translation>プライマリモニター</translation>
+        </message>
+        <message>
+            <source>Display %1</source>
+            <translation>ディスプレイ %1</translation>
+        </message>
+        <message>
+            <source>Desktop Default</source>
+            <translation>デスクトップの既定</translation>
+        </message>
+        <message>
+            <source>%1 Hz</source>
+            <translation>%1 Hz</translation>
+        </message>
     </context>
     <context>
         <name>UserInterface::MainWindow</name>
