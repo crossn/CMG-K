@@ -149,6 +149,26 @@
             <comment>Interface &gt; Emulation</comment>
             <translation>変更は次回のエミュレーション開始時に反映されます</translation>
         </message>
+        <message>
+            <source>ROM Browser</source>
+            <translation>ROMブラウザー</translation>
+        </message>
+        <message>
+            <source>Search sub-directories</source>
+            <translation>サブフォルダーも検索する</translation>
+        </message>
+        <message>
+            <source>ROM search limit</source>
+            <translation>検索するROMの上限数</translation>
+        </message>
+        <message>
+            <source>Log</source>
+            <translation>ログ</translation>
+        </message>
+        <message>
+            <source>Show verbose messages</source>
+            <translation>詳細なログメッセージを表示する</translation>
+        </message>
     </context>
     <context>
         <name>UserInterface::Dialog::SettingsDialog</name>
