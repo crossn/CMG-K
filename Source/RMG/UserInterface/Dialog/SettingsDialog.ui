@@ -267,6 +267,9 @@
                  <layout class="QVBoxLayout" name="exclusiveFullscreenLayout">
                   <item>
                    <widget class="QCheckBox" name="exclusiveFullscreenCheckBox">
+                    <property name="toolTip">
+                     <string>Switches the display resolution and refresh rate for the game. The screen may briefly go black when switching applications.</string>
+                    </property>
                     <property name="text">
                      <string>Use exclusive fullscreen instead of borderless</string>
                     </property>
@@ -393,7 +396,7 @@
                  <item>
                   <widget class="QSpinBox" name="statusBarMessageDurationSpinBox">
                    <property name="suffix">
-                    <string> seconds</string>
+                    <string comment="Interface &gt; Emulation"> seconds</string>
                    </property>
                    <property name="prefix">
                     <string/>
@@ -451,7 +454,7 @@
                     <number>1</number>
                    </property>
                    <property name="text">
-                    <string>Changes will be applied on next emulation run</string>
+                    <string comment="Interface &gt; Emulation">Changes will be applied on next emulation run</string>
                    </property>
                    <property name="textFormat">
                     <enum>Qt::TextFormat::PlainText</enum>

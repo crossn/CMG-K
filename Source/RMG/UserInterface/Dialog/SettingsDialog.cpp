@@ -382,7 +382,7 @@ void SettingsDialog::populateExclusiveFullscreenModes(void)
     if (!this->exclusiveMonitorComboBox->property("populated").toBool())
     {
         this->exclusiveMonitorComboBox->clear();
-        this->exclusiveMonitorComboBox->addItem("Primary Monitor", "");
+        this->exclusiveMonitorComboBox->addItem(this->tr("Primary Monitor"), "");
         DISPLAY_DEVICEW displayDevice = {};
         displayDevice.cb = sizeof(displayDevice);
         for (DWORD i = 0; EnumDisplayDevicesW(NULL, i, &displayDevice, 0); i++)
@@ -400,7 +400,7 @@ void SettingsDialog::populateExclusiveFullscreenModes(void)
             int displayIdx = devName.lastIndexOf("DISPLAY");
             if (displayIdx >= 0)
             {
-                displayNum = "Display " + devName.mid(displayIdx + 7);
+                displayNum = this->tr("Display %1").arg(devName.mid(displayIdx + 7));
             }
             QString label;
             if (EnumDisplayDevicesW(displayDevice.DeviceName, 0, &monitor, 0))
@@ -461,7 +461,7 @@ void SettingsDialog::populateExclusiveFullscreenModes(void)
 
     // populate resolutions
     this->exclusiveResolutionComboBox->clear();
-    this->exclusiveResolutionComboBox->addItem("Desktop Default", "");
+    this->exclusiveResolutionComboBox->addItem(this->tr("Desktop Default"), "");
     for (const auto& res : resolutions)
     {
         QString text = QString("%1x%2").arg(res.width).arg(res.height);
@@ -498,10 +498,10 @@ void SettingsDialog::populateExclusiveFullscreenModes(void)
 
     // populate refresh rates
     this->exclusiveRefreshRateComboBox->clear();
-    this->exclusiveRefreshRateComboBox->addItem("Desktop Default", 0);
+    this->exclusiveRefreshRateComboBox->addItem(this->tr("Desktop Default"), 0);
     for (int rate : refreshRates)
     {
-        QString text = QString("%1 Hz").arg(rate);
+        QString text = this->tr("%1 Hz").arg(rate);
         this->exclusiveRefreshRateComboBox->addItem(text, rate);
     }
 
@@ -908,7 +908,7 @@ void SettingsDialog::loadInterfaceEmulationSettings(void)
         this->exclusiveMonitorComboBox->clear();
         // monitor combobox is populated in populateExclusiveFullscreenModes
         // seed with saved value so it gets selected after population
-        this->exclusiveMonitorComboBox->addItem("Primary Monitor", "");
+        this->exclusiveMonitorComboBox->addItem(this->tr("Primary Monitor"), "");
         if (!savedMonitor.isEmpty())
         {
             this->exclusiveMonitorComboBox->addItem(savedMonitor, savedMonitor);
@@ -917,7 +917,7 @@ void SettingsDialog::loadInterfaceEmulationSettings(void)
         this->exclusiveMonitorComboBox->blockSignals(false);
         this->exclusiveResolutionComboBox->blockSignals(true);
         this->exclusiveResolutionComboBox->clear();
-        this->exclusiveResolutionComboBox->addItem("Desktop Default", "");
+        this->exclusiveResolutionComboBox->addItem(this->tr("Desktop Default"), "");
         if (!savedRes.isEmpty())
         {
             this->exclusiveResolutionComboBox->addItem(savedRes, savedRes);
@@ -926,10 +926,10 @@ void SettingsDialog::loadInterfaceEmulationSettings(void)
         this->exclusiveResolutionComboBox->blockSignals(false);
         this->exclusiveRefreshRateComboBox->blockSignals(true);
         this->exclusiveRefreshRateComboBox->clear();
-        this->exclusiveRefreshRateComboBox->addItem("Desktop Default", 0);
+        this->exclusiveRefreshRateComboBox->addItem(this->tr("Desktop Default"), 0);
         if (savedRate > 0)
         {
-            this->exclusiveRefreshRateComboBox->addItem(QString("%1 Hz").arg(savedRate), savedRate);
+            this->exclusiveRefreshRateComboBox->addItem(this->tr("%1 Hz").arg(savedRate), savedRate);
             this->exclusiveRefreshRateComboBox->setCurrentIndex(1);
         }
         this->exclusiveRefreshRateComboBox->blockSignals(false);
