@@ -660,7 +660,7 @@
                           <string/>
                          </property>
                          <property name="suffix">
-                          <string> px</string>
+                          <string comment="Interface &gt; OSD"> px</string>
                          </property>
                          <property name="maximum">
                           <number>9999</number>
@@ -684,7 +684,7 @@
                           <string/>
                          </property>
                          <property name="suffix">
-                          <string> px</string>
+                          <string comment="Interface &gt; OSD"> px</string>
                          </property>
                          <property name="maximum">
                           <number>9999</number>
@@ -705,7 +705,7 @@
                        <item>
                         <widget class="QSpinBox" name="osdDurationSpinBox">
                          <property name="suffix">
-                          <string> seconds</string>
+                          <string comment="Interface &gt; OSD"> seconds</string>
                          </property>
                          <property name="minimum">
                           <number>1</number>
@@ -738,7 +738,7 @@
                           <double>3.000000000000000</double>
                          </property>
                          <property name="suffix">
-                          <string>x</string>
+                          <string comment="Interface &gt; OSD">x</string>
                          </property>
                         </widget>
                        </item>
@@ -756,7 +756,7 @@
                        <item>
                         <widget class="QSpinBox" name="osdMaxMessagesSpinBox">
                          <property name="suffix">
-                          <string> messages</string>
+                          <string comment="Interface &gt; OSD"> messages</string>
                          </property>
                          <property name="minimum">
                           <number>1</number>
