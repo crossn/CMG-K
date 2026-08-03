@@ -169,6 +169,102 @@
             <source>Show verbose messages</source>
             <translation>詳細なログメッセージを表示する</translation>
         </message>
+        <message>
+            <source>OSD</source>
+            <translation>OSD</translation>
+        </message>
+        <message>
+            <source>Enable On-Screen Display</source>
+            <translation>OSDを有効にする</translation>
+        </message>
+        <message>
+            <source>Global OSD settings</source>
+            <translation>OSD全体の設定</translation>
+        </message>
+        <message>
+            <source>Background color</source>
+            <translation>背景色</translation>
+        </message>
+        <message>
+            <source>Text color</source>
+            <translation>文字色</translation>
+        </message>
+        <message>
+            <source>Show Kaillera chat on-screen</source>
+            <translation>KailleraチャットをOSDに表示する</translation>
+        </message>
+        <message>
+            <source>Chat settings</source>
+            <translation>チャット設定</translation>
+        </message>
+        <message>
+            <source>Location</source>
+            <translation>表示位置</translation>
+        </message>
+        <message>
+            <source>Bottom Left</source>
+            <translation>左下</translation>
+        </message>
+        <message>
+            <source>Top Left</source>
+            <translation>左上</translation>
+        </message>
+        <message>
+            <source>Top Right</source>
+            <translation>右上</translation>
+        </message>
+        <message>
+            <source>Bottom Right</source>
+            <translation>右下</translation>
+        </message>
+        <message>
+            <source>Vertical padding</source>
+            <translation>縦方向の余白</translation>
+        </message>
+        <message>
+            <source> px</source>
+            <comment>Interface &gt; OSD</comment>
+            <translation> px</translation>
+        </message>
+        <message>
+            <source>Horizontal padding</source>
+            <translation>横方向の余白</translation>
+        </message>
+        <message>
+            <source>Duration</source>
+            <translation>表示時間</translation>
+        </message>
+        <message>
+            <source> seconds</source>
+            <comment>Interface &gt; OSD</comment>
+            <translation> 秒</translation>
+        </message>
+        <message>
+            <source>Scale</source>
+            <translation>表示倍率</translation>
+        </message>
+        <message>
+            <source>x</source>
+            <comment>Interface &gt; OSD</comment>
+            <translation>倍</translation>
+        </message>
+        <message>
+            <source>Max messages</source>
+            <translation>最大メッセージ数</translation>
+        </message>
+        <message>
+            <source> messages</source>
+            <comment>Interface &gt; OSD</comment>
+            <translation> 件</translation>
+        </message>
+        <message>
+            <source>Show Kaillera port labels</source>
+            <translation>Kailleraのポートラベルを表示する</translation>
+        </message>
+        <message>
+            <source>The On-Screen Display will only work with OpenGL video plugins.</source>
+            <translation>OSDはOpenGLビデオプラグインでのみ動作します。</translation>
+        </message>
     </context>
     <context>
         <name>UserInterface::Dialog::SettingsDialog</name>
