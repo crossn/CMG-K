@@ -265,6 +265,22 @@
             <source>The On-Screen Display will only work with OpenGL video plugins.</source>
             <translation>OSDはOpenGLビデオプラグインでのみ動作します。</translation>
         </message>
+        <message>
+            <source>Netplay</source>
+            <translation>ネットプレイ</translation>
+        </message>
+        <message>
+            <source>Nickname</source>
+            <translation>ニックネーム</translation>
+        </message>
+        <message>
+            <source>Server list URL</source>
+            <translation>サーバー一覧URL</translation>
+        </message>
+        <message>
+            <source>Dispatcher URL</source>
+            <translation>ディスパッチャーURL</translation>
+        </message>
     </context>
     <context>
         <name>UserInterface::Dialog::SettingsDialog</name>
