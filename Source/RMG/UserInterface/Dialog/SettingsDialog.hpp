@@ -19,6 +19,7 @@
 #include <QStringList>
 #include <QTreeWidget>
 #include <QDialog>
+#include <QSize>
 #include <QString>
 #include <QWidget>
 #include <QColor>
@@ -35,6 +36,8 @@
 using namespace UserInterface::Widget;
 
 #include "ui_SettingsDialog.h"
+
+class QShowEvent;
 
 namespace UserInterface
 {
@@ -54,6 +57,7 @@ class SettingsDialog : public QDialog, private Ui::SettingsDialog
     };
 
     bool showGameSettings = false;
+    QSize naturalSizeHint;
 
     QString currentGameFile;
     CoreRomType     currentGameType;
@@ -153,6 +157,7 @@ class SettingsDialog : public QDialog, private Ui::SettingsDialog
 
   protected:
     void closeEvent(QCloseEvent* event) Q_DECL_OVERRIDE;
+    void showEvent(QShowEvent* event) Q_DECL_OVERRIDE;
     void timerEvent(QTimerEvent* event) Q_DECL_OVERRIDE;
 
   private slots:

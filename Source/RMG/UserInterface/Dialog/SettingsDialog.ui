@@ -37,7 +37,38 @@
         <enum>QLayout::SizeConstraint::SetNoConstraint</enum>
        </property>
        <item>
-        <widget class="QTabWidget" name="tabWidget">
+        <widget class="QScrollArea" name="settingsContentScrollArea">
+         <property name="focusPolicy">
+          <enum>Qt::FocusPolicy::NoFocus</enum>
+         </property>
+         <property name="frameShape">
+          <enum>QFrame::Shape::NoFrame</enum>
+         </property>
+         <property name="verticalScrollBarPolicy">
+          <enum>Qt::ScrollBarPolicy::ScrollBarAsNeeded</enum>
+         </property>
+         <property name="horizontalScrollBarPolicy">
+          <enum>Qt::ScrollBarPolicy::ScrollBarAlwaysOff</enum>
+         </property>
+         <property name="widgetResizable">
+          <bool>true</bool>
+         </property>
+         <widget class="QWidget" name="settingsContentWidget">
+          <layout class="QVBoxLayout" name="settingsContentLayout">
+           <property name="leftMargin">
+            <number>0</number>
+           </property>
+           <property name="topMargin">
+            <number>0</number>
+           </property>
+           <property name="rightMargin">
+            <number>0</number>
+           </property>
+           <property name="bottomMargin">
+            <number>0</number>
+           </property>
+           <item>
+            <widget class="QTabWidget" name="tabWidget">
          <property name="currentIndex">
           <number>0</number>
          </property>
@@ -3385,6 +3416,10 @@
         </widget>
        </item>
       </layout>
+     </widget>
+    </widget>
+   </item>
+  </layout>
      </item>
      <item>
       <widget class="QDialogButtonBox" name="buttonBox">
