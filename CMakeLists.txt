@@ -13,6 +13,23 @@ option(NO_ASM           "Disables the usage of assembly in the mupen64plus-core"
 option(USE_ANGRYLION    "Enables building angrylion-rdp-plus which uses a non-GPL compliant license" OFF)
 option(INSTALL_CHEATS   "Installs bundled cheat files" ON)
 set(KAILLERA_APP_VERSION_OVERRIDE "" CACHE STRING "Override Kaillera app version string advertised by RMG-K (dev/testing)")
+set(CMGK_VERSION_OVERRIDE "" CACHE STRING "Override CMG-K product version (release CI)")
+
+set(CMGK_UPSTREAM_BASE_FILE "${CMAKE_SOURCE_DIR}/UPSTREAM_BASE")
+if (NOT EXISTS "${CMGK_UPSTREAM_BASE_FILE}")
+    message(FATAL_ERROR "Missing CMG-K upstream base metadata: ${CMGK_UPSTREAM_BASE_FILE}")
+endif()
+file(STRINGS "${CMGK_UPSTREAM_BASE_FILE}" CMGK_UPSTREAM_BASE_LINES)
+foreach (CMGK_UPSTREAM_BASE_LINE IN LISTS CMGK_UPSTREAM_BASE_LINES)
+    if (CMGK_UPSTREAM_BASE_LINE MATCHES "^RMG_K_BASE_VERSION=(.+)$")
+        set(CMGK_RMG_K_BASE_VERSION "${CMAKE_MATCH_1}")
+    elseif (CMGK_UPSTREAM_BASE_LINE MATCHES "^RMG_K_BASE_COMMIT=([0-9a-fA-F]+)$")
+        set(CMGK_RMG_K_BASE_COMMIT "${CMAKE_MATCH_1}")
+    endif()
+endforeach()
+if (NOT DEFINED CMGK_RMG_K_BASE_VERSION OR NOT DEFINED CMGK_RMG_K_BASE_COMMIT)
+    message(FATAL_ERROR "Invalid CMG-K upstream base metadata: ${CMGK_UPSTREAM_BASE_FILE}")
+endif()
 
 project(RMG)
 
@@ -29,7 +46,7 @@ if (GIT_FOUND)
     )
     if (${GIT_TAG_RESULT} EQUAL 0)
         # We're on a tagged commit, use the tag
-        set(GIT_VERSION "${GIT_TAG_VERSION}")
+        set(CMGK_VERSION "${GIT_TAG_VERSION}")
         set(GIT_RESULT 0)
     else()
         # No exact tag, use vdev-<commit_count>
@@ -42,7 +59,7 @@ if (GIT_FOUND)
             OUTPUT_STRIP_TRAILING_WHITESPACE
         )
         if (${GIT_RESULT} EQUAL 0)
-            set(GIT_VERSION "vdev-${GIT_COMMIT_COUNT}")
+            set(CMGK_VERSION "vdev-${GIT_COMMIT_COUNT}")
         endif()
     endif()
 endif(GIT_FOUND)
@@ -50,12 +67,17 @@ if (NOT GIT_FOUND OR NOT ${GIT_RESULT} EQUAL 0)
     if (NOT ${GIT_RESULT} EQUAL 0)
         message(WARNING "git failed to retrieve the current revision, falling back to VERSION file!")
     endif()
-    file(STRINGS "VERSION" GIT_VERSION)
+    file(STRINGS "VERSION" CMGK_VERSION LIMIT_COUNT 1)
+endif()
+
+if (CMGK_VERSION_OVERRIDE)
+    message(STATUS "Overriding CMG-K product version: ${CMGK_VERSION_OVERRIDE}")
+    set(CMGK_VERSION "${CMGK_VERSION_OVERRIDE}")
 endif()
 
 if (KAILLERA_APP_VERSION_OVERRIDE)
     message(STATUS "Overriding app version for dev testing: ${KAILLERA_APP_VERSION_OVERRIDE}")
-    set(GIT_VERSION "${KAILLERA_APP_VERSION_OVERRIDE}")
+    set(CMGK_VERSION "${KAILLERA_APP_VERSION_OVERRIDE}")
 endif()
 
 if (USE_CCACHE)
@@ -151,7 +173,7 @@ if (WIN32)
     add_subdirectory(Source/Installer)
 
     add_custom_target(bundle_dependencies
-        COMMAND bash "${CMAKE_SOURCE_DIR}/Source/Script/BundleDependencies.sh" "${CMAKE_SOURCE_DIR}/Bin/${CMAKE_BUILD_TYPE}/RMG-K.exe" "${CMAKE_SOURCE_DIR}/Bin/${CMAKE_BUILD_TYPE}"
+        COMMAND bash "${CMAKE_SOURCE_DIR}/Source/Script/BundleDependencies.sh" "${CMAKE_SOURCE_DIR}/Bin/${CMAKE_BUILD_TYPE}/CMG-K.exe" "${CMAKE_SOURCE_DIR}/Bin/${CMAKE_BUILD_TYPE}"
 	)
 
     # kailleraclient.dll no longer needed - n02 is statically linked

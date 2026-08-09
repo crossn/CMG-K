@@ -156,7 +156,7 @@ else()
     add_executable(RMG ${RMG_SOURCES})
 endif()
 
-set_target_properties(RMG PROPERTIES OUTPUT_NAME "RMG-K")
+set_target_properties(RMG PROPERTIES OUTPUT_NAME "CMG-K")
 
 target_link_libraries(RMG 
     RMG-Core

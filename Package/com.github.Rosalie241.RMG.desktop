@@ -1,11 +1,11 @@
 [Desktop Entry]
 Type=Application
-Name=Rosalie's Mupen GUI
-Comment=An easy to use &amp; cross-platform mupen64plus front-end written in C++ & Qt
-Exec=RMG %f
-TryExec=RMG
+Name=CMG-K
+Comment=A community build of the RMG-K mupen64plus front-end
+Exec=CMG-K %f
+TryExec=CMG-K
 Icon=com.github.Rosalie241.RMG
 Terminal=false
 Categories=Game;Emulator;Qt;
 MimeType=application/x-n64-rom;
-Keywords=emulator;mupen64plus;n64;RMG
+Keywords=emulator;mupen64plus;n64;CMG-K

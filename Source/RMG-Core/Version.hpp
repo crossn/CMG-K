@@ -12,7 +12,9 @@
 
 #include <string>
 
-// returns the current RMG-Core version (as string)
+// Returns the current CMG-K product version (as string).
 std::string CoreGetVersion(void);
+std::string CoreGetUpstreamBaseVersion(void);
+std::string CoreGetUpstreamBaseCommit(void);
 
 #endif // CORE_VERSION_HPP

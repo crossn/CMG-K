@@ -203,7 +203,7 @@ int main(int argc, char **argv)
     }
 #endif
 
-    QCoreApplication::setApplicationName("RMG Kaillera Edition");
+    QCoreApplication::setApplicationName("CMG-K");
     QCoreApplication::setApplicationVersion(QString::fromStdString(CoreGetVersion()));
 
     // setup commandline parser
