@@ -14,6 +14,8 @@
 
 // Returns the current CMG-K product version (as string).
 std::string CoreGetVersion(void);
+// Returns the Kaillera/P2P app version advertised for compatibility testing.
+std::string CoreGetKailleraAppVersion(void);
 std::string CoreGetUpstreamBaseVersion(void);
 std::string CoreGetUpstreamBaseCommit(void);
 
