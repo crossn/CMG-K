@@ -15,8 +15,12 @@
 
 #include <QRegularExpressionValidator>
 #include <QCryptographicHash>
+#include <QGuiApplication>
 #include <QRegularExpression>
+#include <QScreen>
+#include <QShowEvent>
 #include <QVBoxLayout>
+#include <QWindow>
 #include <QHBoxLayout>
 #include <QGroupBox>
 #include <QFileDialog>
@@ -358,10 +362,68 @@ SettingsDialog::SettingsDialog(QWidget *parent, QString file) : QDialog(parent)
 #else
     this->exclusiveFullscreenGroupBox->setVisible(false);
 #endif
+
+    this->tabWidget->setMinimumWidth(0);
+    this->tabWidget->setMinimumHeight(this->tabWidget->sizeHint().height());
+    this->naturalSizeHint = this->sizeHint();
 }
 
 SettingsDialog::~SettingsDialog(void)
 {
+}
+
+void SettingsDialog::showEvent(QShowEvent* event)
+{
+    QDialog::showEvent(event);
+
+    QScreen* targetScreen = this->windowHandle() == nullptr ? nullptr : this->windowHandle()->screen();
+    if (targetScreen == nullptr)
+    {
+        targetScreen = this->screen();
+    }
+    if (targetScreen == nullptr)
+    {
+        targetScreen = QGuiApplication::screenAt(this->frameGeometry().center());
+    }
+    if (targetScreen == nullptr)
+    {
+        targetScreen = QGuiApplication::primaryScreen();
+    }
+    if (targetScreen == nullptr)
+    {
+        return;
+    }
+
+    const QRect availableGeometry = targetScreen->availableGeometry();
+    const QRect frameGeometry = this->frameGeometry();
+    const QSize frameMargins = frameGeometry.size() - this->geometry().size();
+    const QSize maximumClient = (availableGeometry.size() - frameMargins).expandedTo(QSize(1, 1));
+    const QSize naturalSize = this->naturalSizeHint.isValid() ? this->naturalSizeHint : this->sizeHint();
+    const QSize boundedSize = naturalSize.boundedTo(maximumClient);
+
+    if (this->size() != boundedSize)
+    {
+        this->resize(boundedSize);
+    }
+
+    const QRect resizedFrame = this->frameGeometry();
+    QPoint frameTopLeft = resizedFrame.topLeft();
+    if (resizedFrame.width() <= availableGeometry.width())
+    {
+        frameTopLeft.setX(qBound(availableGeometry.left(), frameTopLeft.x(),
+                                 availableGeometry.right() - resizedFrame.width() + 1));
+    }
+    if (resizedFrame.height() <= availableGeometry.height())
+    {
+        frameTopLeft.setY(qBound(availableGeometry.top(), frameTopLeft.y(),
+                                 availableGeometry.bottom() - resizedFrame.height() + 1));
+    }
+
+    if (frameTopLeft != resizedFrame.topLeft())
+    {
+        const QPoint frameOffset = resizedFrame.topLeft() - this->geometry().topLeft();
+        this->move(frameTopLeft - frameOffset);
+    }
 }
 
 #ifdef _WIN32
