@@ -503,7 +503,7 @@
     <iconset theme="information-line"/>
    </property>
    <property name="text">
-    <string>&amp;About RMG</string>
+    <string>&amp;About CMG-K</string>
    </property>
   </action>
   <action name="action_View_Toolbar">

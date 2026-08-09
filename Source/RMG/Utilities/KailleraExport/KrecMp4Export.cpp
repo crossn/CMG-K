@@ -226,7 +226,7 @@ static bool parseOptions(const QCommandLineParser& parser,
     {
         if (errorMessage != nullptr)
         {
-            *errorMessage = "FFmpeg was not found. Install FFmpeg or place ffmpeg.exe next to RMG-K.exe.";
+            *errorMessage = "FFmpeg was not found. Install FFmpeg or place ffmpeg.exe next to CMG-K.exe.";
         }
         return false;
     }

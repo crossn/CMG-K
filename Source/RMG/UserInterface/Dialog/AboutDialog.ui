@@ -17,7 +17,7 @@
    </sizepolicy>
   </property>
   <property name="windowTitle">
-   <string>About RMG</string>
+   <string>About CMG-K</string>
   </property>
   <layout class="QVBoxLayout" name="verticalLayout">
    <item>
