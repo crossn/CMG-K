@@ -1,6 +1,6 @@
 // Microsoft Visual C++ generated resource script.
 //
-#include "resource.h"
+#include "@CMAKE_CURRENT_SOURCE_DIR@/UserInterface/resource.h"
 
 #define APSTUDIO_READONLY_SYMBOLS
 /////////////////////////////////////////////////////////////////////////////
@@ -29,8 +29,8 @@ LANGUAGE LANG_NEUTRAL, 0x8
 //
 
 VS_VERSION_INFO VERSIONINFO
- FILEVERSION 1,0,0,1
- PRODUCTVERSION 1,0,0,1
+ FILEVERSION @CMGK_WINDOWS_NUMERIC_VERSION@
+ PRODUCTVERSION @CMGK_WINDOWS_NUMERIC_VERSION@
  FILEFLAGSMASK 0x3fL
 #ifdef _DEBUG
  FILEFLAGS 0x1L
@@ -46,13 +46,13 @@ BEGIN
         BLOCK "200004b0"
         BEGIN
             VALUE "CompanyName", "Rosalie"
-            VALUE "FileDescription", "RMG Kaillera Edition"
-            VALUE "FileVersion", "1.0.0.1"
-            VALUE "InternalName", "RMG-K.exe"
+            VALUE "FileDescription", "CMG-K"
+            VALUE "FileVersion", "@CMGK_VERSION@"
+            VALUE "InternalName", "CMG-K.exe"
             VALUE "LegalCopyright", "Copyright (C) 2020-2025 Rosalie Wanders"
-            VALUE "OriginalFilename", "RMG-K.exe"
-            VALUE "ProductName", "RMG Kaillera Edition"
-            VALUE "ProductVersion", "1.0.0.1"
+            VALUE "OriginalFilename", "CMG-K.exe"
+            VALUE "ProductName", "CMG-K"
+            VALUE "ProductVersion", "@CMGK_VERSION@"
         END
     END
     BLOCK "VarFileInfo"
@@ -78,7 +78,7 @@ LANGUAGE LANG_ENGLISH, SUBLANG_ENGLISH_US
 
 // Icon with lowest ID value placed first to ensure application icon
 // remains consistent on all systems.
-IDI_RMG                 ICON                    "Resource/RMG.ico"
+IDI_RMG                 ICON                    "@CMAKE_CURRENT_SOURCE_DIR@/UserInterface/Resource/RMG.ico"
 
 
 #ifdef APSTUDIO_INVOKED

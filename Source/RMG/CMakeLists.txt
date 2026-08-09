@@ -47,6 +47,8 @@ else()
     pkg_check_modules(HIDAPI REQUIRED hidapi-hidraw)
 endif()
 
+configure_file(UserInterface/UIResources.rc.in UIResources.rc @ONLY)
+
 set(RMG_SOURCES
     UserInterface/MainWindow.cpp
     UserInterface/MainWindow.ui
@@ -79,7 +81,7 @@ set(RMG_SOURCES
     UserInterface/Dialog/LogDialog.ui
     UserInterface/NoFocusDelegate.cpp
     UserInterface/EventFilter.cpp
-    UserInterface/UIResources.rc
+    ${CMAKE_CURRENT_BINARY_DIR}/UIResources.rc
     UserInterface/UIResources.qrc
     Thread/RomSearcherThread.cpp
     Thread/EmulationThread.cpp
