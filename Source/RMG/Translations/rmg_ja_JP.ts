@@ -447,4 +447,86 @@ ROM ディレクトリに追加して、一覧を更新してください。</tr
             <translation>エラー</translation>
         </message>
     </context>
+    <context>
+        <name>KailleraOptionsDialog</name>
+        <message>
+            <source>Lobby Options</source>
+            <translation>ロビー設定</translation>
+        </message>
+        <message>
+            <source>Max players:</source>
+            <translation>最大人数:</translation>
+        </message>
+        <message>
+            <source>Max ping:</source>
+            <translation>最大 Ping:</translation>
+        </message>
+        <message>
+            <source>Auto-chat when players join your game</source>
+            <translation>プレイヤーが自分のゲームに参加したときの自動チャット</translation>
+        </message>
+        <message>
+            <source>Host join message:</source>
+            <translation>ホスト参加メッセージ:</translation>
+        </message>
+        <message>
+            <source>Auto-chat when you join someone else&apos;s game</source>
+            <translation>他の人のゲームに参加したときの自動チャット</translation>
+        </message>
+        <message>
+            <source>Joiner message:</source>
+            <translation>参加者メッセージ:</translation>
+        </message>
+    </context>
+    <context>
+        <name>KailleraWaitingGamesDialog</name>
+        <message>
+            <source>waiting games...</source>
+            <translation>対戦待ちゲームを取得中...</translation>
+        </message>
+        <message>
+            <source>Game</source>
+            <translation>ゲーム</translation>
+        </message>
+        <message>
+            <source>Emulator</source>
+            <translation>エミュレーター</translation>
+        </message>
+        <message>
+            <source>User</source>
+            <translation>ユーザー</translation>
+        </message>
+        <message>
+            <source>Ping</source>
+            <translation>Ping</translation>
+        </message>
+        <message>
+            <source>Downloading...</source>
+            <translation>ダウンロード中...</translation>
+        </message>
+        <message>
+            <source>Connect</source>
+            <translation>接続</translation>
+        </message>
+        <message>
+            <source>Refresh</source>
+            <translation>更新</translation>
+        </message>
+        <message>
+            <source>Close</source>
+            <translation>閉じる</translation>
+        </message>
+        <message>
+            <source>Error: %1</source>
+            <translation>エラー: %1</translation>
+        </message>
+        <message>
+            <source>No games found.</source>
+            <translation>対戦待ちゲームが見つかりません。</translation>
+        </message>
+        <message>
+            <source>%1 waiting games found</source>
+            <translation>対戦待ちゲーム: %1 件</translation>
+        </message>
+    </context>
 </TS>
