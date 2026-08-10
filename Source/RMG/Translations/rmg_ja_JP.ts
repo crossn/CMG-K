@@ -1130,7 +1130,7 @@ ROM ディレクトリに追加して、一覧を更新してください。</tr
         <message><source>The export folder does not exist.</source><translation>出力フォルダーが存在しません。</translation></message>
         <message><source>Replace the existing file?</source><translation>既存のファイルを置き換えますか？</translation></message>
         <message><source>MP4 export requires FFmpeg.</source><translation>MP4書き出しにはFFmpegが必要です。</translation></message>
-        <message><source>RMG-K can download a GPL FFmpeg essentials build for replay export, or you can choose an existing ffmpeg.exe.</source><translation>RMG-Kはリプレイ書き出し用のGPL版FFmpeg essentialsをダウンロードできます。既存のffmpeg.exeを選択することもできます。</translation></message>
+        <message><source>CMG-K can download a GPL FFmpeg essentials build for replay export, or you can choose an existing ffmpeg.exe.</source><translation>CMG-Kはリプレイ書き出し用のGPL版FFmpeg essentialsをダウンロードできます。既存のffmpeg.exeを選択することもできます。</translation></message>
         <message><source>Download FFmpeg</source><translation>FFmpegをダウンロード</translation></message>
         <message><source>Choose ffmpeg.exe</source><translation>ffmpeg.exeを選択</translation></message>
         <message><source>Choose FFmpeg</source><translation>FFmpegを選択</translation></message>
@@ -1232,7 +1232,7 @@ ROM ディレクトリに追加して、一覧を更新してください。</tr
     <context>
         <name>KailleraNetplayDialog</name>
         <message><source>Search ROMs...</source><translation>ROMを検索...</translation></message>
-        <message><source>RMG-K Netplay</source><translation>RMG-K ネットプレイ</translation></message>
+        <message><source>CMG-K Netplay</source><translation>CMG-K ネットプレイ</translation></message>
         <message><source>Username:</source><translation>ユーザー名:</translation></message>
         <message><source>Server (delay)</source><translation>サーバー（遅延）</translation></message>
         <message><source>Peer to Peer (rollback)</source><translation>ピアツーピア（ロールバック）</translation></message>

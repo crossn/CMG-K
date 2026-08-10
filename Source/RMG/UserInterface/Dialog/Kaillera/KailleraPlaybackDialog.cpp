@@ -1194,7 +1194,7 @@ QString KailleraPlaybackDialog::promptForFfmpegPath()
     messageBox.setWindowTitle(tr("Export MP4"));
     messageBox.setText(tr("MP4 export requires FFmpeg."));
     messageBox.setInformativeText(
-        tr("RMG-K can download a GPL FFmpeg essentials build for replay export, or you can choose an existing ffmpeg.exe."));
+        tr("CMG-K can download a GPL FFmpeg essentials build for replay export, or you can choose an existing ffmpeg.exe."));
 
     QPushButton* downloadButton = messageBox.addButton(tr("Download FFmpeg"), QMessageBox::AcceptRole);
     QPushButton* chooseButton = messageBox.addButton(tr("Choose ffmpeg.exe"), QMessageBox::ActionRole);

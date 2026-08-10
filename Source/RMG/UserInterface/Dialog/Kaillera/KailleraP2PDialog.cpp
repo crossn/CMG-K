@@ -388,7 +388,7 @@ static void updateReadyBadge(QLabel* badge, bool ready)
         return;
     }
 
-    badge->setText(ready ? KailleraP2PDialog::tr("Ready") : KailleraP2PDialog::tr("Not Ready"));
+    badge->setText(ready ? QString::fromUtf8("✓ ") + KailleraP2PDialog::tr("Ready") : KailleraP2PDialog::tr("Not Ready"));
     badge->setStyleSheet(ready ?
         "QLabel {"
         "  color: #087a2f;"

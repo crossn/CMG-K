@@ -1651,7 +1651,7 @@ KailleraNetplayDialog::~KailleraNetplayDialog()
 void KailleraNetplayDialog::setupUI()
 {
     setObjectName("KailleraLauncherDialog");
-    setWindowTitle(tr("RMG-K Netplay"));
+    setWindowTitle(tr("CMG-K Netplay"));
     setMinimumSize(520, 480);
     resize(580, 530);
 
@@ -3375,7 +3375,7 @@ void KailleraNetplayDialog::onConfigureP2PCode()
     {
         QDialog dlg(this);
         dlg.setObjectName("KailleraLauncherDialog");
-    dlg.setWindowTitle(tr("Configure P2P Code"));
+        dlg.setWindowTitle(tr("Configure P2P Code"));
         dlg.setWindowIcon(windowIcon());
         dlg.setStyleSheet(buildLauncherStyleSheet(theme));
         auto* layout = new QVBoxLayout(&dlg);
