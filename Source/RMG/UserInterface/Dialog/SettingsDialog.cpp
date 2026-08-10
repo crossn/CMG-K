@@ -248,7 +248,7 @@ SettingsDialog::SettingsDialog(QWidget *parent, QString file) : QDialog(parent)
     QVBoxLayout* rollbackLayout = new QVBoxLayout(rollbackTab);
     QGroupBox* rollbackLoggingGroupBox = new QGroupBox("Logging", rollbackTab);
     QVBoxLayout* rollbackLoggingLayout = new QVBoxLayout(rollbackLoggingGroupBox);
-    this->rollbackEnableLocalTestingCheckBox = new QCheckBox("Use rollback engine for local play", rollbackTab);
+    this->rollbackEnableLocalTestingCheckBox = new QCheckBox(tr("Use rollback engine for local play"), rollbackTab);
     this->rollbackVerboseStatsCheckBox = new QCheckBox("Enable verbose rollback stats logging", rollbackLoggingGroupBox);
     this->rollbackStallDiagnosticsCheckBox = new QCheckBox("Log netplay stalls only (lightweight freeze diagnostics)", rollbackLoggingGroupBox);
     this->rollbackStallDiagnosticsCheckBox->setToolTip(
@@ -270,7 +270,7 @@ SettingsDialog::SettingsDialog(QWidget *parent, QString file) : QDialog(parent)
     rollbackLoggingLayout->addWidget(this->rollbackVerboseGlideInputLoggingCheckBox);
     rollbackLayout->addWidget(rollbackLoggingGroupBox);
     rollbackLayout->addStretch();
-    this->tabWidget->addTab(rollbackTab, "Rollback");
+    this->tabWidget->addTab(rollbackTab, tr("Rollback"));
 
     this->setIconsForEmulationInfoText();
 
@@ -824,7 +824,7 @@ void SettingsDialog::loadGamePluginSettings(void)
     for (QComboBox *comboBox : comboBoxArray)
     {
         comboBox->clear();
-        comboBox->addItem("**Use Core Plugin Settings**");
+        comboBox->addItem(tr("**Use Core Plugin Settings**"));
     }
 
     for (const auto &p : this->pluginList)

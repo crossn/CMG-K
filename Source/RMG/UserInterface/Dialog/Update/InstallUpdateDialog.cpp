@@ -63,7 +63,7 @@ void InstallUpdateDialog::install(void)
 
     if (this->filename.endsWith(".exe"))
     {
-        this->label->setText("Executing " + this->filename + "...");
+    this->label->setText(tr("Executing %1...").arg(this->filename));
         QStringList scriptLines =
         {
             "@echo off",
@@ -84,7 +84,7 @@ void InstallUpdateDialog::install(void)
         return;
     }
 
-    this->label->setText("Extracting " + this->filename + "...");
+    this->label->setText(tr("Extracting %1...").arg(this->filename));
     this->progressBar->setValue(50);
 
     QDir dir(this->temporaryDirectory);
@@ -106,7 +106,7 @@ void InstallUpdateDialog::install(void)
         return;
     }
 
-    this->label->setText("Executing update script...");
+    this->label->setText(tr("Executing update script..."));
     this->progressBar->setValue(100);
 
     extractDirectory = QDir::toNativeSeparators(extractDirectory);

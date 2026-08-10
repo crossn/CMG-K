@@ -552,7 +552,7 @@ void KailleraServerBrowserDialog::reject()
 
 void KailleraServerBrowserDialog::setupUI()
 {
-    setWindowTitle("Connected to " + m_serverName);
+    setWindowTitle(tr("Connected to %1").arg(m_serverName));
     setMinimumSize(700, 500);
     resize(800, 600);
 
@@ -962,17 +962,17 @@ void KailleraServerBrowserDialog::setupUI()
     lobbyHeaderLayout->setSpacing(6);
     auto* lobbyHeaderIcon = new QLabel(lobbyHeader);
     lobbyHeaderIcon->setPixmap(themedLineIcon("server-line").pixmap(14, 14));
-    auto* lobbyHeaderTitle = new QLabel("SERVER CHAT", lobbyHeader);
+    auto* lobbyHeaderTitle = new QLabel(tr("SERVER CHAT"), lobbyHeader);
     lobbyHeaderTitle->setObjectName("KailleraPaneTitle");
     lobbyHeaderLayout->addWidget(lobbyHeaderIcon);
     lobbyHeaderLayout->addWidget(lobbyHeaderTitle);
     lobbyHeaderLayout->addStretch();
-    auto* leaveServerButton = new QPushButton("Leave Server", lobbyHeader);
+    auto* leaveServerButton = new QPushButton(tr("Leave Server"), lobbyHeader);
     leaveServerButton->setObjectName("KailleraHeaderActionButton");
     leaveServerButton->setIcon(themedLineIcon("door-open-line"));
     leaveServerButton->setIconSize(QSize(14, 14));
     configureServerHeaderActionMetrics(leaveServerButton);
-    leaveServerButton->setToolTip("Disconnect from the server and return to the server list");
+    leaveServerButton->setToolTip(tr("Disconnect from the server and return to the server list"));
     leaveServerButton->setAutoDefault(false);
     leaveServerButton->setDefault(false);
     connect(leaveServerButton, &QPushButton::clicked, this, [this]() { reject(); });
@@ -998,14 +998,14 @@ void KailleraServerBrowserDialog::setupUI()
     lobbyComposerLayout->setSpacing(4);
 
     m_lobbyChatInput = new QLineEdit(lobbyComposer);
-    m_lobbyChatInput->setPlaceholderText("Type a message...");
+    m_lobbyChatInput->setPlaceholderText(tr("Type a message..."));
     m_lobbyChatInput->setClearButtonEnabled(true);
     m_lobbyChatInput->setObjectName("KailleraChatComposerInput");
     m_lobbyChatInput->setFrame(false);
 
     m_btnSendLobby = new QPushButton(lobbyComposer);
     m_btnSendLobby->setObjectName("KailleraChatComposerSendButton");
-    m_btnSendLobby->setToolTip("Send lobby chat message");
+    m_btnSendLobby->setToolTip(tr("Send lobby chat message"));
     m_btnSendLobby->setText("");
     m_btnSendLobby->setIcon(themedLineIcon("play-line"));
     m_btnSendLobby->setIconSize(QSize(13, 13));
@@ -1045,7 +1045,7 @@ void KailleraServerBrowserDialog::setupUI()
     usersHeaderLayout->setSpacing(6);
     auto* usersHeaderIcon = new QLabel(usersHeader);
     usersHeaderIcon->setPixmap(themedLineIcon("list-check").pixmap(14, 14));
-    auto* usersHeaderTitle = new QLabel("PLAYERS", usersHeader);
+    auto* usersHeaderTitle = new QLabel(tr("PLAYERS"), usersHeader);
     usersHeaderTitle->setObjectName("KailleraPaneTitle");
     usersHeaderLayout->addWidget(usersHeaderIcon);
     usersHeaderLayout->addWidget(usersHeaderTitle);
@@ -1072,7 +1072,7 @@ void KailleraServerBrowserDialog::setupUI()
     m_userTable = new QTableWidget(0, 4, usersBody);
     m_userTable->setObjectName("KailleraSurface");
     m_userTable->setProperty("tableShell", true);
-    m_userTable->setHorizontalHeaderLabels({"Name", "Ping", "UID", "Status"});
+    m_userTable->setHorizontalHeaderLabels({tr("Name"), tr("Ping"), tr("UID"), tr("Status")});
     m_userTable->horizontalHeader()->setStretchLastSection(false);
     m_userTable->horizontalHeader()->setSectionResizeMode(0, QHeaderView::Interactive);
     m_userTable->horizontalHeader()->setSectionResizeMode(1, QHeaderView::Interactive);
@@ -1173,7 +1173,7 @@ QWidget* KailleraServerBrowserDialog::createGameListWidget()
     m_gameTable->setObjectName("KailleraSurface");
     m_gameTable->setProperty("mainGameList", true);
     m_gameTable->setProperty("tableShell", true);
-    m_gameTable->setHorizontalHeaderLabels({"Game", "GameID", "Emulator", "User", "Status", "Users"});
+    m_gameTable->setHorizontalHeaderLabels({tr("Game"), tr("GameID"), tr("Emulator"), tr("User"), tr("Status"), tr("Users")});
     m_gameTable->horizontalHeader()->setStretchLastSection(false);
     m_gameTable->verticalHeader()->setVisible(false);
     m_gameTable->setShowGrid(false);
@@ -1210,7 +1210,7 @@ QWidget* KailleraServerBrowserDialog::createGameListWidget()
 
     m_btnCreateSwap = new QPushButton(pane);
     m_btnCreateSwap->setObjectName("KailleraFabButton");
-    m_btnCreateSwap->setToolTip("Create a game");
+    m_btnCreateSwap->setToolTip(tr("Create a game"));
     m_btnCreateSwap->setText("");
     configureServerFabMetrics(m_btnCreateSwap);
     if (modern)
@@ -1265,16 +1265,16 @@ QWidget* KailleraServerBrowserDialog::createGameRoomWidget()
     chatHeaderLayout->setSpacing(6);
     auto* chatHeaderIcon = new QLabel(chatHeader);
     chatHeaderIcon->setPixmap(themedLineIcon("file-list-line").pixmap(14, 14));
-    auto* chatHeaderTitle = new QLabel("LOBBY CHAT", chatHeader);
+    auto* chatHeaderTitle = new QLabel(tr("LOBBY CHAT"), chatHeader);
     chatHeaderTitle->setObjectName("KailleraPaneTitle");
     chatHeaderLayout->addWidget(chatHeaderIcon);
     chatHeaderLayout->addWidget(chatHeaderTitle);
     chatHeaderLayout->addStretch();
-    m_btnSwapChat = new QPushButton("Show lobbies", chatHeader);
+    m_btnSwapChat = new QPushButton(tr("Show lobbies"), chatHeader);
     m_btnSwapChat->setObjectName("KailleraTinyButton");
     m_btnSwapChat->setIcon(themedLineIcon("swap-line"));
     configureServerTinyButtonMetrics(m_btnSwapChat);
-    m_btnSwapChat->setToolTip("Show open lobbies");
+    m_btnSwapChat->setToolTip(tr("Show open lobbies"));
     m_btnSwapChat->setAutoDefault(false);
     m_btnSwapChat->setDefault(false);
     connect(m_btnSwapChat, &QPushButton::clicked, this, &KailleraServerBrowserDialog::onCreateOrSwap);
@@ -1306,14 +1306,14 @@ QWidget* KailleraServerBrowserDialog::createGameRoomWidget()
     gameComposerLayout->setSpacing(4);
 
     m_gameChatInput = new QLineEdit(gameComposer);
-    m_gameChatInput->setPlaceholderText("Type a message...");
+    m_gameChatInput->setPlaceholderText(tr("Type a message..."));
     m_gameChatInput->setClearButtonEnabled(true);
     m_gameChatInput->setObjectName("KailleraChatComposerInput");
     m_gameChatInput->setFrame(false);
 
     m_btnSendGame = new QPushButton(gameComposer);
     m_btnSendGame->setObjectName("KailleraChatComposerSendButton");
-    m_btnSendGame->setToolTip("Send game chat message");
+    m_btnSendGame->setToolTip(tr("Send game chat message"));
     m_btnSendGame->setText("");
     m_btnSendGame->setIcon(themedLineIcon("play-line"));
     m_btnSendGame->setIconSize(QSize(13, 13));
@@ -1334,7 +1334,7 @@ QWidget* KailleraServerBrowserDialog::createGameRoomWidget()
     m_roomLobbyTable = new QTableWidget(0, 6, roomLobbiesPage);
     m_roomLobbyTable->setObjectName("KailleraSurface");
     m_roomLobbyTable->setProperty("roomLobbySnapshot", true);
-    m_roomLobbyTable->setHorizontalHeaderLabels({"Game", "GameID", "Emulator", "User", "Status", "Users"});
+    m_roomLobbyTable->setHorizontalHeaderLabels({tr("Game"), tr("GameID"), tr("Emulator"), tr("User"), tr("Status"), tr("Users")});
     m_roomLobbyTable->horizontalHeader()->setSectionResizeMode(QHeaderView::Interactive);
     m_roomLobbyTable->horizontalHeader()->setStretchLastSection(false);
     m_roomLobbyTable->horizontalHeader()->setSectionResizeMode(5, QHeaderView::Stretch);
@@ -1405,7 +1405,7 @@ QWidget* KailleraServerBrowserDialog::createGameRoomWidget()
     playersHeaderLayout->setSpacing(6);
     auto* playersHeaderIcon = new QLabel(playersHeader);
     playersHeaderIcon->setPixmap(themedLineIcon("gamepad-line").pixmap(14, 14));
-    auto* playersHeaderTitle = new QLabel("LOBBY", playersHeader);
+    auto* playersHeaderTitle = new QLabel(tr("LOBBY"), playersHeader);
     playersHeaderTitle->setObjectName("KailleraPaneTitle");
     playersHeaderLayout->addWidget(playersHeaderIcon);
     playersHeaderLayout->addWidget(playersHeaderTitle);
@@ -1416,7 +1416,7 @@ QWidget* KailleraServerBrowserDialog::createGameRoomWidget()
     playersHeaderLayout->addWidget(m_playersInGameCountLabel, 0, Qt::AlignVCenter);
     m_btnOptions = new QPushButton(playersHeader);
     m_btnOptions->setObjectName("KailleraHeaderIconButton");
-    m_btnOptions->setToolTip("Lobby options");
+    m_btnOptions->setToolTip(tr("Lobby options"));
     m_btnOptions->setText("");
     m_btnOptions->setIcon(themedLineIcon("settings-3-line"));
     m_btnOptions->setIconSize(QSize(14, 14));
@@ -1449,7 +1449,7 @@ QWidget* KailleraServerBrowserDialog::createGameRoomWidget()
     rightVBox->setContentsMargins(10, 10, 10, 10);
     rightVBox->setSpacing(8);
 
-    m_btnStart = new QPushButton("Start", rightWidget);
+    m_btnStart = new QPushButton(tr("Start"), rightWidget);
     m_btnStart->setObjectName("KailleraStartButton");
     configureServerStartButtonMetrics(m_btnStart);
     if (modern)
@@ -1474,7 +1474,7 @@ QWidget* KailleraServerBrowserDialog::createGameRoomWidget()
     lagControlLayout->setSpacing(0);
     lagControl->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
 
-    m_btnLagStat = new QPushButton("Lagstat", lagControl);
+    m_btnLagStat = new QPushButton(tr("Lagstat"), lagControl);
     m_btnLagStat->setObjectName(modern ? "KailleraSecondarySplitMain" : "KailleraSecondaryButton");
     configureServerButtonMetrics(m_btnLagStat);
     m_btnLagStat->setIcon(themedLineIcon("search-line"));
@@ -1488,7 +1488,7 @@ QWidget* KailleraServerBrowserDialog::createGameRoomWidget()
     configureServerButtonMetrics(btnLagMenu);
     btnLagMenu->setIcon(themedLineIcon("arrow-down-s-line"));
     btnLagMenu->setIconSize(QSize(14, 14));
-    btnLagMenu->setToolTip("More lag tools");
+    btnLagMenu->setToolTip(tr("More lag tools"));
     btnLagMenu->setFixedWidth(24);
     btnLagMenu->setStyleSheet(
         "QToolButton::menu-indicator {"
@@ -1497,14 +1497,14 @@ QWidget* KailleraServerBrowserDialog::createGameRoomWidget()
         "}");
 
     auto* lagMenu = new QMenu(btnLagMenu);
-    QAction* lagResetAction = lagMenu->addAction("Lagreset");
+    QAction* lagResetAction = lagMenu->addAction(tr("Lagreset"));
     btnLagMenu->setMenu(lagMenu);
     btnLagMenu->setPopupMode(QToolButton::InstantPopup);
 
     lagControlLayout->addWidget(m_btnLagStat, 1);
     lagControlLayout->addWidget(btnLagMenu);
 
-    m_btnAdvertise = new QPushButton("Advertise", rightWidget);
+    m_btnAdvertise = new QPushButton(tr("Advertise"), rightWidget);
     m_btnAdvertise->setObjectName("KailleraSecondaryButton");
     configureServerButtonMetrics(m_btnAdvertise);
     m_btnAdvertise->setIcon(themedLineIcon("volume-up-line"));
@@ -1516,7 +1516,7 @@ QWidget* KailleraServerBrowserDialog::createGameRoomWidget()
     utilityRow->addWidget(m_btnAdvertise, 1);
     rightVBox->addLayout(utilityRow);
 
-    m_btnDrop = new QPushButton("Close Game", rightWidget);
+    m_btnDrop = new QPushButton(tr("Close Game"), rightWidget);
     m_btnDrop->setObjectName("KailleraSecondaryButton");
     configureServerButtonMetrics(m_btnDrop);
     m_btnDrop->setIcon(themedLineIcon("shut-down-line"));
@@ -1525,7 +1525,7 @@ QWidget* KailleraServerBrowserDialog::createGameRoomWidget()
     m_btnDrop->setDefault(false);
     rightVBox->addWidget(m_btnDrop);
 
-    m_btnLeave = new QPushButton("Leave Lobby", rightWidget);
+    m_btnLeave = new QPushButton(tr("Leave Lobby"), rightWidget);
     m_btnLeave->setObjectName("KailleraSecondaryButton");
     configureServerButtonMetrics(m_btnLeave);
     m_btnLeave->setIcon(themedLineIcon("door-open-line"));
@@ -1534,7 +1534,7 @@ QWidget* KailleraServerBrowserDialog::createGameRoomWidget()
     m_btnLeave->setDefault(false);
     rightVBox->addWidget(m_btnLeave);
 
-    m_recordCheck = new QCheckBox("Record game", rightWidget);
+    m_recordCheck = new QCheckBox(tr("Record game"), rightWidget);
     rightVBox->addWidget(m_recordCheck);
 
     m_fpsLabel = new QLabel("<span style='color:#8b8b8b;'>Rate</span> <span style='font-weight:600;'>0 fps / 0 pps</span>", rightWidget);
@@ -1693,7 +1693,7 @@ void KailleraServerBrowserDialog::switchToGameRoom()
         m_btnCreateSwap->setVisible(false);
     }
 
-    setWindowTitle("Game Room - " + m_serverName);
+    setWindowTitle(tr("Game Room - %1").arg(m_serverName));
 }
 
 void KailleraServerBrowserDialog::showBottomGameList()
@@ -1715,8 +1715,8 @@ void KailleraServerBrowserDialog::setRoomChatSwapView(bool showLobbies)
     }
     if (m_btnSwapChat != nullptr)
     {
-        m_btnSwapChat->setText(showLobbies ? "Show chat" : "Show lobbies");
-        m_btnSwapChat->setToolTip(showLobbies ? "Show lobby chat" : "Show open lobbies");
+        m_btnSwapChat->setText(showLobbies ? tr("Show chat") : tr("Show lobbies"));
+        m_btnSwapChat->setToolTip(showLobbies ? tr("Show lobby chat") : tr("Show open lobbies"));
     }
     if (showLobbies)
     {
@@ -1765,7 +1765,7 @@ void KailleraServerBrowserDialog::refreshRoomLobbyTable()
         }
     }
 
-    m_roomLobbyTable->setHorizontalHeaderLabels({"Game", "GameID", "Emulator", "User", "Status", "Users"});
+    m_roomLobbyTable->setHorizontalHeaderLabels({tr("Game"), tr("GameID"), tr("Emulator"), tr("User"), tr("Status"), tr("Users")});
 
     m_roomLobbyTable->setSortingEnabled(true);
     if (previousSortColumn >= 0 && previousSortColumn < targetColumns)
@@ -1897,7 +1897,7 @@ void KailleraServerBrowserDialog::updateTitle()
 {
     int users = m_userTable->rowCount();
     int games = m_gameTable->rowCount();
-    setWindowTitle(QString("Connected to %1 (%2 users & %3 games)")
+    setWindowTitle(tr("Connected to %1 (%2 users & %3 games)")
         .arg(m_serverName)
         .arg(users)
         .arg(games));
@@ -2087,7 +2087,7 @@ void KailleraServerBrowserDialog::refreshPlayerCards()
             auto* kickButton = new QPushButton("X", card);
             kickButton->setObjectName("KailleraPlayerKickButton");
             kickButton->setCursor(Qt::PointingHandCursor);
-            kickButton->setToolTip("Kick player");
+            kickButton->setToolTip(tr("Kick player"));
             connect(kickButton, &QPushButton::clicked, this, [this, playerId]() {
                 if (m_isHost && playerId > 0)
                 {
@@ -2215,7 +2215,7 @@ bool KailleraServerBrowserDialog::tryJoinGameFromTable(QTableWidget* table, int 
     {
         if (!leaveCurrentGame)
         {
-            QMessageBox::information(this, "Join Game", "Select a game from the list to join.");
+            QMessageBox::information(this, tr("Join Game"), tr("Select a game from the list to join."));
         }
         return false;
     }
@@ -2238,13 +2238,13 @@ bool KailleraServerBrowserDialog::tryJoinGameFromTable(QTableWidget* table, int 
 
     if (statusItem && statusItem->text() != "Waiting")
     {
-        QMessageBox::warning(this, "Join Game", "Joining a running game is not allowed.");
+        QMessageBox::warning(this, tr("Join Game"), tr("Joining a running game is not allowed."));
         return false;
     }
 
     if (leaveCurrentGame && !hasOpenSlot(table, row))
     {
-        QMessageBox::warning(this, "Join Game", "That lobby is full.");
+        QMessageBox::warning(this, tr("Join Game"), tr("That lobby is full."));
         return false;
     }
 
@@ -2263,8 +2263,8 @@ bool KailleraServerBrowserDialog::tryJoinGameFromTable(QTableWidget* table, int 
         }
         if (!found)
         {
-            QMessageBox::warning(this, "Join Game",
-                QString("The ROM '%1' is not in your list.").arg(gameName));
+            QMessageBox::warning(this, tr("Join Game"),
+                tr("The ROM '%1' is not in your list.").arg(gameName));
             return false;
         }
     }
@@ -2276,8 +2276,8 @@ bool KailleraServerBrowserDialog::tryJoinGameFromTable(QTableWidget* table, int 
         const QString localEmu = QString::fromUtf8(APP);
         if (remoteEmu != localEmu)
         {
-            int ret = QMessageBox::warning(this, "Version Mismatch",
-                "Emulator/version mismatch and the game may desync.\nDo you want to continue?",
+            int ret = QMessageBox::warning(this, tr("Version Mismatch"),
+                tr("Emulator/version mismatch and the game may desync.\nDo you want to continue?"),
                 QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
             if (ret != QMessageBox::Yes)
             {
@@ -2782,7 +2782,7 @@ void KailleraServerBrowserDialog::onUserKicked()
 {
     m_pendingJoinGameName.clear();
     m_pendingJoinGameId = 0;
-    QMessageBox::warning(this, "Kicked", "You have been kicked from the game.");
+    QMessageBox::warning(this, tr("Kicked"), tr("You have been kicked from the game."));
     switchToLobby();
 }
 
@@ -2966,17 +2966,17 @@ void KailleraServerBrowserDialog::onPlayerListContextMenu(const QPoint& pos)
     QMenu menu(this);
     QAction* kickAction = menu.addAction(
         QIcon::fromTheme("user-trash", style()->standardIcon(QStyle::SP_DialogCancelButton)),
-        "Kick Player");
+        tr("Kick Player"));
 
     if (!m_isHost)
     {
         kickAction->setEnabled(false);
-        kickAction->setText("Kick Player (Host only)");
+        kickAction->setText(tr("Kick Player (Host only)"));
     }
     else if (row == 0)
     {
         kickAction->setEnabled(false);
-        kickAction->setText("Kick Player (Cannot kick host)");
+        kickAction->setText(tr("Kick Player (Cannot kick host)"));
     }
 
     QAction* chosen = menu.exec(m_playerList->viewport()->mapToGlobal(pos));
@@ -3057,7 +3057,7 @@ void KailleraServerBrowserDialog::onKickPlayer()
     int row = m_playerList->currentRow();
     if (row < 0)
     {
-        QMessageBox::information(this, "Kick Player", "Select a player to kick.");
+        QMessageBox::information(this, tr("Kick Player"), tr("Select a player to kick."));
         return;
     }
 
@@ -3226,7 +3226,7 @@ void KailleraServerBrowserDialog::onStatsTimer()
     int pps = currentPPS - m_lastPPS;
     m_lastPPS = currentPPS;
 
-    m_fpsLabel->setText(QString("<span style='color:#8b8b8b;'>Rate</span> <span style='font-weight:600;'>%1 fps / %2 pps</span>")
+    m_fpsLabel->setText(tr("<span style='color:#8b8b8b;'>Rate</span> <span style='font-weight:600;'>%1 fps / %2 pps</span>")
         .arg(fps)
         .arg(pps));
 
