@@ -16,9 +16,11 @@ using namespace UserInterface::Dialog;
 AboutDialog::AboutDialog(QWidget* parent) : QDialog(parent)
 {
     this->setupUi(this);
-    // prepare modified html w/ version
+    // prepare modified html with CMG-K and upstream base version metadata
     QString html = this->textBrowser->toHtml();
-    html.replace("{version}", QString::fromStdString(CoreGetVersion()));
+    html.replace("{cmgk_version}", QString::fromStdString(CoreGetVersion()));
+    html.replace("{rmgk_base_version}", QString::fromStdString(CoreGetUpstreamBaseVersion()));
+    html.replace("{rmgk_base_commit}", QString::fromStdString(CoreGetUpstreamBaseCommit()));
     // show modified html
     this->textBrowser->setHtml(html);
 }

@@ -12,7 +12,11 @@
 
 #include <string>
 
-// returns the current RMG-Core version (as string)
+// Returns the current CMG-K product version (as string).
 std::string CoreGetVersion(void);
+// Returns the Kaillera/P2P app version advertised for compatibility testing.
+std::string CoreGetKailleraAppVersion(void);
+std::string CoreGetUpstreamBaseVersion(void);
+std::string CoreGetUpstreamBaseCommit(void);
 
 #endif // CORE_VERSION_HPP

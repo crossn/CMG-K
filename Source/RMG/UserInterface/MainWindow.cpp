@@ -3218,7 +3218,7 @@ void MainWindow::checkForUpdates(bool silent, bool force)
     QNetworkAccessManager* networkAccessManager = new QNetworkAccessManager(this);
     connect(networkAccessManager, &QNetworkAccessManager::finished, this, &MainWindow::on_networkAccessManager_Finished);
     networkAccessManager->setTransferTimeout(15000);
-    networkAccessManager->get(QNetworkRequest(QUrl("https://api.github.com/repos/Jay-Day/RMG-K/releases/latest")));
+    networkAccessManager->get(QNetworkRequest(QUrl("https://api.github.com/repos/crossn/CMG-K/releases/latest")));
 }
 #endif // UPDATER
 
@@ -4569,7 +4569,7 @@ void MainWindow::openNetplayLauncher(int initialTab)
     }
 
     // Set Kaillera app info (app name and game list)
-    std::string appName = "RMG-K " + CoreGetVersion();
+    std::string appName = "RMG-K " + CoreGetKailleraAppVersion();
     // Build game list from ROM browser (null-terminated strings with double-null at end)
     // Must use std::string directly to preserve embedded null characters
     std::string gameList;
@@ -4983,7 +4983,7 @@ void MainWindow::on_Lobby_SessionRequested(QString gameName, QString romFile, QS
     // dir + app id first, since the lobby path never runs CoreInitKaillera.
     n02::setRecordsDirectory(CoreGetKailleraRecordsDirectory());
     {
-        const std::string recAppName = "RMG-K " + CoreGetVersion();
+        const std::string recAppName = "RMG-K " + CoreGetKailleraAppVersion();
         n02::recordingOpen(recAppName.c_str(), gameName.toStdString().c_str(),
                            localPlayer, int(remotePeers.size()) + 1);
     }
@@ -5375,7 +5375,7 @@ QString MainWindow::findRomByName(QString gameName)
 
 void MainWindow::on_Action_Help_Github(void)
 {
-    QDesktopServices::openUrl(QUrl("https://github.com/Jay-Day/RMG-K"));
+    QDesktopServices::openUrl(QUrl("https://github.com/crossn/CMG-K"));
 }
 
 void MainWindow::on_Action_Help_About(void)

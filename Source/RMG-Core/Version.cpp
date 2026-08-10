@@ -19,3 +19,18 @@ CORE_EXPORT std::string CoreGetVersion(void)
 {
     return std::string(CORE_VERSION);
 }
+
+CORE_EXPORT std::string CoreGetKailleraAppVersion(void)
+{
+    return std::string(CORE_KAILLERA_APP_VERSION);
+}
+
+CORE_EXPORT std::string CoreGetUpstreamBaseVersion(void)
+{
+    return std::string(CORE_UPSTREAM_BASE_VERSION);
+}
+
+CORE_EXPORT std::string CoreGetUpstreamBaseCommit(void)
+{
+    return std::string(CORE_UPSTREAM_BASE_COMMIT);
+}

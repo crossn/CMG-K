@@ -82,6 +82,11 @@ void UpdateDialog::accept(void)
         QString lowerFilename = filename.toLower();
         QString url           = object.value("browser_download_url").toString();
 
+        if (!lowerFilename.startsWith("cmg-k-"))
+        {
+            continue;
+        }
+
 #ifdef _WIN32
         if (((QSysInfo::buildCpuArchitecture() == "x86_64" && lowerFilename.contains("windows64")) ||
               lowerFilename.contains("windows-" + QSysInfo::buildCpuArchitecture())) &&

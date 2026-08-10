@@ -74,7 +74,7 @@ void InstallUpdateDialog::install(void)
             "   \"" + fullFilePath + "\" /CLOSEAPPLICATIONS /NOCANCEL /MERGETASKS=\"!desktopicon\"  /SILENT /DIR=\"" + appPath + "\"" + outputToLogLine,
             ")",
             "IF NOT ERRORLEVEL 0 (",
-            "   start \"\" cmd /c \"echo RMG Kaillera Edition failed to update, check the updater.log file in the user cache directory for more information && pause\"",
+            "   start \"\" cmd /c \"echo CMG-K failed to update, check the updater.log file in the user cache directory for more information && pause\"",
             ")",
             // remove temporary directory at last
             "rmdir /S /Q \"" + this->temporaryDirectory + "\"",
@@ -121,11 +121,11 @@ void InstallUpdateDialog::install(void)
         "   taskkill /F /PID:"              + appPid               + outputToLogLine,
         "   echo == Attemping to copy \'" + extractDirectory + "\' to \'" + appPath + "\'"  + outputToLogLine,
         "   xcopy /S /Y /I \""            + extractDirectory + "\\*\" \"" + appPath + "\""  + outputToLogLine,
-        "   echo == Attemping to start \'" + appPath + "\\RMG-K.exe\'"           + outputToLogLine,
-        "   start \"\" \""                 + appPath + "\\RMG-K.exe\""           + outputToLogLine,
+            "   echo == Attemping to start \'" + appPath + "\\CMG-K.exe\'"           + outputToLogLine,
+            "   start \"\" \""                 + appPath + "\\CMG-K.exe\""           + outputToLogLine,
         ")",
         "IF NOT ERRORLEVEL 0 (",
-        "   start \"\" cmd /c \"echo RMG Kaillera Edition failed to update, check the updater.log file in the user cache directory for more information && pause\"",
+        "   start \"\" cmd /c \"echo CMG-K failed to update, check the updater.log file in the user cache directory for more information && pause\"",
         ")",
         // remove temporary directory at last
         "rmdir /S /Q \"" + this->temporaryDirectory + "\"",

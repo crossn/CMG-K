@@ -15,8 +15,20 @@ SHARUN_URL="https://github.com/VHSgunzo/sharun/releases/latest/download/sharun-$
 
 export ARCH="$arch"
 export APPIMAGE_EXTRACT_AND_RUN=1
-export VERSION="$(git describe --tags --always)"
-export OUTPUT="$bin_dir/../RMG-K-Portable-Linux64-$VERSION.AppImage"
+if [[ -n "${CMGK_VERSION:-}" ]]
+then
+	version="$CMGK_VERSION"
+elif version="$(git describe --tags --exact-match 2>/dev/null)"
+then
+	:
+elif commit_count="$(git rev-list --count HEAD 2>/dev/null)"
+then
+	version="vdev-$commit_count"
+else
+	version="$(head -n 1 "$toplvl_dir/VERSION")"
+fi
+export VERSION="$version"
+export OUTPUT="$bin_dir/../CMG-K-Portable-Linux64-$VERSION.AppImage"
 export LD_LIBRARY_PATH="$toplvl_dir/Build/AppImage/Source/RMG-Core" # hack
 export SHARUN="$script_dir/sharun"
 
@@ -57,7 +69,7 @@ mv "$bin_dir/usr" "$bin_dir/shared"
 $XVFB_RUN "$script_dir/lib4bin" --dst-dir "$bin_dir" \
 	--hard-links --strip --with-hooks \
 	--strace-mode --with-sharun \
-	"$bin_dir/shared/bin/RMG-K" \
+	"$bin_dir/shared/bin/CMG-K" \
 	"$lib_dir"/libSDL* \
 	"$lib_dir"/libspeexdsp* \
 	"$lib_dir"/libhidapi-hidraw* \
