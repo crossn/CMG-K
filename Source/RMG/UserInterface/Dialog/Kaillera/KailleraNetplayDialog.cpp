@@ -1841,15 +1841,15 @@ QWidget* KailleraNetplayDialog::createServerTab()
     configureLauncherComboMetrics(m_frameDelayCombo);
     configureLauncherComboPopup(m_frameDelayCombo, theme);
     m_frameDelayCombo->addItem(tr("Auto"));
-    m_frameDelayCombo->addItem("1 frame (8ms)");
-    m_frameDelayCombo->addItem("2 frames (24ms)");
-    m_frameDelayCombo->addItem("3 frames (40ms)");
-    m_frameDelayCombo->addItem("4 frames (56ms)");
-    m_frameDelayCombo->addItem("5 frames (72ms)");
-    m_frameDelayCombo->addItem("6 frames (88ms)");
-    m_frameDelayCombo->addItem("7 frames (104ms)");
-    m_frameDelayCombo->addItem("8 frames (120ms)");
-    m_frameDelayCombo->addItem("9 frames (136ms)");
+    m_frameDelayCombo->addItem(tr("1 frame (8ms)"));
+    m_frameDelayCombo->addItem(tr("2 frames (24ms)"));
+    m_frameDelayCombo->addItem(tr("3 frames (40ms)"));
+    m_frameDelayCombo->addItem(tr("4 frames (56ms)"));
+    m_frameDelayCombo->addItem(tr("5 frames (72ms)"));
+    m_frameDelayCombo->addItem(tr("6 frames (88ms)"));
+    m_frameDelayCombo->addItem(tr("7 frames (104ms)"));
+    m_frameDelayCombo->addItem(tr("8 frames (120ms)"));
+    m_frameDelayCombo->addItem(tr("9 frames (136ms)"));
 
     connect(m_btnWaitingGames, &QPushButton::clicked, this, &KailleraNetplayDialog::onWaitingGames);
     connect(m_btnConnect, &QPushButton::clicked, this, &KailleraNetplayDialog::onConnectServer);

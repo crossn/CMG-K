@@ -2583,15 +2583,15 @@ void KailleraP2PDialog::applyGameLayerUI()
             m_frameDelayCombo->setMinimumWidth(175);
             m_frameDelayCombo->setMaximumWidth(220);
             m_frameDelayCombo->addItem(tr("Auto"));
-            m_frameDelayCombo->addItem("1 frame (0-33ms)");
-            m_frameDelayCombo->addItem("2 frames (34-67ms)");
-            m_frameDelayCombo->addItem("3 frames (68-99ms)");
-            m_frameDelayCombo->addItem("4 frames (100-133ms)");
-            m_frameDelayCombo->addItem("5 frames (134-167ms)");
-            m_frameDelayCombo->addItem("6 frames (168-199ms)");
-            m_frameDelayCombo->addItem("7 frames (200-233ms)");
-            m_frameDelayCombo->addItem("8 frames (234-267ms)");
-            m_frameDelayCombo->addItem("9 frames (268+ms)");
+            m_frameDelayCombo->addItem(tr("1 frame (0-33ms)"));
+            m_frameDelayCombo->addItem(tr("2 frames (34-67ms)"));
+            m_frameDelayCombo->addItem(tr("3 frames (68-99ms)"));
+            m_frameDelayCombo->addItem(tr("4 frames (100-133ms)"));
+            m_frameDelayCombo->addItem(tr("5 frames (134-167ms)"));
+            m_frameDelayCombo->addItem(tr("6 frames (168-199ms)"));
+            m_frameDelayCombo->addItem(tr("7 frames (200-233ms)"));
+            m_frameDelayCombo->addItem(tr("8 frames (234-267ms)"));
+            m_frameDelayCombo->addItem(tr("9 frames (268+ms)"));
 
             if (m_standardFrameDelay < 0 || m_standardFrameDelay > 9)
             {

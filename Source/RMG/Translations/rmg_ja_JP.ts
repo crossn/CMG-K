@@ -941,7 +941,6 @@ ROM ディレクトリに追加して、一覧を更新してください。</tr
         <name>CreateNetplaySessionDialog</name>
         <message><source>Create Netplay Session</source><translation>ネットプレイセッションを作成</translation></message>
         <message><source>Server</source><translation>サーバー</translation></message>
-        <message><source>Traceroute - %1</source><translation>経路追跡 - %1</translation></message>
         <message><source>Server ping</source><translation>サーバーPing</translation></message>
         <message><source>Nickname</source><translation>ニックネーム</translation></message>
         <message><source>Session name</source><translation>セッション名</translation></message>
@@ -1220,6 +1219,15 @@ ROM ディレクトリに追加して、一覧を更新してください。</tr
         <message><source>The ROM '%1' is not in your list.</source><translation>ROM「%1」は一覧にありません。</translation></message>
         <message><source>P2P Join</source><translation>P2P参加</translation></message>
         <message><source>Copied</source><translation>コピーしました</translation></message>
+        <message><source>1 frame (0-33ms)</source><translation>1フレーム（0～33ms）</translation></message>
+        <message><source>2 frames (34-67ms)</source><translation>2フレーム（34～67ms）</translation></message>
+        <message><source>3 frames (68-99ms)</source><translation>3フレーム（68～99ms）</translation></message>
+        <message><source>4 frames (100-133ms)</source><translation>4フレーム（100～133ms）</translation></message>
+        <message><source>5 frames (134-167ms)</source><translation>5フレーム（134～167ms）</translation></message>
+        <message><source>6 frames (168-199ms)</source><translation>6フレーム（168～199ms）</translation></message>
+        <message><source>7 frames (200-233ms)</source><translation>7フレーム（200～233ms）</translation></message>
+        <message><source>8 frames (234-267ms)</source><translation>8フレーム（234～267ms）</translation></message>
+        <message><source>9 frames (268+ms)</source><translation>9フレーム（268ms以上）</translation></message>
     </context>
     <context>
         <name>KailleraNetplayDialog</name>
@@ -1302,6 +1310,16 @@ ROM ディレクトリに追加して、一覧を更新してください。</tr
         <message><source>Emulator</source><translation>エミュレーター</translation></message>
         <message><source>User</source><translation>ユーザー</translation></message>
         <message><source>Server</source><translation>サーバー</translation></message>
+        <message><source>Traceroute - %1</source><translation>経路追跡 - %1</translation></message>
+        <message><source>1 frame (8ms)</source><translation>1フレーム（8ms）</translation></message>
+        <message><source>2 frames (24ms)</source><translation>2フレーム（24ms）</translation></message>
+        <message><source>3 frames (40ms)</source><translation>3フレーム（40ms）</translation></message>
+        <message><source>4 frames (56ms)</source><translation>4フレーム（56ms）</translation></message>
+        <message><source>5 frames (72ms)</source><translation>5フレーム（72ms）</translation></message>
+        <message><source>6 frames (88ms)</source><translation>6フレーム（88ms）</translation></message>
+        <message><source>7 frames (104ms)</source><translation>7フレーム（104ms）</translation></message>
+        <message><source>8 frames (120ms)</source><translation>8フレーム（120ms）</translation></message>
+        <message><source>9 frames (136ms)</source><translation>9フレーム（136ms）</translation></message>
     </context>
     <context>
         <name>KailleraServerBrowserDialog</name>
