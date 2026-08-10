@@ -230,8 +230,7 @@ jobs:
         run: |
           mkdir -p release
 
-          # Find and move Linux AppImage
-          find artifacts -name "*.AppImage" -exec cp {} release/ \;
+          # Linux AppImage remains a CI artifact until CMG-K-specific AppStream/desktop identity and support policy are finalized.
 
           # Zip Windows portable build
           if [ -d "artifacts/CMG-K-Portable-Windows64-${{ env.VERSION }}" ]; then
