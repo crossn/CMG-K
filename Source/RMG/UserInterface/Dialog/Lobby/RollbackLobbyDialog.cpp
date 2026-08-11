@@ -804,14 +804,14 @@ QWidget* RollbackLobbyDialog::buildInRoomView()
     settingsRow->setContentsMargins(0, SPACING_TIGHT, 0, 0);
     settingsRow->setSpacing(SPACING_DEFAULT);
 
-    const QString delayTip = QStringLiteral(
-        tr("Frames of input delay added before sending to peer.\n"
+    const QString delayTip = tr(
+        "Frames of input delay added before sending to peer.\n"
            "Higher delay = fewer rollbacks but more input latency.\n"
            "Recommended: 2 for ~80ms RTT, 3-4 for ~150ms RTT.\n"
            "\n"
            "Host-only. All players will use the same value."));
-    const QString predictionTip = QStringLiteral(
-        tr("Maximum frames the rollback engine may predict ahead.\n"
+    const QString predictionTip = tr(
+        "Maximum frames the rollback engine may predict ahead.\n"
            "Higher prediction = more network tolerance.\n"
            "Recommended: 7 (matches Slippi default).\n"
            "\n"
