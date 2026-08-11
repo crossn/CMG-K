@@ -11,10 +11,12 @@
 #define RMG_UTILITIES_TRANSLATION_HPP
 
 class QApplication;
+class QString;
 class QTranslator;
 
 namespace Translation
 {
+QString ResolvedLanguage(void);
 void Install(QApplication& application, QTranslator& qtTranslator, QTranslator& applicationTranslator);
 }
 

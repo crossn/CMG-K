@@ -368,7 +368,9 @@ SettingsDialog::SettingsDialog(QWidget *parent, QString file) : QDialog(parent)
     this->settingsContentLayout->activate();
     const int tabBarWidth = this->tabWidget->tabBar()->sizeHint().width();
     const int preferredWidth = qMax(800, tabBarWidth + 80);
-    const int preferredHeight = qBound(600, this->sizeHint().height(), 700);
+    // Keep the normal dialog tall enough for the Emulation page while letting
+    // the outer scroll area handle genuinely constrained displays.
+    const int preferredHeight = qBound(650, this->sizeHint().height(), 720);
     this->naturalSizeHint = QSize(preferredWidth, preferredHeight);
 }
 
@@ -404,6 +406,12 @@ void SettingsDialog::showEvent(QShowEvent* event)
     const QSize maximumClient = (availableGeometry.size() - frameMargins).expandedTo(QSize(1, 1));
     const QSize naturalSize = this->naturalSizeHint.isValid() ? this->naturalSizeHint : this->sizeHint();
     const QSize boundedSize = naturalSize.boundedTo(maximumClient);
+
+    // On a normal display, do not let users shrink the dialog into a state
+    // where every page needs an outer scrollbar.  On small or high-DPI
+    // displays the minimum is clamped to the available client area, so the
+    // existing scroll-area fallback remains available.
+    this->setMinimumSize(boundedSize);
 
     if (this->size() != boundedSize)
     {

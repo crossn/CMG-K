@@ -200,6 +200,10 @@ set(RMG_TRANSLATION_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/../RMG-Input-GCA/UserInterface/MainDialog.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../RMG-Audio/UserInterface/MainDialog.ui
     ${CMAKE_CURRENT_SOURCE_DIR}/../RMG-Audio/UserInterface/MainDialog.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../3rdParty/mupen64plus-video-parallel/UserInterface/MainDialog.ui
+    ${CMAKE_CURRENT_SOURCE_DIR}/../3rdParty/mupen64plus-video-parallel/UserInterface/MainDialog.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../3rdParty/mupen64plus-video-angrylion-plus/src/plugin/mupen64plus/UserInterface/MainDialog.ui
+    ${CMAKE_CURRENT_SOURCE_DIR}/../3rdParty/mupen64plus-video-angrylion-plus/src/plugin/mupen64plus/UserInterface/MainDialog.cpp
 )
 
 qt_add_lupdate(RMG

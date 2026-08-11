@@ -1198,7 +1198,7 @@ QWidget* RollbackLobbyDialog::buildChatColumn()
     lay->setContentsMargins(MARGIN_OUTER, MARGIN_OUTER, MARGIN_OUTER, MARGIN_OUTER);
     lay->setSpacing(SPACING_DEFAULT);
 
-    auto* header = new QLabel("LOBBY CHAT", this);
+    auto* header = new QLabel(tr("LOBBY CHAT"), this);
     header->setProperty("class", "SectionHeader");
     lay->addWidget(header);
 

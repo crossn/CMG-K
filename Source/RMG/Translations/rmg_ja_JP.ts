@@ -1847,4 +1847,52 @@ ROM ディレクトリに追加して、一覧を更新してください。</tr
         <message><source>Pre-match sync failed.</source><translation>対戦前設定の同期に失敗しました。</translation></message>
         <message><source>Pre-match sync complete.</source><translation>対戦前設定の同期が完了しました。</translation></message>
     </context>
+    <context>
+        <name>MainDialog</name>
+        <message><source>paraLLEl-RDP</source><translation>paraLLEl-RDP</translation></message>
+        <message><source>Angrylion-Plus</source><translation>Angrylion-Plus</translation></message>
+        <message><source>Video</source><translation>映像</translation></message>
+        <message><source>Screen size</source><translation>画面サイズ</translation></message>
+        <message><source>N64 resolution upscale</source><translation>N64解像度のアップスケール</translation></message>
+        <message><source>None</source><translation>なし</translation></message>
+        <message><source>8x (hi-end GPUs only)</source><translation>8倍（ハイエンドGPUのみ）</translation></message>
+        <message><source>Deinterlacer</source><translation>デインターレーサー</translation></message>
+        <message><source>Bob</source><translation>ボブ</translation></message>
+        <message><source>Weave</source><translation>ウィーブ</translation></message>
+        <message><source>Downscaling of upscaled buffer</source><translation>アップスケール済みバッファーのダウンスケール</translation></message>
+        <message><source>Vertical stretch</source><translation>垂直方向の伸縮</translation></message>
+        <message><source> px</source><translation> px</translation></message>
+        <message><source>Supersampled dither</source><translation>スーパーサンプリングディザー</translation></message>
+        <message><source>Supersampled RDRAM reads</source><translation>スーパーサンプリングRDRAM読み出し</translation></message>
+        <message><source>VI AA</source><translation>VIアンチエイリアス</translation></message>
+        <message><source>VI bilinear filtering</source><translation>VIバイリニアフィルタリング</translation></message>
+        <message><source>VI divot filter</source><translation>VIディボットフィルター</translation></message>
+        <message><source>VI gamma dither</source><translation>VIガンマディザー</translation></message>
+        <message><source>VI de-dithering</source><translation>VIディザー除去</translation></message>
+        <message><source>Native texrects</source><translation>ネイティブTexRect</translation></message>
+        <message><source>Native texture LOD</source><translation>ネイティブテクスチャLOD</translation></message>
+        <message><source>Vertical sync</source><translation>垂直同期</translation></message>
+        <message><source>Force widescreen</source><translation>ワイドスクリーンを強制</translation></message>
+        <message><source>Overscan</source><translation>オーバースキャン</translation></message>
+        <message><source>Compatibility</source><translation>互換性</translation></message>
+        <message><source>Fast</source><translation>高速</translation></message>
+        <message><source>Moderate</source><translation>標準</translation></message>
+        <message><source>Slow</source><translation>低速</translation></message>
+        <message><source>Output Mode</source><translation>出力モード</translation></message>
+        <message><source>Filtered</source><translation>フィルターあり</translation></message>
+        <message><source>Unfiltered</source><translation>フィルターなし</translation></message>
+        <message><source>Depth</source><translation>深度</translation></message>
+        <message><source>Coverage</source><translation>カバレッジ</translation></message>
+        <message><source>Interpolation</source><translation>補間</translation></message>
+        <message><source>Nearest-neighbor</source><translation>ニアレストネイバー</translation></message>
+        <message><source>Bilinear</source><translation>バイリニア</translation></message>
+        <message><source>Hybrid</source><translation>ハイブリッド</translation></message>
+        <message><source>Threads (0 = auto)</source><translation>スレッド数（0 = 自動）</translation></message>
+        <message><source>16:9 widescreen</source><translation>16:9ワイドスクリーン</translation></message>
+        <message><source>Hide overscan</source><translation>オーバースキャンを隠す</translation></message>
+        <message><source>Enable busyloop</source><translation>ビジーループを有効にする</translation></message>
+        <message><source>Integer pixel scaling</source><translation>整数ピクセルスケーリング</translation></message>
+        <message><source>Multithreaded rendering</source><translation>マルチスレッドレンダリング</translation></message>
+        <message><source>Enable Vsync</source><translation>垂直同期を有効にする</translation></message>
+    </context>
 </TS>
