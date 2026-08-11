@@ -490,7 +490,8 @@ bool ControllerWidget::hasAnySettingChanged(QString sectionQString)
     std::string settingsGameboySave = CoreSettingsGetStringValue(SettingsID::Input_GameboySave, section);
 
     // retrieve current data
-    bool currentIsPluggedIn        = this->inputDeviceComboBox->currentText() != "None";
+    const inputDeviceData currentDevice = this->inputDeviceComboBox->currentData().value<inputDeviceData>();
+    bool currentIsPluggedIn        = currentDevice.device.type != InputDeviceType::None;
     int currentDeadZone            = this->deadZoneSlider->value();
     int currentAnalogRange         = this->analogStickRangeSlider->value();
     bool currentRealN64Range       = this->realN64RangeCheckBox->isChecked();
@@ -594,7 +595,23 @@ void ControllerWidget::showErrorMessage(QString text, QString details)
 void ControllerWidget::AddInputDevice(const InputDevice& device, const InputProfileDBEntry& inputProfile)
 {
     QString deviceName = QString::fromStdString(device.name);
-    QString name = deviceName;
+    QString name;
+
+    switch (device.type)
+    {
+    case InputDeviceType::None:
+        name = tr("None");
+        break;
+    case InputDeviceType::Automatic:
+        name = tr("Automatic");
+        break;
+    case InputDeviceType::Keyboard:
+        name = tr("Keyboard");
+        break;
+    default:
+        name = deviceName;
+        break;
+    }
 
     if (device.type == InputDeviceType::Joystick)
     {

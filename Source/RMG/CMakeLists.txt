@@ -196,23 +196,40 @@ set(RMG_TRANSLATION_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/../RMG-Input/UserInterface/HotkeysDialog.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../RMG-Input/UserInterface/Widget/ControllerWidget.ui
     ${CMAKE_CURRENT_SOURCE_DIR}/../RMG-Input/UserInterface/Widget/ControllerWidget.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../RMG-Input-GCA/UserInterface/MainDialog.ui
+    ${CMAKE_CURRENT_SOURCE_DIR}/../RMG-Input-GCA/UserInterface/MainDialog.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../RMG-Audio/UserInterface/MainDialog.ui
+    ${CMAKE_CURRENT_SOURCE_DIR}/../RMG-Audio/UserInterface/MainDialog.cpp
 )
 
 qt_add_lupdate(RMG
     TS_FILES ${RMG_TRANSLATION_TS}
     SOURCES ${RMG_TRANSLATION_SOURCES}
 )
+set(GLIDEN64_TRANSLATION_TS
+    ${CMAKE_CURRENT_SOURCE_DIR}/../3rdParty/mupen64plus-video-GLideN64/translations/gliden64_ja.ts
+)
+list(APPEND RMG_TRANSLATION_TS ${GLIDEN64_TRANSLATION_TS})
 qt_add_lrelease(RMG
     TS_FILES ${RMG_TRANSLATION_TS}
     QM_FILES_OUTPUT_VARIABLE RMG_TRANSLATION_QM_FILES
 )
+set(GLIDEN64_TRANSLATION_QM_FILES ${RMG_TRANSLATION_QM_FILES})
+list(FILTER GLIDEN64_TRANSLATION_QM_FILES INCLUDE REGEX "gliden64_ja\\.qm$")
+list(FILTER RMG_TRANSLATION_QM_FILES EXCLUDE REGEX "gliden64_ja\\.qm$")
 add_custom_command(TARGET RMG POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:RMG>/Data/Translations"
     COMMAND ${CMAKE_COMMAND} -E copy_if_different ${RMG_TRANSLATION_QM_FILES}
         "$<TARGET_FILE_DIR:RMG>/Data/Translations"
+    COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:RMG>/Data"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different ${GLIDEN64_TRANSLATION_QM_FILES}
+        "$<TARGET_FILE_DIR:RMG>/Data"
 )
 install(FILES ${RMG_TRANSLATION_QM_FILES}
     DESTINATION ${DATA_INSTALL_PATH}/Translations
+)
+install(FILES ${GLIDEN64_TRANSLATION_QM_FILES}
+    DESTINATION ${DATA_INSTALL_PATH}
 )
 
 if (WIN32)

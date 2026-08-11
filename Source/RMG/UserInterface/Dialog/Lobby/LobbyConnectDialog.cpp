@@ -43,7 +43,7 @@ QString LobbyConnectDialog::defaultServerUrl()
 LobbyConnectDialog::LobbyConnectDialog(QWidget* parent)
     : QDialog(parent)
 {
-    setWindowTitle("Connect to RMG-K Lobby");
+    setWindowTitle(tr("Connect to CMG-K Rollback Lobby"));
     setModal(true);
     buildUi();
     loadSettings();
@@ -58,11 +58,11 @@ void LobbyConnectDialog::buildUi()
 
     m_usernameEdit = new QLineEdit(this);
     m_usernameEdit->setMaxLength(16);
-    m_usernameEdit->setPlaceholderText("3-16 characters: letters, numbers, _ - .");
+    m_usernameEdit->setPlaceholderText(tr("3-16 characters: letters, numbers, _ - ."));
     auto* validator = new QRegularExpressionValidator(
         QRegularExpression(R"([A-Za-z0-9_\-\.]{1,16})"), this);
     m_usernameEdit->setValidator(validator);
-    form->addRow("Username:", m_usernameEdit);
+    form->addRow(tr("Username:"), m_usernameEdit);
 
     root->addLayout(form);
 
@@ -71,7 +71,7 @@ void LobbyConnectDialog::buildUi()
     root->addWidget(m_validationLbl);
 
     auto* btnBox = new QDialogButtonBox(QDialogButtonBox::Cancel, this);
-    m_connectButton = btnBox->addButton("Connect", QDialogButtonBox::AcceptRole);
+    m_connectButton = btnBox->addButton(tr("Connect"), QDialogButtonBox::AcceptRole);
     connect(btnBox, &QDialogButtonBox::rejected, this, &QDialog::reject);
     connect(m_connectButton, &QPushButton::clicked, this, &LobbyConnectDialog::onConnect);
 
@@ -86,7 +86,7 @@ void LobbyConnectDialog::validateInput()
 
     QString reason;
     if (user.length() < 3)
-        reason = "Username must be at least 3 characters.";
+        reason = tr("Username must be at least 3 characters.");
 
     m_validationLbl->setText(reason);
     m_connectButton->setEnabled(reason.isEmpty());

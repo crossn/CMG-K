@@ -19,6 +19,7 @@
 #include <QRegularExpression>
 #include <QScreen>
 #include <QShowEvent>
+#include <QTabBar>
 #include <QVBoxLayout>
 #include <QWindow>
 #include <QHBoxLayout>
@@ -364,12 +365,11 @@ SettingsDialog::SettingsDialog(QWidget *parent, QString file) : QDialog(parent)
 #endif
 
     this->tabWidget->setMinimumWidth(0);
-    this->tabWidget->setMinimumHeight(this->tabWidget->sizeHint().height());
     this->settingsContentLayout->activate();
-    const QSize contentSizeHint = this->settingsContentWidget->sizeHint();
-    const QSize scrollAreaSizeHint = this->settingsContentScrollArea->sizeHint();
-    const QSize contentSizeDelta = (contentSizeHint - scrollAreaSizeHint).expandedTo(QSize());
-    this->naturalSizeHint = this->sizeHint() + contentSizeDelta;
+    const int tabBarWidth = this->tabWidget->tabBar()->sizeHint().width();
+    const int preferredWidth = qMax(800, tabBarWidth + 80);
+    const int preferredHeight = qBound(600, this->sizeHint().height(), 700);
+    this->naturalSizeHint = QSize(preferredWidth, preferredHeight);
 }
 
 SettingsDialog::~SettingsDialog(void)

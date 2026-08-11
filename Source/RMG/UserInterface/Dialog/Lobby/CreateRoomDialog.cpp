@@ -27,7 +27,7 @@ CreateRoomDialog::CreateRoomDialog(const QString& defaultUsername,
                                    QWidget* parent)
     : QDialog(parent)
 {
-    setWindowTitle("Create Room");
+    setWindowTitle(tr("Create Room"));
     setModal(true);
     // The game comes from the lobby's shared picker, not a picker of our own.
     m_romName = gameName;
@@ -48,20 +48,20 @@ void CreateRoomDialog::buildUi(const QString& defaultUsername)
     m_nameEdit = new QLineEdit(this);
     m_nameEdit->setMaxLength(48);
     if (!defaultUsername.isEmpty())
-        m_nameEdit->setText(QString("%1's Room").arg(defaultUsername));
+        m_nameEdit->setText(tr("%1's Room").arg(defaultUsername));
     else
-        m_nameEdit->setPlaceholderText("My Room");
-    form->addRow("Room name:", m_nameEdit);
+        m_nameEdit->setPlaceholderText(tr("My Room"));
+    form->addRow(tr("Room name:"), m_nameEdit);
 
     m_gameLabel = new QLabel(this);
     m_gameLabel->setTextInteractionFlags(Qt::TextSelectableByMouse);
-    form->addRow("Game:", m_gameLabel);
+    form->addRow(tr("Game:"), m_gameLabel);
 
     m_maxPlayersSpin = new QSpinBox(this);
     m_maxPlayersSpin->setRange(2, 4);
     m_maxPlayersSpin->setValue(2);
-    m_maxPlayersSpin->setSuffix(" players");
-    form->addRow("Max players:", m_maxPlayersSpin);
+    m_maxPlayersSpin->setSuffix(tr(" players"));
+    form->addRow(tr("Max players:"), m_maxPlayersSpin);
 
     root->addLayout(form);
 
@@ -72,13 +72,13 @@ void CreateRoomDialog::buildUi(const QString& defaultUsername)
 
     // Optional password (collapsed by default)
     auto* pwRow = new QHBoxLayout;
-    m_passwordCheck = new QCheckBox("Password-protect this room", this);
+    m_passwordCheck = new QCheckBox(tr("Password-protect this room"), this);
     pwRow->addWidget(m_passwordCheck);
     pwRow->addStretch();
     root->addLayout(pwRow);
 
     m_passwordEdit = new QLineEdit(this);
-    m_passwordEdit->setPlaceholderText("Room password");
+    m_passwordEdit->setPlaceholderText(tr("Room password"));
     m_passwordEdit->setEnabled(false);
     m_passwordEdit->setVisible(false);
     root->addWidget(m_passwordEdit);
@@ -89,7 +89,7 @@ void CreateRoomDialog::buildUi(const QString& defaultUsername)
     root->addWidget(m_statusLabel);
 
     auto* btns = new QDialogButtonBox(this);
-    m_createButton = btns->addButton("Create", QDialogButtonBox::AcceptRole);
+    m_createButton = btns->addButton(tr("Create"), QDialogButtonBox::AcceptRole);
     m_cancelButton = btns->addButton(QDialogButtonBox::Cancel);
     m_createButton->setDefault(true); // explicitly: Enter = Create when focus is on Create
     m_cancelButton->setAutoDefault(false);
@@ -138,11 +138,11 @@ void CreateRoomDialog::validateInput()
 
     QString reason;
     if (name.isEmpty())
-        reason = "Room name is required.";
+        reason = tr("Room name is required.");
     else if (!hasRom)
-        reason = "Add a ROM to your library before creating a room.";
+        reason = tr("Add a ROM to your library before creating a room.");
     else if (passwordRequired && pwd.isEmpty())
-        reason = "Password cannot be empty when enabled.";
+        reason = tr("Password cannot be empty when enabled.");
 
     m_statusLabel->setText(reason);
     m_createButton->setEnabled(reason.isEmpty());
@@ -160,7 +160,7 @@ void CreateRoomDialog::onCreateClicked()
 
     saveDefaults();
     setFormEnabled(false);
-    m_statusLabel->setText("Creating room...");
+    m_statusLabel->setText(tr("Creating room..."));
     emit createRequested();
 }
 
@@ -168,9 +168,9 @@ void CreateRoomDialog::showCreateFailure(const QString& reason)
 {
     setFormEnabled(true);
     QString human = reason;
-    if (reason == "already_in_room") human = "You're already in a room. Leave it first.";
-    else if (reason == "invalid_payload") human = "Server rejected the room settings.";
-    m_statusLabel->setText(QString("Couldn't create room: %1").arg(human));
+    if (reason == "already_in_room") human = tr("You're already in a room. Leave it first.");
+    else if (reason == "invalid_payload") human = tr("Server rejected the room settings.");
+    m_statusLabel->setText(tr("Couldn't create room: %1").arg(human));
 }
 
 void CreateRoomDialog::setFormEnabled(bool enabled)

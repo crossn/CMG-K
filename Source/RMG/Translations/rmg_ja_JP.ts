@@ -1443,6 +1443,74 @@ ROM ディレクトリに追加して、一覧を更新してください。</tr
         <message><source>Player 2</source><translation>プレイヤー2</translation></message>
         <message><source>Player 3</source><translation>プレイヤー3</translation></message>
         <message><source>Player 4</source><translation>プレイヤー4</translation></message>
+        <message><source>CMG-K - GameCube Adapter Input Plugin</source><translation>CMG-K - GameCubeアダプター入力プラグイン</translation></message>
+        <message><source>Stick Deadzone: 100%</source><translation>スティックのデッドゾーン: 100%</translation></message>
+        <message><source>Stick Sensitivity: 100%</source><translation>スティック感度: 100%</translation></message>
+        <message><source>Trigger threshold: 100%</source><translation>トリガーしきい値: 100%</translation></message>
+        <message><source>Stick Range Readout</source><translation>スティック範囲表示</translation></message>
+        <message><source>X:</source><translation>X:</translation></message>
+        <message><source>Y:</source><translation>Y:</translation></message>
+        <message><source>Tip: adjust Stick Sensitivity so each cardinal direction reads about 85.</source><translation>ヒント: 各方向がおよそ85になるようにスティック感度を調整してください。</translation></message>
+        <message><source>Buttons</source><translation>ボタン</translation></message>
+        <message><source>A:</source><translation>A:</translation></message>
+        <message><source>B:</source><translation>B:</translation></message>
+        <message><source>Start:</source><translation>START:</translation></message>
+        <message><source>Triggers</source><translation>トリガー</translation></message>
+        <message><source>L:</source><translation>L:</translation></message>
+        <message><source>R:</source><translation>R:</translation></message>
+        <message><source>Z:</source><translation>Z:</translation></message>
+        <message><source>Z 2:</source><translation>Z 2:</translation></message>
+        <message><source>D-Pad</source><translation>方向パッド</translation></message>
+        <message><source>Up:</source><translation>上:</translation></message>
+        <message><source>Down:</source><translation>下:</translation></message>
+        <message><source>Left:</source><translation>左:</translation></message>
+        <message><source>Right:</source><translation>右:</translation></message>
+        <message><source>C-Buttons</source><translation>Cボタン</translation></message>
+        <message><source>C-Stick Up</source><translation>Cスティック上</translation></message>
+        <message><source>C-Stick Down</source><translation>Cスティック下</translation></message>
+        <message><source>C-Stick Left</source><translation>Cスティック左</translation></message>
+        <message><source>C-Stick Right</source><translation>Cスティック右</translation></message>
+        <message><source>Ports</source><translation>ポート</translation></message>
+        <message><source>Port 1</source><translation>ポート1</translation></message>
+        <message><source>Port 2</source><translation>ポート2</translation></message>
+        <message><source>Port 3</source><translation>ポート3</translation></message>
+        <message><source>Port 4</source><translation>ポート4</translation></message>
+        <message><source>A</source><translation>A</translation></message>
+        <message><source>X</source><translation>X</translation></message>
+        <message><source>B</source><translation>B</translation></message>
+        <message><source>Start</source><translation>START</translation></message>
+        <message><source>L Trigger</source><translation>Lトリガー</translation></message>
+        <message><source>R Trigger</source><translation>Rトリガー</translation></message>
+        <message><source>Z</source><translation>Z</translation></message>
+        <message><source>D-Pad Up</source><translation>方向パッド上</translation></message>
+        <message><source>D-Pad Down</source><translation>方向パッド下</translation></message>
+        <message><source>D-Pad Left</source><translation>方向パッド左</translation></message>
+        <message><source>D-Pad Right</source><translation>方向パッド右</translation></message>
+        <message><source>CMG-K - Audio Plugin</source><translation>CMG-K - オーディオプラグイン</translation></message>
+        <message><source>Volume</source><translation>音量</translation></message>
+        <message><source>Mute</source><translation>ミュート</translation></message>
+        <message><source>Advanced</source><translation>詳細</translation></message>
+        <message><source>Default frequency</source><translation>既定の周波数</translation></message>
+        <message><source>Resampler</source><translation>リサンプラー</translation></message>
+        <message><source>Swap left and right channel</source><translation>左右のチャンネルを入れ替える</translation></message>
+        <message><source>Changes will be applied on next emulation run</source><translation>変更は次回のエミュレーション実行時に適用されます</translation></message>
+        <message><source>trivial</source><translation>trivial</translation></message>
+        <message><source>speex-fixed-0</source><translation>speex-fixed-0</translation></message>
+        <message><source>speex-fixed-1</source><translation>speex-fixed-1</translation></message>
+        <message><source>speex-fixed-2</source><translation>speex-fixed-2</translation></message>
+        <message><source>speex-fixed-3</source><translation>speex-fixed-3</translation></message>
+        <message><source>speex-fixed-4</source><translation>speex-fixed-4</translation></message>
+        <message><source>speex-fixed-5</source><translation>speex-fixed-5</translation></message>
+        <message><source>speex-fixed-6</source><translation>speex-fixed-6</translation></message>
+        <message><source>speex-fixed-7</source><translation>speex-fixed-7</translation></message>
+        <message><source>speex-fixed-8</source><translation>speex-fixed-8</translation></message>
+        <message><source>speex-fixed-9</source><translation>speex-fixed-9</translation></message>
+        <message><source>speex-fixed-10</source><translation>speex-fixed-10</translation></message>
+        <message><source>src-sinc-best-quality</source><translation>src-sinc-best-quality</translation></message>
+        <message><source>src-sinc-medium-quality</source><translation>src-sinc-medium-quality</translation></message>
+        <message><source>src-sinc-fastest</source><translation>src-sinc-fastest</translation></message>
+        <message><source>src-zero-order-hold</source><translation>src-zero-order-hold</translation></message>
+        <message><source>src-linear</source><translation>src-linear</translation></message>
     </context>
     <context>
         <name>ControllerWidget</name>
@@ -1563,6 +1631,13 @@ ROM ディレクトリに追加して、一覧を更新してください。</tr
         <message><source>Controller doesn't support rumble</source><translation>コントローラーは振動に対応していません</translation></message>
     </context>
     <context>
+        <name>UserInterface::MainDialog</name>
+        <message><source>Player %1</source><translation>プレイヤー%1</translation></message>
+        <message><source>Stick Deadzone: %1%</source><translation>スティックのデッドゾーン: %1%</translation></message>
+        <message><source>Stick Sensitivity: %1%</source><translation>スティック感度: %1%</translation></message>
+        <message><source>Trigger threshold: %1%</source><translation>トリガーしきい値: %1%</translation></message>
+    </context>
+    <context>
         <name>UserInterface::Widget::ControllerWidget</name>
         <message><source>Error</source><translation>エラー</translation></message>
         <message><source>%1 (not found)</source><translation>%1（見つかりません）</translation></message>
@@ -1575,5 +1650,201 @@ ROM ディレクトリに追加して、一覧を更新してください。</tr
         <message><source>Are you sure you want to clear the main profile?</source><translation>メインプロファイルを消去してもよろしいですか？</translation></message>
         <message><source>raphnet Adapter Detected</source><translation>raphnetアダプターを検出しました</translation></message>
         <message><source>A raphnet adapter has been detected. Would you like to switch the input plugin to raphnetraw? (recommended)</source><translation>raphnetアダプターを検出しました。入力プラグインをraphnetrawに切り替えますか？（推奨）</translation></message>
+        <message><source>None</source><translation>なし</translation></message>
+        <message><source>Automatic</source><translation>自動</translation></message>
+        <message><source>Keyboard</source><translation>キーボード</translation></message>
+    </context>
+    <context>
+        <name>RollbackLobbyDialog</name>
+        <message><source>Auto (%1 f)</source><translation>自動（%1フレーム）</translation></message>
+        <message><source>HOST</source><translation>ホスト</translation></message>
+        <message><source>Offline</source><translation>オフライン</translation></message>
+        <message><source>Connecting</source><translation>接続中</translation></message>
+        <message><source>Authenticating</source><translation>認証中</translation></message>
+        <message><source>Online</source><translation>オンライン</translation></message>
+        <message><source>Connection failed</source><translation>接続に失敗しました</translation></message>
+        <message><source>Unknown</source><translation>不明</translation></message>
+        <message><source>Waiting</source><translation>待機中</translation></message>
+        <message><source>Starting</source><translation>開始中</translation></message>
+        <message><source>In Game</source><translation>ゲーム中</translation></message>
+        <message><source>Finished</source><translation>終了</translation></message>
+        <message><source>permanent</source><translation>無期限</translation></message>
+    </context>
+    <context>
+        <name>UserInterface::Dialog::LobbyConnectDialog</name>
+        <message><source>Connect to CMG-K Rollback Lobby</source><translation>CMG-K ロールバックロビーに接続</translation></message>
+        <message><source>3-16 characters: letters, numbers, _ - .</source><translation>3～16文字: 英数字、_、-、.</translation></message>
+        <message><source>Username:</source><translation>ユーザー名:</translation></message>
+        <message><source>Connect</source><translation>接続</translation></message>
+        <message><source>Username must be at least 3 characters.</source><translation>ユーザー名は3文字以上で入力してください。</translation></message>
+    </context>
+    <context>
+        <name>UserInterface::Dialog::CreateRoomDialog</name>
+        <message><source>Create Room</source><translation>ルームを作成</translation></message>
+        <message><source>%1's Room</source><translation>%1のルーム</translation></message>
+        <message><source>My Room</source><translation>マイルーム</translation></message>
+        <message><source>Room name:</source><translation>ルーム名:</translation></message>
+        <message><source>Game:</source><translation>ゲーム:</translation></message>
+        <message><source>Max players:</source><translation>最大プレイヤー数:</translation></message>
+        <message><source> players</source><translation>人</translation></message>
+        <message><source>Password-protect this room</source><translation>このルームをパスワードで保護する</translation></message>
+        <message><source>Room password</source><translation>ルームのパスワード</translation></message>
+        <message><source>Create</source><translation>作成</translation></message>
+        <message><source>Room name is required.</source><translation>ルーム名を入力してください。</translation></message>
+        <message><source>Add a ROM to your library before creating a room.</source><translation>ルームを作成する前にROMをライブラリへ追加してください。</translation></message>
+        <message><source>Password cannot be empty when enabled.</source><translation>パスワード保護を有効にした場合、パスワードは空にできません。</translation></message>
+        <message><source>Creating room...</source><translation>ルームを作成しています...</translation></message>
+        <message><source>You're already in a room. Leave it first.</source><translation>すでにルームに参加しています。先に退出してください。</translation></message>
+        <message><source>Server rejected the room settings.</source><translation>サーバーがルーム設定を拒否しました。</translation></message>
+        <message><source>Couldn't create room: %1</source><translation>ルームを作成できませんでした: %1</translation></message>
+    </context>
+    <context>
+        <name>UserInterface::Dialog::RollbackLobbyDialog</name>
+        <message><source>CMG-K - Rollback Lobby</source><translation>CMG-K - ロールバック ロビー</translation></message>
+        <message><source>CMG-K Rollback Netplay</source><translation>CMG-K ロールバック ネットプレイ</translation></message>
+        <message><source>Connect</source><translation>接続</translation></message>
+        <message><source>Username</source><translation>ユーザー名</translation></message>
+        <message><source>CMG-K · Rollback Netplay</source><translation>CMG-K · ロールバック ネットプレイ</translation></message>
+        <message><source>Offline</source><translation>オフライン</translation></message>
+        <message><source>Not connected</source><translation>未接続</translation></message>
+        <message><source>User: —</source><translation>ユーザー: —</translation></message>
+        <message><source>You're in a room</source><translation>ルームに参加中です</translation></message>
+        <message><source>Return to Room  →</source><translation>ルームへ戻る →</translation></message>
+        <message><source>⚡  Quick Match</source><translation>⚡  クイックマッチ</translation></message>
+        <message><source>Create Room…</source><translation>ルームを作成…</translation></message>
+        <message><source>Game:</source><translation>ゲーム:</translation></message>
+        <message><source>ACTIVE ROOMS</source><translation>参加可能なルーム</translation></message>
+        <message><source>Name</source><translation>名前</translation></message>
+        <message><source>Host</source><translation>ホスト</translation></message>
+        <message><source>ROM</source><translation>ROM</translation></message>
+        <message><source>Seats</source><translation>参加人数</translation></message>
+        <message><source>State</source><translation>状態</translation></message>
+        <message><source>ONGOING MATCHES</source><translation>進行中の対戦</translation></message>
+        <message><source>Players</source><translation>プレイヤー</translation></message>
+        <message><source>Duration</source><translation>時間</translation></message>
+        <message><source>←  Browse Rooms</source><translation>←  ルーム一覧</translation></message>
+        <message><source>Switch to the room list. You stay in your seat — use Leave Room to actually exit.</source><translation>ルーム一覧へ戻ります。参加状態は維持されます。実際に退出するには「ルームを退出」を使用してください。</translation></message>
+        <message><source>Waiting</source><translation>待機中</translation></message>
+        <message><source>Frame delay:</source><translation>フレーム遅延:</translation></message>
+        <message><source>Auto</source><translation>自動</translation></message>
+        <message><source>Prediction:</source><translation>予測:</translation></message>
+        <message><source>Default</source><translation>デフォルト</translation></message>
+        <message><source>Smooth</source><translation>スムーズ</translation></message>
+        <message><source>Live Replay</source><translation>ライブリプレイ</translation></message>
+        <message><source>Record game</source><translation>ゲームを録画</translation></message>
+        <message><source>SEATS</source><translation>参加枠</translation></message>
+        <message><source>ROOM CHAT</source><translation>ルームチャット</translation></message>
+        <message><source>Message the room…</source><translation>ルームにメッセージを送信…</translation></message>
+        <message><source>Start Game</source><translation>ゲーム開始</translation></message>
+        <message><source>Drop Game</source><translation>ゲームから離脱</translation></message>
+        <message><source>Stop playing the current match. If you're the host, the match ends for everyone.</source><translation>現在の対戦から離脱します。ホストが離脱すると全員の対戦が終了します。</translation></message>
+        <message><source>Leave Room</source><translation>ルームを退出</translation></message>
+        <message><source>Leave the room and return to the lobby.</source><translation>ルームを退出してロビーへ戻ります。</translation></message>
+        <message><source>Drag onto another seat to swap players</source><translation>別の参加枠へドラッグしてプレイヤーを入れ替えます</translation></message>
+        <message><source>Waiting…</source><translation>待機中…</translation></message>
+        <message><source>Remove this player from the match</source><translation>このプレイヤーを対戦から退出させる</translation></message>
+        <message><source>Remove player</source><translation>プレイヤーを退出させる</translation></message>
+        <message><source>Remove %1 from the match?</source><translation>%1を対戦から退出させますか？</translation></message>
+        <message><source>this player</source><translation>このプレイヤー</translation></message>
+        <message><source>  (you)</source><translation>  （あなた）</translation></message>
+        <message><source>Message the lobby…</source><translation>ロビーにメッセージを送信…</translation></message>
+        <message><source>Player</source><translation>プレイヤー</translation></message>
+        <message><source>Est. Ping</source><translation>推定Ping</translation></message>
+        <message><source>No ROMs in your library — add some first</source><translation>ライブラリにROMがありません。先に追加してください</translation></message>
+        <message><source>Username must be at least 3 characters.</source><translation>ユーザー名は3文字以上で入力してください。</translation></message>
+        <message><source>User: %1</source><translation>ユーザー: %1</translation></message>
+        <message><source>Connecting…</source><translation>接続中…</translation></message>
+        <message><source>That username is already in use.</source><translation>そのユーザー名はすでに使用されています。</translation></message>
+        <message><source>Server rejected the connection handshake.</source><translation>サーバーが接続ハンドシェイクを拒否しました。</translation></message>
+        <message><source>Client version is incompatible with this server.</source><translation>クライアントのバージョンはこのサーバーと互換性がありません。</translation></message>
+        <message><source>Couldn't reach the lobby: %1</source><translation>ロビーに接続できませんでした: %1</translation></message>
+        <message><source>Your room</source><translation>あなたのルーム</translation></message>
+        <message><source>  ·  %1/%2 seats</source><translation>  ·  %1/%2人</translation></message>
+        <message><source>You're in: &lt;b&gt;%1&lt;/b&gt;%2</source><translation>参加中: &lt;b&gt;%1&lt;/b&gt;%2</translation></message>
+        <message><source>%1 players  ·  %2 rooms</source><translation>%1人のプレイヤー  ·  %2件のルーム</translation></message>
+        <message><source>Searching for: %1</source><translation>検索中: %1</translation></message>
+        <message><source>Region: %1</source><translation>地域: %1</translation></message>
+        <message><source>unknown</source><translation>不明</translation></message>
+        <message><source>Online</source><translation>オンライン</translation></message>
+        <message><source>Hosting</source><translation>ホスト中</translation></message>
+        <message><source>Browsing</source><translation>閲覧中</translation></message>
+        <message><source>In Room</source><translation>ルーム参加中</translation></message>
+        <message><source>Searching</source><translation>検索中</translation></message>
+        <message><source>In Game</source><translation>ゲーム中</translation></message>
+        <message><source>Watching</source><translation>視聴中</translation></message>
+        <message><source>Away</source><translation>離席中</translation></message>
+        <message><source>🔴 Live — double-click to watch</source><translation>🔴 ライブ配信中 — ダブルクリックして視聴</translation></message>
+        <message><source>Already in a room</source><translation>すでにルームに参加中です</translation></message>
+        <message><source>Leave your current room before creating a new one.</source><translation>新しいルームを作成する前に、現在のルームを退出してください。</translation></message>
+        <message><source>Select a game</source><translation>ゲームを選択</translation></message>
+        <message><source>Pick a game from the dropdown before creating a room.</source><translation>ルームを作成する前に、ドロップダウンからゲームを選択してください。</translation></message>
+        <message><source>Wrong password.</source><translation>パスワードが違います。</translation></message>
+        <message><source>Room is full.</source><translation>ルームは満員です。</translation></message>
+        <message><source>That game has already started.</source><translation>そのゲームはすでに開始されています。</translation></message>
+        <message><source>You're already in a room.</source><translation>すでにルームに参加しています。</translation></message>
+        <message><source>That room no longer exists.</source><translation>そのルームはもう存在しません。</translation></message>
+        <message><source>You were recently removed from this room. Try again in a moment.</source><translation>このルームから最近退出させられました。少し待ってから再試行してください。</translation></message>
+        <message><source>Couldn't join room</source><translation>ルームに参加できませんでした</translation></message>
+        <message><source>Leave your current room before joining another.</source><translation>別のルームへ参加する前に、現在のルームを退出してください。</translation></message>
+        <message><source>Match in progress</source><translation>対戦進行中</translation></message>
+        <message><source>That room is already playing — try another or wait for it to finish.</source><translation>そのルームはすでに対戦中です。別のルームを試すか、終了までお待ちください。</translation></message>
+        <message><source>ROM not found</source><translation>ROMが見つかりません</translation></message>
+        <message><source>Password required</source><translation>パスワードが必要です</translation></message>
+        <message><source>Enter password for &quot;%1&quot;:</source><translation>「%1」のパスワードを入力:</translation></message>
+        <message><source>Password:</source><translation>パスワード:</translation></message>
+        <message><source>In a room</source><translation>ルーム参加中</translation></message>
+        <message><source>Leave your room before watching a match.</source><translation>対戦を視聴する前に、現在のルームを退出してください。</translation></message>
+        <message><source>Not live</source><translation>ライブ配信ではありません</translation></message>
+        <message><source>That match isn't streaming a live replay, so there's nothing to watch.</source><translation>この対戦はライブリプレイを配信していないため、視聴できません。</translation></message>
+        <message><source>Couldn't create room</source><translation>ルームを作成できませんでした</translation></message>
+        <message><source>Host ended the match — stopping game.</source><translation>ホストが対戦を終了しました — ゲームを停止します。</translation></message>
+        <message><source>Stop the match for everyone in the room.</source><translation>ルーム内の全員の対戦を終了します。</translation></message>
+        <message><source>Drop out of the match. Other players keep playing.</source><translation>対戦から離脱します。他のプレイヤーは対戦を続けます。</translation></message>
+        <message><source>Hosted by %1  ·  %2 players max</source><translation>ホスト: %1  ·  最大%2人</translation></message>
+        <message><source>Only the host can change rollback settings.</source><translation>ロールバック設定を変更できるのはホストのみです。</translation></message>
+        <message><source>Can't change settings during a match.</source><translation>対戦中は設定を変更できません。</translation></message>
+        <message><source>Only the host can start the game.</source><translation>ゲームを開始できるのはホストのみです。</translation></message>
+        <message><source>Already in a match.</source><translation>すでに対戦中です。</translation></message>
+        <message><source>Need at least 2 players to start.</source><translation>開始するには2人以上のプレイヤーが必要です。</translation></message>
+        <message><source>Measuring ping to all players…</source><translation>全プレイヤーへのPingを測定中…</translation></message>
+        <message><source>Match started — playing now.</source><translation>対戦を開始しました — プレイ中です。</translation></message>
+        <message><source>left</source><translation>退出</translation></message>
+        <message><source>%1 (P%2) dropped (%3) — controller %2 will go idle.</source><translation>%1（P%2）が離脱しました（%3）— コントローラー%2は待機入力になります。</translation></message>
+        <message><source>%1 dropped (%2).</source><translation>%1が離脱しました（%2）。</translation></message>
+        <message><source>Removed from match</source><translation>対戦から退出させられました</translation></message>
+        <message><source>You were removed from the lobby by the host.</source><translation>ホストによりロビーから退出させられました。</translation></message>
+        <message><source>Room closed</source><translation>ルームが閉じられました</translation></message>
+        <message><source>The host closed the room.</source><translation>ホストがルームを閉じました。</translation></message>
+        <message><source>Moderator Login</source><translation>モデレーター ログイン</translation></message>
+        <message><source>Authenticating…</source><translation>認証中…</translation></message>
+        <message><source>You are not a moderator. Use /login first.</source><translation>モデレーターではありません。先に /login を実行してください。</translation></message>
+        <message><source>Usage: /%1 &amp;lt;ip&amp;gt;</source><translation>使い方: /%1 &amp;lt;ip&amp;gt;</translation></message>
+        <message><source>Usage: /%1 &amp;lt;username&amp;gt; …</source><translation>使い方: /%1 &amp;lt;ユーザー名&amp;gt; …</translation></message>
+        <message><source>Usage: /timeout &amp;lt;username&amp;gt; &amp;lt;duration&amp;gt; [reason]</source><translation>使い方: /timeout &amp;lt;ユーザー名&amp;gt; &amp;lt;期間&amp;gt; [理由]</translation></message>
+        <message><source>✓ Moderator access granted (%1). Type /modhelp for commands.</source><translation>✓ モデレーター権限を付与しました（%1）。コマンドは /modhelp で確認できます。</translation></message>
+        <message><source>Admin login failed: %1</source><translation>管理者ログインに失敗しました: %1</translation></message>
+        <message><source>Active sanctions:</source><translation>有効な制裁:</translation></message>
+        <message><source>BAN</source><translation>BAN</translation></message>
+        <message><source>MUTE</source><translation>MUTE</translation></message>
+        <message><source>&amp;nbsp;&amp;nbsp;(none)</source><translation>&amp;nbsp;&amp;nbsp;（なし）</translation></message>
+        <message><source>Leave your current room before searching for a match.</source><translation>対戦を検索する前に、現在のルームを退出してください。</translation></message>
+        <message><source> (%1 in queue)</source><translation>（待機列: %1人）</translation></message>
+        <message><source> (searching…)</source><translation>（検索中…）</translation></message>
+        <message><source>✕  Cancel Quick Match</source><translation>✕  クイックマッチをキャンセル</translation></message>
+        <message><source>Live Replay on — others can watch this match.</source><translation>ライブリプレイを有効にしました — 他のユーザーがこの対戦を視聴できます。</translation></message>
+        <message><source>Connecting to live replay…</source><translation>ライブリプレイに接続中…</translation></message>
+        <message><source>Watching — buffering the match…</source><translation>視聴中 — 対戦をバッファリングしています…</translation></message>
+        <message><source>That live replay isn't available anymore.</source><translation>そのライブリプレイは利用できなくなりました。</translation></message>
+        <message><source>That live replay just ended.</source><translation>そのライブリプレイは終了しました。</translation></message>
+        <message><source>Couldn't watch: %1</source><translation>視聴できませんでした: %1</translation></message>
+        <message><source>Pre-match start failed</source><translation>対戦開始前の処理に失敗しました</translation></message>
+        <message><source>Match #%1 starting with %2 player(s)</source><translation>対戦 #%1 を%2人で開始します</translation></message>
+        <message><source>Frame delay: %1 (auto, from %2 ms ping) · prediction %3</source><translation>フレーム遅延: %1（自動、%2 msのPingから算出）· 予測 %3</translation></message>
+        <message><source>Frame delay: %1 (auto) · prediction %2</source><translation>フレーム遅延: %1（自動）· 予測 %2</translation></message>
+        <message><source>Frame delay: %1 · prediction %2</source><translation>フレーム遅延: %1 · 予測 %2</translation></message>
+        <message><source>Match start failed: you don't have the ROM for %1.</source><translation>対戦を開始できませんでした: %1のROMがありません。</translation></message>
+        <message><source>Synchronizing pre-match settings...</source><translation>対戦前設定を同期中...</translation></message>
+        <message><source>Pre-match sync failed.</source><translation>対戦前設定の同期に失敗しました。</translation></message>
+        <message><source>Pre-match sync complete.</source><translation>対戦前設定の同期が完了しました。</translation></message>
     </context>
 </TS>
