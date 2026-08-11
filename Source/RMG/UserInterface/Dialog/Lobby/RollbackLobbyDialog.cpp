@@ -809,13 +809,13 @@ QWidget* RollbackLobbyDialog::buildInRoomView()
            "Higher delay = fewer rollbacks but more input latency.\n"
            "Recommended: 2 for ~80ms RTT, 3-4 for ~150ms RTT.\n"
            "\n"
-           "Host-only. All players will use the same value."));
+           "Host-only. All players will use the same value.");
     const QString predictionTip = tr(
         "Maximum frames the rollback engine may predict ahead.\n"
            "Higher prediction = more network tolerance.\n"
            "Recommended: 7 (matches Slippi default).\n"
            "\n"
-           "Host-only. All players will use the same value."));
+           "Host-only. All players will use the same value.");
 
     // Frame values exposed in the dropdown. 0 is intentionally omitted —
     // GekkoNet's zero-delay path still has open bugs (see project memory:
