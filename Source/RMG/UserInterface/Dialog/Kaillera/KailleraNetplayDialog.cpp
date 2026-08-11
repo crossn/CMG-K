@@ -1878,7 +1878,7 @@ QWidget* KailleraNetplayDialog::createP2PTab()
 
     // Host area
     QVBoxLayout* hostLayout = nullptr;
-    auto* hostPane = createLauncherSectionPane(theme, tab, "Host", &hostLayout);
+    auto* hostPane = createLauncherSectionPane(theme, tab, tr("Host"), &hostLayout);
 
     auto* hostBody = new QWidget(hostPane);
     auto* hostBodyLayout = new QVBoxLayout(hostBody);
@@ -2008,7 +2008,7 @@ QWidget* KailleraNetplayDialog::createP2PTab()
 
     // Connect area
     QVBoxLayout* connectLayout = nullptr;
-    auto* connectPane = createLauncherSectionPane(theme, tab, "Connect", &connectLayout);
+    auto* connectPane = createLauncherSectionPane(theme, tab, tr("Connect"), &connectLayout);
 
     auto* connectBody = new QWidget(connectPane);
     auto* connectBodyLayout = new QVBoxLayout(connectBody);

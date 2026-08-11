@@ -1100,7 +1100,9 @@ ROM ディレクトリに追加して、一覧を更新してください。</tr
         <message><source>Plugin Mode</source><translation>プラグインモード</translation></message>
         <message><source>Normal</source><translation>通常</translation></message>
         <message><source>Cached / Nopak</source><translation>キャッシュ / Nopak</translation></message>
-        <message><source>Normal keeps the original raphnetraw behavior with pak support.\nCached / Nopak allows for higher USB latencies to not lag the game.\nChanges apply the next time emulation is started.</source><translation>通常はパック対応を含むraphnetraw本来の動作を維持します。\nキャッシュ / Nopakは、USB遅延が大きくてもゲームが遅延しないようにします。\n変更は次回エミュレーション開始時に適用されます。</translation></message>
+        <message><source>Normal keeps the original raphnetraw behavior with pak support.</source><translation>通常はパック対応を含むraphnetraw本来の動作を維持します。</translation></message>
+        <message><source>Cached / Nopak allows for higher USB latencies to not lag the game.</source><translation>キャッシュ / Nopakは、USB遅延が大きくてもゲームが遅延しないようにします。</translation></message>
+        <message><source>Changes apply the next time emulation is started.</source><translation>変更は次回エミュレーション開始時に適用されます。</translation></message>
         <message><source>Buttons</source><translation>ボタン</translation></message>
         <message><source>Analog Stick</source><translation>アナログスティック</translation></message>
         <message><source>X Axis:</source><translation>X軸:</translation></message>

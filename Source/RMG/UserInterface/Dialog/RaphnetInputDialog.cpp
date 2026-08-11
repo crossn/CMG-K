@@ -183,10 +183,10 @@ void RaphnetInputDialog::setupUi()
     }
     m_InputModeComboBox->setCurrentIndex(inputModeIndex);
 
-    QLabel* modeHelpLabel = new QLabel(
-        tr("Normal keeps the original raphnetraw behavior with pak support.\n"
-           "Cached / Nopak allows for higher USB latencies to not lag the game.\n"
-           "Changes apply the next time emulation is started."), modeGroup);
+    const QString modeHelpText = tr("Normal keeps the original raphnetraw behavior with pak support.") + "\n" +
+        tr("Cached / Nopak allows for higher USB latencies to not lag the game.") + "\n" +
+        tr("Changes apply the next time emulation is started.");
+    QLabel* modeHelpLabel = new QLabel(modeHelpText, modeGroup);
     modeHelpLabel->setWordWrap(true);
 
     modeLayout->addWidget(m_InputModeComboBox);
