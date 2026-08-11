@@ -188,6 +188,14 @@ set(RMG_TRANSLATION_TS
 set(RMG_TRANSLATION_SOURCES
     ${RMG_SOURCES}
     Utilities/Translation.hpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../RMG-Input/UserInterface/MainDialog.ui
+    ${CMAKE_CURRENT_SOURCE_DIR}/../RMG-Input/UserInterface/MainDialog.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../RMG-Input/UserInterface/OptionsDialog.ui
+    ${CMAKE_CURRENT_SOURCE_DIR}/../RMG-Input/UserInterface/OptionsDialog.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../RMG-Input/UserInterface/HotkeysDialog.ui
+    ${CMAKE_CURRENT_SOURCE_DIR}/../RMG-Input/UserInterface/HotkeysDialog.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../RMG-Input/UserInterface/Widget/ControllerWidget.ui
+    ${CMAKE_CURRENT_SOURCE_DIR}/../RMG-Input/UserInterface/Widget/ControllerWidget.cpp
 )
 
 qt_add_lupdate(RMG

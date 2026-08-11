@@ -680,6 +680,19 @@
             <source>**Use Core Plugin Settings**</source>
             <translation>**コアのプラグイン設定を使用**</translation>
         </message>
+        <message><source>Logging</source><translation>ログ</translation></message>
+        <message><source>Enable verbose rollback stats logging</source><translation>詳細なロールバック統計ログを有効にする</translation></message>
+        <message><source>Log netplay stalls only (lightweight freeze diagnostics)</source><translation>ネットプレイの停止のみを記録する（軽量フリーズ診断）</translation></message>
+        <message><source>Logs only when a rollback session stalls (a multi-second freeze), with per-peer
+network stats so you can see which player's input stopped arriving. Writes nothing
+during smooth play, so the log stays tiny — unlike verbose stats, which writes every
+frame. Safe to leave on; one player logging is enough to identify the culprit.</source><translation>ロールバックセッションが停止した場合（数秒間のフリーズ）だけ、各ピアのネットワーク統計を記録します。どのプレイヤーの入力が届かなくなったかを確認できます。滑らかなプレイ中は記録しないため、毎フレーム書き込む詳細統計と異なりログは小さく保たれます。有効のままでも安全で、原因特定には1人分のログで十分です。</translation></message>
+        <message><source>Enable pacing trace logging</source><translation>ペーシングトレースログを有効にする</translation></message>
+        <message><source>Writes detailed frontend and core pacing CSV logs when a rollback session ends.
+Enable this only while diagnosing frame pacing; it is disabled by default.</source><translation>ロールバックセッション終了時に、フロントエンドとコアの詳細なペーシングCSVログを書き込みます。
+フレームペーシングを診断するときだけ有効にしてください。既定では無効です。</translation></message>
+        <message><source>Enable verbose PIF input logging</source><translation>詳細なPIF入力ログを有効にする</translation></message>
+        <message><source>Enable verbose Glide input logging</source><translation>詳細なGlide入力ログを有効にする</translation></message>
     </context>
     <context>
         <name>UserInterface::MainWindow</name>
@@ -1072,9 +1085,9 @@ ROM ディレクトリに追加して、一覧を更新してください。</tr
         <message><source>&amp;75%</source><translation>75%(&amp;7)</translation></message>
         <message><source>&amp;300%</source><translation>300%(&amp;3)</translation></message>
         <message><source>&amp;Check For Updates</source><translation>アップデートを確認(&amp;C)</translation></message>
-        <message><source>Legacy Server</source><translation>レガシーサーバー</translation></message>
-        <message><source>Peer to Peer</source><translation>ピアツーピア</translation></message>
-        <message><source>Rollback Lobby</source><translation>ロールバックロビー</translation></message>
+        <message><source>Legacy Server</source><translation>Kaillera</translation></message>
+        <message><source>Peer to Peer</source><translation>P2P</translation></message>
+        <message><source>Rollback Lobby</source><translation>ロールバック ロビー</translation></message>
         <message><source>Search</source><translation>検索</translation></message>
     </context>
     <context>
@@ -1234,8 +1247,8 @@ ROM ディレクトリに追加して、一覧を更新してください。</tr
         <message><source>Search ROMs...</source><translation>ROMを検索...</translation></message>
         <message><source>CMG-K Netplay</source><translation>CMG-K ネットプレイ</translation></message>
         <message><source>Username:</source><translation>ユーザー名:</translation></message>
-        <message><source>Server (delay)</source><translation>サーバー（遅延）</translation></message>
-        <message><source>Peer to Peer (rollback)</source><translation>ピアツーピア（ロールバック）</translation></message>
+        <message><source>Kaillera</source><translation>Kaillera</translation></message>
+        <message><source>P2P</source><translation>P2P</translation></message>
         <message><source>Add a custom server</source><translation>カスタムサーバーを追加</translation></message>
         <message><source>Waiting Games</source><translation>対戦待ちゲーム</translation></message>
         <message><source>Connect</source><translation>接続</translation></message>
@@ -1320,6 +1333,15 @@ ROM ディレクトリに追加して、一覧を更新してください。</tr
         <message><source>7 frames (104ms)</source><translation>7フレーム（104ms）</translation></message>
         <message><source>8 frames (120ms)</source><translation>8フレーム（120ms）</translation></message>
         <message><source>9 frames (136ms)</source><translation>9フレーム（136ms）</translation></message>
+        <message><source>Favorite</source><translation>お気に入りに追加</translation></message>
+        <message><source>Unfavorite</source><translation>お気に入りから削除</translation></message>
+        <message><source>Edit</source><translation>編集</translation></message>
+        <message><source>Move Favorite Up</source><translation>上へ移動</translation></message>
+        <message><source>Move Favorite Down</source><translation>下へ移動</translation></message>
+        <message><source>Copy IP</source><translation>IPをコピー</translation></message>
+        <message><source>Ping</source><comment>context menu action</comment><translation>Pingを実行</translation></message>
+        <message><source>Traceroute</source><translation>トレースルート</translation></message>
+        <message><source>Delete</source><translation>削除</translation></message>
     </context>
     <context>
         <name>KailleraServerBrowserDialog</name>
@@ -1397,5 +1419,161 @@ ROM ディレクトリに追加して、一覧を更新してください。</tr
         <name>UserInterface::UpdateDialog</name>
         <message><source>%1 Available</source><translation>%1 が利用可能です</translation></message>
         <message><source>Update</source><translation>アップデート</translation></message>
+    </context>
+    <context>
+        <name>UserInterface::Widget::RomBrowserWidget</name>
+        <message><source>Name</source><translation>名前</translation></message>
+        <message><source>Internal Name</source><translation>内部名</translation></message>
+        <message><source>MD5</source><translation>MD5</translation></message>
+        <message><source>Format</source><translation>形式</translation></message>
+        <message><source>File Name</source><translation>ファイル名</translation></message>
+        <message><source>File Ext.</source><translation>拡張子</translation></message>
+        <message><source>File Size</source><translation>ファイルサイズ</translation></message>
+        <message><source>I.D.</source><translation>ID</translation></message>
+        <message><source>Region</source><translation>地域</translation></message>
+        <message><source>Game Format</source><translation>ゲーム形式</translation></message>
+        <message><source>File Extension</source><translation>ファイル拡張子</translation></message>
+        <message><source>Game I.D.</source><translation>ゲームID</translation></message>
+        <message><source>Game Region</source><translation>ゲーム地域</translation></message>
+    </context>
+    <context>
+        <name>MainDialog</name>
+        <message><source>CMG-K - Input Plugin</source><translation>CMG-K - 入力プラグイン</translation></message>
+        <message><source>Player 1</source><translation>プレイヤー1</translation></message>
+        <message><source>Player 2</source><translation>プレイヤー2</translation></message>
+        <message><source>Player 3</source><translation>プレイヤー3</translation></message>
+        <message><source>Player 4</source><translation>プレイヤー4</translation></message>
+    </context>
+    <context>
+        <name>ControllerWidget</name>
+        <message><source>ControllerWidget</source><translation>コントローラー</translation></message>
+        <message><source>+</source><translation>+</translation></message>
+        <message><source>-</source><translation>-</translation></message>
+        <message><source>0</source><translation>0</translation></message>
+        <message><source>Profile</source><translation>プロファイル</translation></message>
+        <message><source>Add</source><translation>追加</translation></message>
+        <message><source>Remove</source><translation>削除</translation></message>
+        <message><source>Input Device</source><translation>入力デバイス</translation></message>
+        <message><source>Refresh</source><translation>更新</translation></message>
+        <message><source>Deadzone: 25%</source><translation>デッドゾーン: 25%</translation></message>
+        <message><source>Digital Pad</source><translation>デジタルパッド</translation></message>
+        <message><source>Up:</source><translation>上:</translation></message>
+        <message><source>Down:</source><translation>下:</translation></message>
+        <message><source>Left:</source><translation>左:</translation></message>
+        <message><source>Right:</source><translation>右:</translation></message>
+        <message><source>Analog Stick</source><translation>アナログスティック</translation></message>
+        <message><source>Analog Stick Range: 66%</source><translation>アナログスティック範囲: 66%</translation></message>
+        <message><source>Real N64 Range</source><translation>実機N64範囲</translation></message>
+        <message><source>Stick Range Readout</source><translation>スティック範囲表示</translation></message>
+        <message><source>X:</source><translation>X:</translation></message>
+        <message><source>Y:</source><translation>Y:</translation></message>
+        <message><source>L-Shoulder: </source><translation>Lショルダー: </translation></message>
+        <message><source>R-Shoulder: </source><translation>Rショルダー: </translation></message>
+        <message><source>Z-Trigger: </source><translation>Zトリガー: </translation></message>
+        <message><source>Z-Trigger 2: </source><translation>Zトリガー2: </translation></message>
+        <message><source>Start: </source><translation>START: </translation></message>
+        <message><source>C-Buttons</source><translation>Cボタン</translation></message>
+        <message><source>B:</source><translation>B:</translation></message>
+        <message><source>A:</source><translation>A:</translation></message>
+        <message><source>Auto-Configure</source><translation>自動設定</translation></message>
+        <message><source>Reset</source><translation>リセット</translation></message>
+        <message><source>Options</source><translation>オプション</translation></message>
+        <message><source>Hotkeys</source><translation>ホットキー</translation></message>
+    </context>
+    <context>
+        <name>OptionsDialog</name>
+        <message><source>Options</source><translation>オプション</translation></message>
+        <message><source>Controller</source><translation>コントローラー</translation></message>
+        <message><source>Controller Pak</source><translation>コントローラーパック</translation></message>
+        <message><source>Memory</source><translation>メモリー</translation></message>
+        <message><source>Rumble</source><translation>振動</translation></message>
+        <message><source>Transfer</source><translation>転送</translation></message>
+        <message><source>None</source><translation>なし</translation></message>
+        <message><source>Test Rumble</source><translation>振動をテスト</translation></message>
+        <message><source>Transfer Pak</source><translation>トランスファーパック</translation></message>
+        <message><source>Gameboy ROM</source><translation>ゲームボーイROM</translation></message>
+        <message><source>Change</source><translation>変更</translation></message>
+        <message><source>Gameboy save</source><translation>ゲームボーイセーブ</translation></message>
+        <message><source>Changes will be applied on next emulation run</source><translation>変更は次回のエミュレーション実行時に適用されます</translation></message>
+        <message><source>User Interface</source><translation>ユーザーインターフェース</translation></message>
+        <message><source>Remove duplicate mappings</source><translation>重複する割り当てを削除</translation></message>
+        <message><source>Filter events based on joystick type for buttons</source><translation>ボタンイベントをジョイスティック種別で絞り込む</translation></message>
+        <message><source>Filter events based on joystick type for axis</source><translation>軸イベントをジョイスティック種別で絞り込む</translation></message>
+        <message><source>Advanced</source><translation>詳細</translation></message>
+        <message><source>SDL controller mode</source><translation>SDLコントローラーモード</translation></message>
+        <message><source>Automatic</source><translation>自動</translation></message>
+        <message><source>Joystick</source><translation>ジョイスティック</translation></message>
+        <message><source>Gamepad</source><translation>ゲームパッド</translation></message>
+    </context>
+    <context>
+        <name>HotkeysDialog</name>
+        <message><source>Hotkeys</source><translation>ホットキー</translation></message>
+        <message><source>System</source><translation>システム</translation></message>
+        <message><source>Shutdown</source><translation>シャットダウン</translation></message>
+        <message><source>Soft Reset</source><translation>ソフトリセット</translation></message>
+        <message><source>Hard Reset</source><translation>ハードリセット</translation></message>
+        <message><source>Pause</source><translation>一時停止</translation></message>
+        <message><source>Capture Screenshot</source><translation>スクリーンショットを撮影</translation></message>
+        <message><source>Limit FPS</source><translation>FPSを制限</translation></message>
+        <message><source>Save State</source><translation>ステートを保存</translation></message>
+        <message><source>Load State</source><translation>ステートを読み込み</translation></message>
+        <message><source>GS Button</source><translation>GSボタン</translation></message>
+        <message><source>Exit</source><translation>終了</translation></message>
+        <message><source>These hotkeys are only for controllers</source><translation>これらのホットキーはコントローラー専用です</translation></message>
+        <message><source>Speed Factor</source><translation>速度倍率</translation></message>
+        <message><source>Current Save State</source><translation>現在のセーブステート</translation></message>
+        <message><source>Slot 0</source><translation>スロット0</translation></message>
+        <message><source>Slot 1</source><translation>スロット1</translation></message>
+        <message><source>Slot 2</source><translation>スロット2</translation></message>
+        <message><source>Slot 3</source><translation>スロット3</translation></message>
+        <message><source>Slot 4</source><translation>スロット4</translation></message>
+        <message><source>Slot 5</source><translation>スロット5</translation></message>
+        <message><source>Slot 6</source><translation>スロット6</translation></message>
+        <message><source>Slot 7</source><translation>スロット7</translation></message>
+        <message><source>Slot 8</source><translation>スロット8</translation></message>
+        <message><source>Slot 9</source><translation>スロット9</translation></message>
+        <message><source>Increase Slot</source><translation>スロットを増やす</translation></message>
+        <message><source>Decrease Slot</source><translation>スロットを減らす</translation></message>
+        <message><source>Controller Pak</source><translation>コントローラーパック</translation></message>
+        <message><source>Switch to memory pak</source><translation>メモリーパックに切り替え</translation></message>
+        <message><source>Switch to rumble pak</source><translation>振動パックに切り替え</translation></message>
+        <message><source>Remove pak</source><translation>パックを取り外す</translation></message>
+        <message><source>View</source><translation>表示</translation></message>
+        <message><source>Full Screen</source><translation>フルスクリーン</translation></message>
+        <message><source>25%</source><translation>25%</translation></message>
+        <message><source>50%</source><translation>50%</translation></message>
+        <message><source>75%</source><translation>75%</translation></message>
+        <message><source>100%</source><translation>100%</translation></message>
+        <message><source>125%</source><translation>125%</translation></message>
+        <message><source>150%</source><translation>150%</translation></message>
+        <message><source>175%</source><translation>175%</translation></message>
+        <message><source>200%</source><translation>200%</translation></message>
+        <message><source>225%</source><translation>225%</translation></message>
+        <message><source>250%</source><translation>250%</translation></message>
+        <message><source>275%</source><translation>275%</translation></message>
+        <message><source>300%</source><translation>300%</translation></message>
+    </context>
+    <context>
+        <name>UserInterface::OptionsDialog</name>
+        <message><source>Open Gameboy ROM</source><translation>ゲームボーイROMを開く</translation></message>
+        <message><source>Gameboy ROM (*.gb *.gbc)</source><translation>ゲームボーイROM (*.gb *.gbc)</translation></message>
+        <message><source>Open Gameboy Save</source><translation>ゲームボーイセーブを開く</translation></message>
+        <message><source>Gameboy save (*.sav *.ram)</source><translation>ゲームボーイセーブ (*.sav *.ram)</translation></message>
+        <message><source>Error</source><translation>エラー</translation></message>
+        <message><source>Controller doesn't support rumble</source><translation>コントローラーは振動に対応していません</translation></message>
+    </context>
+    <context>
+        <name>UserInterface::Widget::ControllerWidget</name>
+        <message><source>Error</source><translation>エラー</translation></message>
+        <message><source>%1 (not found)</source><translation>%1（見つかりません）</translation></message>
+        <message><source>Deadzone: %1%</source><translation>デッドゾーン: %1%</translation></message>
+        <message><source>Analog Stick Range: %1 (%2%)</source><translation>アナログスティック範囲: %1（%2%）</translation></message>
+        <message><source>Create New Profile</source><translation>新しいプロファイルを作成</translation></message>
+        <message><source>New profile name:</source><translation>新しいプロファイル名:</translation></message>
+        <message><source>Profile name cannot contain ';','[' or ']'!</source><translation>プロファイル名には「;」「[」「]」を含められません。</translation></message>
+        <message><source>Profile with the same name already exists!</source><translation>同じ名前のプロファイルがすでに存在します。</translation></message>
+        <message><source>Are you sure you want to clear the main profile?</source><translation>メインプロファイルを消去してもよろしいですか？</translation></message>
+        <message><source>raphnet Adapter Detected</source><translation>raphnetアダプターを検出しました</translation></message>
+        <message><source>A raphnet adapter has been detected. Would you like to switch the input plugin to raphnetraw? (recommended)</source><translation>raphnetアダプターを検出しました。入力プラグインをraphnetrawに切り替えますか？（推奨）</translation></message>
     </context>
 </TS>

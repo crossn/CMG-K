@@ -1688,8 +1688,8 @@ void KailleraNetplayDialog::setupUI()
     {
         launcherTabBar->setModernMode(theme == "Modern");
     }
-    m_tabWidget->addTab(createServerTab(), tr("Server (delay)"));
-    m_tabWidget->addTab(createP2PTab(), tr("Peer to Peer (rollback)"));
+    m_tabWidget->addTab(createServerTab(), tr("Kaillera"));
+    m_tabWidget->addTab(createP2PTab(), tr("P2P"));
     connect(m_tabWidget, &QTabWidget::currentChanged, this, &KailleraNetplayDialog::onTabChanged);
     mainLayout->addWidget(m_tabWidget, 1);
 }
@@ -3741,22 +3741,22 @@ void KailleraNetplayDialog::onServerRightClicked(QPoint pos)
     const bool favorite = favoriteIndex >= 0;
 
     QMenu menu(this);
-    QAction* actFavorite = menu.addAction(favorite ? "Unfavorite" : "Favorite");
+    QAction* actFavorite = menu.addAction(favorite ? tr("Unfavorite") : tr("Favorite"));
     QAction* actEdit = nullptr;
     QAction* actMoveUp = nullptr;
     QAction* actMoveDown = nullptr;
     if (favorite)
     {
-        actEdit = menu.addAction("Edit");
-        actMoveUp = menu.addAction("Move Favorite Up");
-        actMoveDown = menu.addAction("Move Favorite Down");
+        actEdit = menu.addAction(tr("Edit"));
+        actMoveUp = menu.addAction(tr("Move Favorite Up"));
+        actMoveDown = menu.addAction(tr("Move Favorite Down"));
         actMoveUp->setEnabled(favoriteIndex > 0);
         actMoveDown->setEnabled(favoriteIndex + 1 < m_favoriteServers.size());
         menu.addSeparator();
     }
-    QAction* actCopyIp = menu.addAction("Copy IP");
-    QAction* actPing = menu.addAction("Ping");
-    QAction* actTraceroute = menu.addAction("Traceroute");
+    QAction* actCopyIp = menu.addAction(tr("Copy IP"));
+    QAction* actPing = menu.addAction(tr("Ping", "context menu action"));
+    QAction* actTraceroute = menu.addAction(tr("Traceroute"));
 
     QAction* chosen = menu.exec(m_serverTable->viewport()->mapToGlobal(pos));
     if (!chosen) return;
@@ -4827,9 +4827,9 @@ void KailleraNetplayDialog::onP2PStoredRightClicked(const QPoint& pos)
 
     QMenu menu(this);
     QAction* favoriteAction = menu.addAction(
-        m_p2pStoredUsers[row].favorite ? "Unfavorite" : "Favorite");
-    QAction* editAction = menu.addAction("Edit");
-    QAction* deleteAction = menu.addAction("Delete");
+        m_p2pStoredUsers[row].favorite ? tr("Unfavorite") : tr("Favorite"));
+    QAction* editAction = menu.addAction(tr("Edit"));
+    QAction* deleteAction = menu.addAction(tr("Delete"));
 
     QAction* selectedAction = menu.exec(m_p2pStoredList->viewport()->mapToGlobal(pos));
     if (selectedAction == favoriteAction)

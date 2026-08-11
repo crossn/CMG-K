@@ -130,15 +130,15 @@ RomBrowserWidget::RomBrowserWidget(QWidget *parent) : QWidget(parent)
 
     // set up list view's columns
     QStringList labels;
-    labels << "Name";
-    labels << "Internal Name";
-    labels << "MD5";
-    labels << "Format";
-    labels << "File Name";
-    labels << "File Ext.";
-    labels << "File Size";
-    labels << "I.D.";
-    labels << "Region";
+    labels << tr("Name");
+    labels << tr("Internal Name");
+    labels << tr("MD5");
+    labels << tr("Format");
+    labels << tr("File Name");
+    labels << tr("File Ext.");
+    labels << tr("File Size");
+    labels << tr("I.D.");
+    labels << tr("Region");
     this->listViewModel->setColumnCount(labels.size());
     this->listViewModel->setHorizontalHeaderLabels(labels);
 
@@ -146,12 +146,12 @@ RomBrowserWidget::RomBrowserWidget(QWidget *parent) : QWidget(parent)
     this->columnNames << labels.at(0);
     this->columnNames << labels.at(1);
     this->columnNames << labels.at(2);
-    this->columnNames << "Game Format";
+    this->columnNames << tr("Game Format");
     this->columnNames << labels.at(4);
-    this->columnNames << "File Extension";
+    this->columnNames << tr("File Extension");
     this->columnNames << labels.at(6);
-    this->columnNames << "Game I.D.";
-    this->columnNames << "Game Region";
+    this->columnNames << tr("Game I.D.");
+    this->columnNames << tr("Game Region");
 
     // configure grid view widget
     this->gridViewWidget = new Widget::RomBrowserGridViewWidget(this);

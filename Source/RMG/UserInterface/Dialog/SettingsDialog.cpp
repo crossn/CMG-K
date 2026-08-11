@@ -246,22 +246,22 @@ SettingsDialog::SettingsDialog(QWidget *parent, QString file) : QDialog(parent)
 
     QWidget* rollbackTab = new QWidget(this->tabWidget);
     QVBoxLayout* rollbackLayout = new QVBoxLayout(rollbackTab);
-    QGroupBox* rollbackLoggingGroupBox = new QGroupBox("Logging", rollbackTab);
+    QGroupBox* rollbackLoggingGroupBox = new QGroupBox(tr("Logging"), rollbackTab);
     QVBoxLayout* rollbackLoggingLayout = new QVBoxLayout(rollbackLoggingGroupBox);
     this->rollbackEnableLocalTestingCheckBox = new QCheckBox(tr("Use rollback engine for local play"), rollbackTab);
-    this->rollbackVerboseStatsCheckBox = new QCheckBox("Enable verbose rollback stats logging", rollbackLoggingGroupBox);
-    this->rollbackStallDiagnosticsCheckBox = new QCheckBox("Log netplay stalls only (lightweight freeze diagnostics)", rollbackLoggingGroupBox);
+    this->rollbackVerboseStatsCheckBox = new QCheckBox(tr("Enable verbose rollback stats logging"), rollbackLoggingGroupBox);
+    this->rollbackStallDiagnosticsCheckBox = new QCheckBox(tr("Log netplay stalls only (lightweight freeze diagnostics)"), rollbackLoggingGroupBox);
     this->rollbackStallDiagnosticsCheckBox->setToolTip(
-        "Logs only when a rollback session stalls (a multi-second freeze), with per-peer\n"
-        "network stats so you can see which player's input stopped arriving. Writes nothing\n"
-        "during smooth play, so the log stays tiny — unlike verbose stats, which writes every\n"
-        "frame. Safe to leave on; one player logging is enough to identify the culprit.");
-    this->rollbackPacingTraceCheckBox = new QCheckBox("Enable pacing trace logging", rollbackLoggingGroupBox);
+        tr("Logs only when a rollback session stalls (a multi-second freeze), with per-peer\n"
+           "network stats so you can see which player's input stopped arriving. Writes nothing\n"
+           "during smooth play, so the log stays tiny — unlike verbose stats, which writes every\n"
+           "frame. Safe to leave on; one player logging is enough to identify the culprit."));
+    this->rollbackPacingTraceCheckBox = new QCheckBox(tr("Enable pacing trace logging"), rollbackLoggingGroupBox);
     this->rollbackPacingTraceCheckBox->setToolTip(
-        "Writes detailed frontend and core pacing CSV logs when a rollback session ends.\n"
-        "Enable this only while diagnosing frame pacing; it is disabled by default.");
-    this->rollbackVerbosePifInputLoggingCheckBox = new QCheckBox("Enable verbose PIF input logging", rollbackLoggingGroupBox);
-    this->rollbackVerboseGlideInputLoggingCheckBox = new QCheckBox("Enable verbose Glide input logging", rollbackLoggingGroupBox);
+        tr("Writes detailed frontend and core pacing CSV logs when a rollback session ends.\n"
+           "Enable this only while diagnosing frame pacing; it is disabled by default."));
+    this->rollbackVerbosePifInputLoggingCheckBox = new QCheckBox(tr("Enable verbose PIF input logging"), rollbackLoggingGroupBox);
+    this->rollbackVerboseGlideInputLoggingCheckBox = new QCheckBox(tr("Enable verbose Glide input logging"), rollbackLoggingGroupBox);
     rollbackLayout->addWidget(this->rollbackEnableLocalTestingCheckBox);
     rollbackLoggingLayout->addWidget(this->rollbackVerboseStatsCheckBox);
     rollbackLoggingLayout->addWidget(this->rollbackStallDiagnosticsCheckBox);
@@ -365,7 +365,11 @@ SettingsDialog::SettingsDialog(QWidget *parent, QString file) : QDialog(parent)
 
     this->tabWidget->setMinimumWidth(0);
     this->tabWidget->setMinimumHeight(this->tabWidget->sizeHint().height());
-    this->naturalSizeHint = this->sizeHint();
+    this->settingsContentLayout->activate();
+    const QSize contentSizeHint = this->settingsContentWidget->sizeHint();
+    const QSize scrollAreaSizeHint = this->settingsContentScrollArea->sizeHint();
+    const QSize contentSizeDelta = (contentSizeHint - scrollAreaSizeHint).expandedTo(QSize());
+    this->naturalSizeHint = this->sizeHint() + contentSizeDelta;
 }
 
 SettingsDialog::~SettingsDialog(void)

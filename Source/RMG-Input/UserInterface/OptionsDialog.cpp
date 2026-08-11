@@ -106,7 +106,7 @@ void OptionsDialog::on_controllerPakComboBox_currentIndexChanged(int index)
 
 void OptionsDialog::on_changeGameboyRomButton_clicked()
 {
-    QString gameBoyRom = QFileDialog::getOpenFileName(this, tr("Open Gameboy ROM"), "", "Gameboy ROM (*.gb *.gbc)");
+    QString gameBoyRom = QFileDialog::getOpenFileName(this, tr("Open Gameboy ROM"), "", tr("Gameboy ROM (*.gb *.gbc)"));
     if (!gameBoyRom.isEmpty())
     {
         this->gameboyRomLineEdit->setText(QDir::toNativeSeparators(gameBoyRom));
@@ -120,7 +120,7 @@ void OptionsDialog::on_clearGameboyRomButton_clicked()
 
 void OptionsDialog::on_changeGameboySaveButton_clicked()
 {
-    QString gameBoySave = QFileDialog::getOpenFileName(this, tr("Open Gameboy Save"), "", "Gameboy save (*.sav *.ram)");
+    QString gameBoySave = QFileDialog::getOpenFileName(this, tr("Open Gameboy Save"), "", tr("Gameboy save (*.sav *.ram)"));
     if (!gameBoySave.isEmpty())
     {
         this->gameboySaveLineEdit->setText(QDir::toNativeSeparators(gameBoySave));
@@ -150,8 +150,8 @@ void OptionsDialog::on_testRumbleButton_clicked()
     {
         QMessageBox msgBox(this);
         msgBox.setIcon(QMessageBox::Icon::Critical);
-        msgBox.setWindowTitle("Error");
-        msgBox.setText("Controller doesn't support rumble");
+        msgBox.setWindowTitle(tr("Error"));
+        msgBox.setText(tr("Controller doesn't support rumble"));
         msgBox.addButton(QMessageBox::Ok);
         msgBox.exec();
         return;
