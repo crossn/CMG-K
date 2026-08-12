@@ -170,7 +170,7 @@ void MainDialog::on_buttonBox_clicked(QAbstractButton* button)
     else if (pushButton == defaultButton)
     {
         this->screenSizeComboBox->setCurrentText("640 x 480");
-        this->resolutionUpscaleComboBox->setCurrentText("None");
+        this->resolutionUpscaleComboBox->setCurrentIndex(0);
         this->deinterlacerComboBox->setCurrentIndex(0);
         this->downscalerComboBox->setCurrentIndex(0);
         this->verticalStretchSpinBox->setValue(0);

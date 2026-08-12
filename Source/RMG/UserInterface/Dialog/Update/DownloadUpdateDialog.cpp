@@ -28,7 +28,7 @@ DownloadUpdateDialog::DownloadUpdateDialog(QWidget *parent, QUrl url, QString fi
     this->setupUi(this);
 
     this->filename = filename;
-    this->label->setText("Downloading " + filename + "...");
+    this->label->setText(tr("Downloading %1...").arg(filename));
 
     QNetworkAccessManager* networkAccessManager = new QNetworkAccessManager(this);
     QNetworkRequest request(url);
@@ -133,4 +133,3 @@ void DownloadUpdateDialog::on_reply_finished(void)
     this->reply->deleteLater();
     this->accept();
 }
-

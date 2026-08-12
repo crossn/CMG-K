@@ -490,7 +490,8 @@ bool ControllerWidget::hasAnySettingChanged(QString sectionQString)
     std::string settingsGameboySave = CoreSettingsGetStringValue(SettingsID::Input_GameboySave, section);
 
     // retrieve current data
-    bool currentIsPluggedIn        = this->inputDeviceComboBox->currentText() != "None";
+    const inputDeviceData currentDevice = this->inputDeviceComboBox->currentData().value<inputDeviceData>();
+    bool currentIsPluggedIn        = currentDevice.device.type != InputDeviceType::None;
     int currentDeadZone            = this->deadZoneSlider->value();
     int currentAnalogRange         = this->analogStickRangeSlider->value();
     bool currentRealN64Range       = this->realN64RangeCheckBox->isChecked();
@@ -584,7 +585,7 @@ void ControllerWidget::showErrorMessage(QString text, QString details)
 {
     QMessageBox msgBox(this);
     msgBox.setIcon(QMessageBox::Icon::Critical);
-    msgBox.setWindowTitle("Error");
+    msgBox.setWindowTitle(tr("Error"));
     msgBox.setText(text);
     msgBox.setDetailedText(details);
     msgBox.addButton(QMessageBox::Ok);
@@ -594,7 +595,23 @@ void ControllerWidget::showErrorMessage(QString text, QString details)
 void ControllerWidget::AddInputDevice(const InputDevice& device, const InputProfileDBEntry& inputProfile)
 {
     QString deviceName = QString::fromStdString(device.name);
-    QString name = deviceName;
+    QString name;
+
+    switch (device.type)
+    {
+    case InputDeviceType::None:
+        name = tr("None");
+        break;
+    case InputDeviceType::Automatic:
+        name = tr("Automatic");
+        break;
+    case InputDeviceType::Keyboard:
+        name = tr("Keyboard");
+        break;
+    default:
+        name = deviceName;
+        break;
+    }
 
     if (device.type == InputDeviceType::Joystick)
     {
@@ -739,7 +756,7 @@ void ControllerWidget::CheckInputDeviceSettings(QString sectionQString)
     else
     { // no match
         QString title = QString::fromStdString(deviceName);
-        title += " (not found)";
+        title = tr("%1 (not found)").arg(title);
         this->inputDeviceComboBox->addItem(title, QVariant::fromValue<inputDeviceData>({ device, {} }));
         this->inputDeviceComboBox->setCurrentIndex(this->inputDeviceComboBox->count() - 1);
     }
@@ -771,10 +788,7 @@ void ControllerWidget::GetCurrentInputDevice(InputDevice& device, bool ignoreDev
 
 void ControllerWidget::on_deadZoneSlider_valueChanged(int value)
 {
-    QString title;
-    title = "Deadzone: ";
-    title += QString::number(value);
-    title += "%";
+    const QString title = tr("Deadzone: %1%").arg(value);
 
     this->deadZoneGroupBox->setTitle(title);
     this->controllerImageWidget->SetDeadzone(value);
@@ -783,11 +797,9 @@ void ControllerWidget::on_deadZoneSlider_valueChanged(int value)
 void ControllerWidget::on_analogStickRangeSlider_valueChanged(int value)
 {
     double actualRange = 127.0 * value / 100.0;
-    QString title = tr("Analog Stick Range: ");
-    title += QString::number(actualRange, 'f', 1);
-    title += " (";
-    title += QString::number(value);
-    title += "%)";
+    const QString title = tr("Analog Stick Range: %1 (%2%)")
+        .arg(actualRange, 0, 'f', 1)
+        .arg(value);
 
     this->analogStickRangeGroupBox->setTitle(title);
     this->controllerImageWidget->SetRange(value);
@@ -902,7 +914,7 @@ void ControllerWidget::on_addProfileButton_clicked()
 
     // ask user for a new profile name
     QString newProfile = QInputDialog::getText(this,
-            "Create New Profile", "New profile name:", 
+            tr("Create New Profile"), tr("New profile name:"),
             QLineEdit::Normal, "", 
             nullptr,
             Qt::WindowCloseButtonHint | Qt::WindowTitleHint);
@@ -916,7 +928,7 @@ void ControllerWidget::on_addProfileButton_clicked()
         newProfile.contains('[') ||
         newProfile.contains(']'))
     {
-        this->showErrorMessage("Profile name cannot contain ';','[' or ']'!");
+        this->showErrorMessage(tr("Profile name cannot contain ';','[' or ']'!"));
         return;
     }
 
@@ -924,7 +936,7 @@ void ControllerWidget::on_addProfileButton_clicked()
     profilesIter = std::find(profiles.begin(), profiles.end(), newProfile.toStdString());
     if (profilesIter != profiles.end())
     {
-        this->showErrorMessage("Profile with the same name already exists!");
+        this->showErrorMessage(tr("Profile with the same name already exists!"));
         return;
     }
 
@@ -954,7 +966,7 @@ void ControllerWidget::on_removeProfileButton_clicked()
     {
         QMessageBox messageBox(this);
         messageBox.setIcon(QMessageBox::Icon::Warning);
-        messageBox.setText("Are you sure you want to clear the main profile?");
+        messageBox.setText(tr("Are you sure you want to clear the main profile?"));
         messageBox.addButton(QMessageBox::Yes);
         messageBox.addButton(QMessageBox::No);
         if (messageBox.exec() == QMessageBox::Yes)
@@ -2232,4 +2244,3 @@ void ControllerWidget::RemoveUserProfile(QString name, QString section)
         this->profileComboBox->removeItem(index);
     }
 }
-

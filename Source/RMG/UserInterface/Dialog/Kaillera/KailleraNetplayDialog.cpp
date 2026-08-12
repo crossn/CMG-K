@@ -633,7 +633,7 @@ public:
             popupLayout->setSpacing(6);
 
             m_searchEdit = new QLineEdit(m_popup);
-            m_searchEdit->setPlaceholderText("Search ROMs...");
+            m_searchEdit->setPlaceholderText(KailleraNetplayDialog::tr("Search ROMs..."));
             popupLayout->addWidget(m_searchEdit);
 
             m_listWidget = new QListWidget(m_popup);
@@ -1651,7 +1651,7 @@ KailleraNetplayDialog::~KailleraNetplayDialog()
 void KailleraNetplayDialog::setupUI()
 {
     setObjectName("KailleraLauncherDialog");
-    setWindowTitle("RMG-K Netplay");
+    setWindowTitle(tr("CMG-K Netplay"));
     setMinimumSize(520, 480);
     resize(580, 530);
 
@@ -1670,7 +1670,7 @@ void KailleraNetplayDialog::setupUI()
     auto* settingsLayout = new QHBoxLayout(profilePane);
     settingsLayout->setContentsMargins(0, 0, 0, 0);
     settingsLayout->setSpacing(10);
-    auto* usernameLabel = new QLabel("Username:", profilePane);
+    auto* usernameLabel = new QLabel(tr("Username:"), profilePane);
     usernameLabel->setObjectName("KailleraFieldLabel");
     settingsLayout->addWidget(usernameLabel);
     m_usernameEdit = new QLineEdit(profilePane);
@@ -1688,8 +1688,8 @@ void KailleraNetplayDialog::setupUI()
     {
         launcherTabBar->setModernMode(theme == "Modern");
     }
-    m_tabWidget->addTab(createServerTab(), "Server (delay)");
-    m_tabWidget->addTab(createP2PTab(), "Peer to Peer (rollback)");
+    m_tabWidget->addTab(createServerTab(), tr("Kaillera"));
+    m_tabWidget->addTab(createP2PTab(), tr("P2P"));
     connect(m_tabWidget, &QTabWidget::currentChanged, this, &KailleraNetplayDialog::onTabChanged);
     mainLayout->addWidget(m_tabWidget, 1);
 }
@@ -1712,7 +1712,7 @@ QWidget* KailleraNetplayDialog::createServerTab()
     m_serverTable = new QTableWidget(0, 6, tablePane);
     m_serverTable->setObjectName("KailleraSurface");
     m_serverTable->setProperty("launcherServerTable", true);
-    m_serverTable->setHorizontalHeaderLabels({"*", "Name", "Region", "Players", "Ping", "IP"});
+    m_serverTable->setHorizontalHeaderLabels({"*", tr("Name"), tr("Region"), tr("Players"), tr("Ping"), tr("IP")});
     m_serverTable->verticalHeader()->setVisible(false);
     m_serverTable->setShowGrid(false);
     m_serverTable->setSelectionBehavior(QAbstractItemView::SelectRows);
@@ -1790,7 +1790,7 @@ QWidget* KailleraNetplayDialog::createServerTab()
 
     m_btnAdd = new QPushButton(tablePane);
     m_btnAdd->setObjectName("KailleraFabButton");
-    m_btnAdd->setToolTip("Add a custom server");
+    m_btnAdd->setToolTip(tr("Add a custom server"));
     const bool useLauncherSkin =
         (theme == "Modern" || theme == "Fusion" || theme == "Fusion Warm" || theme == "Fusion Dark");
     m_btnAdd->setText("");
@@ -1827,29 +1827,29 @@ QWidget* KailleraNetplayDialog::createServerTab()
     auto* btnLayout = new QHBoxLayout();
     btnLayout->setContentsMargins(0, 0, 0, 0);
     btnLayout->setSpacing(10);
-    m_btnWaitingGames = new QPushButton("Waiting Games", tab);
+    m_btnWaitingGames = new QPushButton(tr("Waiting Games"), tab);
     m_btnWaitingGames->setObjectName("KailleraSecondaryButton");
     configureLauncherButtonMetrics(m_btnWaitingGames);
-    m_btnConnect = new QPushButton("Connect", tab);
+    m_btnConnect = new QPushButton(tr("Connect"), tab);
     m_btnConnect->setObjectName("KailleraPrimaryButton");
     configureLauncherButtonMetrics(m_btnConnect);
     configureLauncherAccentPalette(m_btnConnect);
-    auto* frameDelayLabel = new QLabel("Frame Delay:", tab);
+    auto* frameDelayLabel = new QLabel(tr("Frame Delay:"), tab);
     frameDelayLabel->setObjectName("KailleraFieldLabel");
     m_frameDelayCombo = new QComboBox(tab);
     m_frameDelayCombo->setObjectName("KailleraInputCombo");
     configureLauncherComboMetrics(m_frameDelayCombo);
     configureLauncherComboPopup(m_frameDelayCombo, theme);
-    m_frameDelayCombo->addItem("Auto");
-    m_frameDelayCombo->addItem("1 frame (8ms)");
-    m_frameDelayCombo->addItem("2 frames (24ms)");
-    m_frameDelayCombo->addItem("3 frames (40ms)");
-    m_frameDelayCombo->addItem("4 frames (56ms)");
-    m_frameDelayCombo->addItem("5 frames (72ms)");
-    m_frameDelayCombo->addItem("6 frames (88ms)");
-    m_frameDelayCombo->addItem("7 frames (104ms)");
-    m_frameDelayCombo->addItem("8 frames (120ms)");
-    m_frameDelayCombo->addItem("9 frames (136ms)");
+    m_frameDelayCombo->addItem(tr("Auto"));
+    m_frameDelayCombo->addItem(tr("1 frame (8ms)"));
+    m_frameDelayCombo->addItem(tr("2 frames (24ms)"));
+    m_frameDelayCombo->addItem(tr("3 frames (40ms)"));
+    m_frameDelayCombo->addItem(tr("4 frames (56ms)"));
+    m_frameDelayCombo->addItem(tr("5 frames (72ms)"));
+    m_frameDelayCombo->addItem(tr("6 frames (88ms)"));
+    m_frameDelayCombo->addItem(tr("7 frames (104ms)"));
+    m_frameDelayCombo->addItem(tr("8 frames (120ms)"));
+    m_frameDelayCombo->addItem(tr("9 frames (136ms)"));
 
     connect(m_btnWaitingGames, &QPushButton::clicked, this, &KailleraNetplayDialog::onWaitingGames);
     connect(m_btnConnect, &QPushButton::clicked, this, &KailleraNetplayDialog::onConnectServer);
@@ -1878,7 +1878,7 @@ QWidget* KailleraNetplayDialog::createP2PTab()
 
     // Host area
     QVBoxLayout* hostLayout = nullptr;
-    auto* hostPane = createLauncherSectionPane(theme, tab, "Host", &hostLayout);
+    auto* hostPane = createLauncherSectionPane(theme, tab, tr("Host"), &hostLayout);
 
     auto* hostBody = new QWidget(hostPane);
     auto* hostBodyLayout = new QVBoxLayout(hostBody);
@@ -1887,7 +1887,7 @@ QWidget* KailleraNetplayDialog::createP2PTab()
 
     // Game picker
     auto* gameLayout = new QHBoxLayout();
-    auto* gameLabel = new QLabel("ROM:", hostBody);
+    auto* gameLabel = new QLabel(tr("ROM:"), hostBody);
     gameLabel->setObjectName("KailleraFieldLabel");
     gameLayout->addWidget(gameLabel);
     m_p2pGameCombo = new SearchableComboBox(hostBody);
@@ -1898,7 +1898,7 @@ QWidget* KailleraNetplayDialog::createP2PTab()
     {
         static_cast<SearchableComboBox*>(m_p2pGameCombo)->setDisplayTextInset(4);
     }
-    m_p2pGameCombo->setToolTip("Choose the ROM to host");
+    m_p2pGameCombo->setToolTip(tr("Choose the ROM to host"));
     gameLayout->addWidget(m_p2pGameCombo, 1);
     hostBodyLayout->addLayout(gameLayout);
 
@@ -1929,7 +1929,7 @@ QWidget* KailleraNetplayDialog::createP2PTab()
     }
 
     auto* codeLayout = new QHBoxLayout();
-    auto* codeLabel = new QLabel("Your code:", hostBody);
+    auto* codeLabel = new QLabel(tr("Your code:"), hostBody);
     codeLabel->setObjectName("KailleraFieldLabel");
     codeLayout->addWidget(codeLabel);
     m_p2pCurrentCodeEdit = new QLineEdit(hostBody);
@@ -1942,10 +1942,10 @@ QWidget* KailleraNetplayDialog::createP2PTab()
     m_p2pCurrentCodeEdit->setFixedWidth(
         m_p2pCurrentCodeEdit->fontMetrics().horizontalAdvance("WXYZ@12345") + 40);
     m_p2pCopyAction = m_p2pCurrentCodeEdit->addAction(themedLineIcon("copy-line"), QLineEdit::TrailingPosition);
-    m_p2pCopyAction->setToolTip("Copy connect code");
+    m_p2pCopyAction->setToolTip(tr("Copy connect code"));
     connect(m_p2pCopyAction, &QAction::triggered, this, &KailleraNetplayDialog::onCopyP2PCode);
     codeLayout->addWidget(m_p2pCurrentCodeEdit);
-    m_btnP2PConfigureCode = new QPushButton("Customize", hostBody);
+    m_btnP2PConfigureCode = new QPushButton(tr("Customize"), hostBody);
     m_btnP2PConfigureCode->setObjectName("KailleraSecondaryButton");
     configureLauncherButtonMetrics(m_btnP2PConfigureCode);
     connect(m_btnP2PConfigureCode, &QPushButton::clicked, this, &KailleraNetplayDialog::onConfigureP2PCode);
@@ -1962,7 +1962,7 @@ QWidget* KailleraNetplayDialog::createP2PTab()
         }
 
         m_p2pCopyAction->setIcon(themedLineIcon("copy-line"));
-        m_p2pCopyAction->setToolTip("Copy connect code");
+        m_p2pCopyAction->setToolTip(tr("Copy connect code"));
     });
 
     // Host button
@@ -1975,12 +1975,12 @@ QWidget* KailleraNetplayDialog::createP2PTab()
     hostBtnLayout->addWidget(m_p2pCodeStatusLabel, 0, Qt::AlignLeft | Qt::AlignVCenter);
     hostBtnLayout->addStretch();
     hostBtnLayout->addSpacing(10);
-    m_btnP2PHost = new QPushButton("Host", hostBody);
+    m_btnP2PHost = new QPushButton(tr("Host"), hostBody);
     m_btnP2PHost->setObjectName("KailleraPrimaryButton");
     configureLauncherButtonMetrics(m_btnP2PHost);
     configureLauncherAccentPalette(m_btnP2PHost);
     connect(m_btnP2PHost, &QPushButton::clicked, this, &KailleraNetplayDialog::onP2PHost);
-    m_btnP2PHostPrivate = new QPushButton("Host (private)", hostBody);
+    m_btnP2PHostPrivate = new QPushButton(tr("Host (private)"), hostBody);
     m_btnP2PHostPrivate->setObjectName("KailleraSecondaryButton");
     configureLauncherButtonMetrics(m_btnP2PHostPrivate);
     connect(m_btnP2PHostPrivate, &QPushButton::clicked, this, &KailleraNetplayDialog::onP2PHostPrivate);
@@ -2008,7 +2008,7 @@ QWidget* KailleraNetplayDialog::createP2PTab()
 
     // Connect area
     QVBoxLayout* connectLayout = nullptr;
-    auto* connectPane = createLauncherSectionPane(theme, tab, "Connect", &connectLayout);
+    auto* connectPane = createLauncherSectionPane(theme, tab, tr("Connect"), &connectLayout);
 
     auto* connectBody = new QWidget(connectPane);
     auto* connectBodyLayout = new QVBoxLayout(connectBody);
@@ -2017,7 +2017,7 @@ QWidget* KailleraNetplayDialog::createP2PTab()
 
     // Top row: IP/Code field + Connect
     auto* addrLayout = new QHBoxLayout();
-    auto* addrLabel = new QLabel("IP/Code:", connectBody);
+    auto* addrLabel = new QLabel(tr("IP/Code:"), connectBody);
     addrLabel->setObjectName("KailleraFieldLabel");
     addrLayout->addWidget(addrLabel);
     const int p2pLabelWidth = qMax(codeLabel->sizeHint().width(),
@@ -2027,10 +2027,10 @@ QWidget* KailleraNetplayDialog::createP2PTab()
     addrLabel->setFixedWidth(p2pLabelWidth);
     m_p2pHostEdit = new QLineEdit(connectBody);
     m_p2pHostEdit->setObjectName("KailleraInput");
-    m_p2pHostEdit->setPlaceholderText("Connect code or ip:port");
+    m_p2pHostEdit->setPlaceholderText(tr("Connect code or ip:port"));
     configureLauncherLineEditMetrics(m_p2pHostEdit, theme);
     addrLayout->addWidget(m_p2pHostEdit, 1);
-    m_btnP2PJoin = new QPushButton("Connect", connectBody);
+    m_btnP2PJoin = new QPushButton(tr("Connect"), connectBody);
     m_btnP2PJoin->setObjectName("KailleraPrimaryButton");
     configureLauncherButtonMetrics(m_btnP2PJoin);
     configureLauncherAccentPalette(m_btnP2PJoin);
@@ -2047,7 +2047,7 @@ QWidget* KailleraNetplayDialog::createP2PTab()
     storedPanelLayout->setContentsMargins(0, 0, 0, 0);
     storedPanelLayout->setSpacing(4);
 
-    auto* storedTitle = new QLabel("Saved Opponents", storedPanel);
+    auto* storedTitle = new QLabel(tr("Saved Opponents"), storedPanel);
     storedTitle->setObjectName("KailleraP2PPanelTitle");
     storedPanelLayout->addWidget(storedTitle);
 
@@ -2121,7 +2121,7 @@ QWidget* KailleraNetplayDialog::createP2PTab()
     auto* waitingHeaderLayout = new QHBoxLayout();
     waitingHeaderLayout->setContentsMargins(0, 0, 0, 0);
     waitingHeaderLayout->setSpacing(8);
-    auto* waitingTitle = new QLabel("Waiting Games", waitingPanel);
+    auto* waitingTitle = new QLabel(tr("Waiting Games"), waitingPanel);
     waitingTitle->setObjectName("KailleraP2PPanelTitle");
     waitingHeaderLayout->addWidget(waitingTitle);
     waitingHeaderLayout->addStretch();
@@ -2133,7 +2133,7 @@ QWidget* KailleraNetplayDialog::createP2PTab()
     m_btnP2PWaitingGamesReload->setIcon(tintedLineIcon("refresh-line", palette().mid().color()));
     m_btnP2PWaitingGamesReload->setIconSize(QSize(14, 14));
     m_btnP2PWaitingGamesReload->setFixedSize(24, 24);
-    m_btnP2PWaitingGamesReload->setToolTip("Reload waiting games");
+    m_btnP2PWaitingGamesReload->setToolTip(tr("Reload waiting games"));
     connect(m_btnP2PWaitingGamesReload, &QPushButton::clicked, this,
             [this]() { fetchP2PWaitingGames(true); });
     waitingHeaderLayout->addWidget(m_btnP2PWaitingGamesReload);
@@ -2142,7 +2142,7 @@ QWidget* KailleraNetplayDialog::createP2PTab()
     m_p2pWaitingGamesTable = new QTableWidget(0, 3, waitingPanel);
     m_p2pWaitingGamesTable->setObjectName("KailleraSurface");
     m_p2pWaitingGamesTable->setProperty("launcherWaitingGamesTable", true);
-    m_p2pWaitingGamesTable->setHorizontalHeaderLabels({"", "Host", "Game"});
+    m_p2pWaitingGamesTable->setHorizontalHeaderLabels({"", tr("Host"), tr("Game")});
     m_p2pWaitingGamesTable->horizontalHeader()->setMinimumSectionSize(40);
     m_p2pWaitingGamesTable->horizontalHeader()->setStretchLastSection(false);
     m_p2pWaitingGamesTable->horizontalHeader()->setSectionResizeMode(0, QHeaderView::Interactive);
@@ -2457,7 +2457,7 @@ void KailleraNetplayDialog::refreshServerListDisplay(bool forcePingResort)
         favoriteItem->setTextAlignment(Qt::AlignCenter);
         favoriteItem->setFlags((favoriteItem->flags() | Qt::ItemIsEnabled | Qt::ItemIsSelectable)
             & ~Qt::ItemIsEditable);
-        favoriteItem->setToolTip(favorite ? "Favorited server" : "Favorite server");
+        favoriteItem->setToolTip(favorite ? tr("Favorited server") : tr("Favorite server"));
         m_serverTable->setItem(i, 0, favoriteItem);
 
         auto* nameItem = new QTableWidgetItem(server.name);
@@ -3059,8 +3059,8 @@ static void releaseOldTraversalReservation(QWidget* parent, const QString& owner
     const QByteArray payload = QByteArray(kN02TraversalProtocol) + "|RELEASE|" + ownerToken.toUtf8();
     if (!sendTraversalRequest(payload, parts, error))
     {
-        QMessageBox::warning(parent, "Configure P2P Code",
-            "Your new code was saved, but the old code could not be released.\n" + error);
+        QMessageBox::warning(parent, KailleraNetplayDialog::tr("Configure P2P Code"),
+            KailleraNetplayDialog::tr("Your new code was saved, but the old code could not be released.\n%1").arg(error));
         return;
     }
 
@@ -3077,13 +3077,13 @@ static void releaseOldTraversalReservation(QWidget* parent, const QString& owner
             return;
         }
 
-        QMessageBox::warning(parent, "Configure P2P Code",
-            "Your new code was saved, but the old code could not be released.\nNAT server error: " + reason);
+        QMessageBox::warning(parent, KailleraNetplayDialog::tr("Configure P2P Code"),
+            KailleraNetplayDialog::tr("Your new code was saved, but the old code could not be released.\nNAT server error: %1").arg(reason));
         return;
     }
 
-    QMessageBox::warning(parent, "Configure P2P Code",
-        "Your new code was saved, but the old code could not be released.");
+    QMessageBox::warning(parent, KailleraNetplayDialog::tr("Configure P2P Code"),
+        KailleraNetplayDialog::tr("Your new code was saved, but the old code could not be released."));
 }
 
 void KailleraNetplayDialog::refreshP2PStaticCodeDisplay()
@@ -3325,7 +3325,7 @@ void KailleraNetplayDialog::onCopyP2PCode()
     if (m_p2pCopyAction != nullptr)
     {
         m_p2pCopyAction->setIcon(themedLineIcon("copy-check-line"));
-        m_p2pCopyAction->setToolTip("Copied");
+        m_p2pCopyAction->setToolTip(tr("Copied"));
     }
     if (m_p2pCopyFeedbackTimer != nullptr)
     {
@@ -3375,7 +3375,7 @@ void KailleraNetplayDialog::onConfigureP2PCode()
     {
         QDialog dlg(this);
         dlg.setObjectName("KailleraLauncherDialog");
-        dlg.setWindowTitle("Configure P2P Code");
+        dlg.setWindowTitle(tr("Configure P2P Code"));
         dlg.setWindowIcon(windowIcon());
         dlg.setStyleSheet(buildLauncherStyleSheet(theme));
         auto* layout = new QVBoxLayout(&dlg);
@@ -3405,7 +3405,7 @@ void KailleraNetplayDialog::onConfigureP2PCode()
         statusLabel->setAlignment(Qt::AlignLeft | Qt::AlignTop);
         statusLabel->setText(QString());
 
-        auto* btnCheck = new QPushButton("Check Availability", &dlg);
+        auto* btnCheck = new QPushButton(tr("Check Availability"), &dlg);
         btnCheck->setObjectName("KailleraSecondaryButton");
         configureLauncherButtonMetrics(btnCheck);
         auto* inputLayout = new QHBoxLayout();
@@ -3418,8 +3418,8 @@ void KailleraNetplayDialog::onConfigureP2PCode()
         auto* btnLayout = new QHBoxLayout();
         btnLayout->setContentsMargins(0, 0, 0, 0);
         btnLayout->setSpacing(8);
-        auto* btnAccept = new QPushButton("Accept", &dlg);
-        auto* btnCancel = new QPushButton("Cancel", &dlg);
+        auto* btnAccept = new QPushButton(tr("Accept"), &dlg);
+        auto* btnCancel = new QPushButton(tr("Cancel"), &dlg);
         btnAccept->setObjectName("KailleraPrimaryButton");
         btnCancel->setObjectName("KailleraSecondaryButton");
         configureLauncherButtonMetrics(btnAccept);
@@ -3455,7 +3455,7 @@ void KailleraNetplayDialog::onConfigureP2PCode()
             if (normalizedRequest.isEmpty())
             {
                 resetAvailability();
-                setStatus("Enter 3 or 4 letters or a full code like CATS@123.", "#b00020");
+                setStatus(tr("Enter 3 or 4 letters or a full code like CATS@123."), "#b00020");
                 return;
             }
 
@@ -3469,7 +3469,7 @@ void KailleraNetplayDialog::onConfigureP2PCode()
 
             if (!sendTraversalRequest(payload, parts, error))
             {
-                QMessageBox::warning(this, "Configure P2P Code", error);
+                QMessageBox::warning(this, tr("Configure P2P Code"), error);
                 return;
             }
 
@@ -3480,8 +3480,8 @@ void KailleraNetplayDialog::onConfigureP2PCode()
                 const QString code = normalizeTraversalCode(QString::fromUtf8(parts[2]));
                 if (code.isEmpty())
                 {
-                    QMessageBox::warning(this, "Configure P2P Code",
-                        "The NAT server returned an invalid availability response.");
+                    QMessageBox::warning(this, tr("Configure P2P Code"),
+                        tr("The NAT server returned an invalid availability response."));
                     return;
                 }
 
@@ -3491,7 +3491,7 @@ void KailleraNetplayDialog::onConfigureP2PCode()
                     codeEdit->setText(code);
                 }
                 btnAccept->setEnabled(true);
-                setStatus(code + " is available.", "#0b6e2e");
+                setStatus(tr("%1 is available.").arg(code), "#0b6e2e");
                 return;
             }
 
@@ -3508,23 +3508,23 @@ void KailleraNetplayDialog::onConfigureP2PCode()
 
                 if (!requestedCode.isEmpty() && !suggestedCode.isEmpty())
                 {
-                    setStatus(requestedCode + " is unavailable. Suggested code: " + suggestedCode + ".", "#b00020");
+                    setStatus(tr("%1 is unavailable. Suggested code: %2.").arg(requestedCode, suggestedCode), "#b00020");
                 }
                 else
                 {
-                    setStatus("That code is unavailable. Try another one.", "#b00020");
+                    setStatus(tr("That code is unavailable. Try another one."), "#b00020");
                 }
                 return;
             }
 
             if (parts[1] == "ERR" && parts.size() >= 3)
             {
-                setStatus("NAT server error: " + QString::fromUtf8(parts[2]), "#b00020");
+                setStatus(tr("NAT server error: %1").arg(QString::fromUtf8(parts[2])), "#b00020");
                 return;
             }
 
-            QMessageBox::warning(this, "Configure P2P Code",
-                "Unexpected response from the NAT server.");
+            QMessageBox::warning(this, tr("Configure P2P Code"),
+                tr("Unexpected response from the NAT server."));
         };
 
         connect(btnCheck, &QPushButton::clicked, &dlg, runCheck);
@@ -3558,7 +3558,7 @@ void KailleraNetplayDialog::onConfigureP2PCode()
         QString error;
         if (!sendTraversalRequest(payload, parts, error))
         {
-            QMessageBox::warning(this, "Configure P2P Code", error);
+            QMessageBox::warning(this, tr("Configure P2P Code"), error);
             return;
         }
 
@@ -3568,8 +3568,8 @@ void KailleraNetplayDialog::onConfigureP2PCode()
             const QString token = QString::fromUtf8(parts[3]).trimmed();
             if (code.isEmpty() || token.isEmpty())
             {
-                QMessageBox::warning(this, "Configure P2P Code",
-                    "The NAT server returned an invalid code response.");
+                QMessageBox::warning(this, tr("Configure P2P Code"),
+                    tr("The NAT server returned an invalid code response."));
                 return;
             }
 
@@ -3588,14 +3588,12 @@ void KailleraNetplayDialog::onConfigureP2PCode()
 
             if (confirmed)
             {
-                showP2PCodeStatusMessage("Connect code updated to " + code + ".", QColor("#2E7D32"));
+                showP2PCodeStatusMessage(tr("Connect code updated to %1.").arg(code), QColor("#2E7D32"));
             }
             else
             {
-                QMessageBox::warning(this, "Configure P2P Code",
-                    "Your connect code was saved locally as " + code +
-                    ", but the NAT server did not confirm it yet.\n" + confirmError +
-                    "\n\nThe code will be retried automatically the next time you host.");
+                QMessageBox::warning(this, tr("Configure P2P Code"),
+                    tr("Your connect code was saved locally as %1, but the NAT server did not confirm it yet.\n%2\n\nThe code will be retried automatically the next time you host.").arg(code, confirmError));
             }
             return;
         }
@@ -3603,21 +3601,20 @@ void KailleraNetplayDialog::onConfigureP2PCode()
         if (parts[1] == "CLAIMSUGGEST" && parts.size() >= 4)
         {
             requested = normalizeTraversalCode(QString::fromUtf8(parts[3]));
-            QMessageBox::information(this, "Configure P2P Code",
-                "That code was taken before it could be claimed.\n"
-                "Suggested code: " + requested);
+            QMessageBox::information(this, tr("Configure P2P Code"),
+                tr("That code was taken before it could be claimed.\nSuggested code: %1").arg(requested));
             continue;
         }
 
         if (parts[1] == "ERR" && parts.size() >= 3)
         {
-            QMessageBox::warning(this, "Configure P2P Code",
-                "NAT server error: " + QString::fromUtf8(parts[2]));
+            QMessageBox::warning(this, tr("Configure P2P Code"),
+                tr("NAT server error: %1").arg(QString::fromUtf8(parts[2])));
             return;
         }
 
-        QMessageBox::warning(this, "Configure P2P Code",
-            "Unexpected response from the NAT server.");
+        QMessageBox::warning(this, tr("Configure P2P Code"),
+            tr("Unexpected response from the NAT server."));
         return;
     }
 }
@@ -3625,16 +3622,16 @@ void KailleraNetplayDialog::onConfigureP2PCode()
 void KailleraNetplayDialog::onAddServer()
 {
     QDialog dlg(this);
-    dlg.setWindowTitle("Add Server");
+    dlg.setWindowTitle(tr("Add Server"));
     auto* layout = new QVBoxLayout(&dlg);
     auto* nameEdit = new QLineEdit(&dlg);
-    nameEdit->setPlaceholderText("Server Name");
+    nameEdit->setPlaceholderText(tr("Server Name"));
     auto* hostEdit = new QLineEdit(&dlg);
-    hostEdit->setPlaceholderText("Host (ip:port)");
+    hostEdit->setPlaceholderText(tr("Host (ip:port)"));
     hostEdit->setText("127.0.0.1:27888");
     auto* btnLayout = new QHBoxLayout();
-    auto* btnOk = new QPushButton("OK", &dlg);
-    auto* btnCancel = new QPushButton("Cancel", &dlg);
+    auto* btnOk = new QPushButton(tr("OK"), &dlg);
+    auto* btnCancel = new QPushButton(tr("Cancel"), &dlg);
     btnLayout->addStretch();
     btnLayout->addWidget(btnOk);
     btnLayout->addWidget(btnCancel);
@@ -3682,17 +3679,17 @@ void KailleraNetplayDialog::onEditServer()
     if (favoriteIndex < 0 || favoriteIndex >= m_favoriteServers.size()) return;
 
     QDialog dlg(this);
-    dlg.setWindowTitle("Edit Server");
+    dlg.setWindowTitle(tr("Edit Server"));
     auto* layout = new QVBoxLayout(&dlg);
     auto* nameEdit = new QLineEdit(&dlg);
-    nameEdit->setPlaceholderText("Server Name");
+    nameEdit->setPlaceholderText(tr("Server Name"));
     nameEdit->setText(m_favoriteServers[favoriteIndex].name);
     auto* hostEdit = new QLineEdit(&dlg);
-    hostEdit->setPlaceholderText("Host (ip:port)");
+    hostEdit->setPlaceholderText(tr("Host (ip:port)"));
     hostEdit->setText(m_favoriteServers[favoriteIndex].host);
     auto* btnLayout = new QHBoxLayout();
-    auto* btnOk = new QPushButton("OK", &dlg);
-    auto* btnCancel = new QPushButton("Cancel", &dlg);
+    auto* btnOk = new QPushButton(tr("OK"), &dlg);
+    auto* btnCancel = new QPushButton(tr("Cancel"), &dlg);
     btnLayout->addStretch();
     btnLayout->addWidget(btnOk);
     btnLayout->addWidget(btnCancel);
@@ -3710,8 +3707,8 @@ void KailleraNetplayDialog::onEditServer()
     const int duplicateFavorite = favoriteServerIndexByHost(host);
     if (duplicateFavorite >= 0 && duplicateFavorite != favoriteIndex)
     {
-        QMessageBox::information(this, "Edit Server",
-            "That host is already in your favorites.");
+        QMessageBox::information(this, tr("Edit Server"),
+            tr("That host is already in your favorites."));
         return;
     }
 
@@ -3744,22 +3741,22 @@ void KailleraNetplayDialog::onServerRightClicked(QPoint pos)
     const bool favorite = favoriteIndex >= 0;
 
     QMenu menu(this);
-    QAction* actFavorite = menu.addAction(favorite ? "Unfavorite" : "Favorite");
+    QAction* actFavorite = menu.addAction(favorite ? tr("Unfavorite") : tr("Favorite"));
     QAction* actEdit = nullptr;
     QAction* actMoveUp = nullptr;
     QAction* actMoveDown = nullptr;
     if (favorite)
     {
-        actEdit = menu.addAction("Edit");
-        actMoveUp = menu.addAction("Move Favorite Up");
-        actMoveDown = menu.addAction("Move Favorite Down");
+        actEdit = menu.addAction(tr("Edit"));
+        actMoveUp = menu.addAction(tr("Move Favorite Up"));
+        actMoveDown = menu.addAction(tr("Move Favorite Down"));
         actMoveUp->setEnabled(favoriteIndex > 0);
         actMoveDown->setEnabled(favoriteIndex + 1 < m_favoriteServers.size());
         menu.addSeparator();
     }
-    QAction* actCopyIp = menu.addAction("Copy IP");
-    QAction* actPing = menu.addAction("Ping");
-    QAction* actTraceroute = menu.addAction("Traceroute");
+    QAction* actCopyIp = menu.addAction(tr("Copy IP"));
+    QAction* actPing = menu.addAction(tr("Ping", "context menu action"));
+    QAction* actTraceroute = menu.addAction(tr("Traceroute"));
 
     QAction* chosen = menu.exec(m_serverTable->viewport()->mapToGlobal(pos));
     if (!chosen) return;
@@ -3818,7 +3815,7 @@ void KailleraNetplayDialog::onServerRightClicked(QPoint pos)
 #endif
 
         auto* dlg = new QDialog(this);
-        dlg->setWindowTitle("Traceroute - " + ip);
+        dlg->setWindowTitle(tr("Traceroute - %1").arg(ip));
         dlg->setAttribute(Qt::WA_DeleteOnClose);
         dlg->resize(600, 400);
 
@@ -3876,20 +3873,20 @@ void KailleraNetplayDialog::onWaitingGamesReply(QNetworkReply* reply)
 
     if (reply->error() != QNetworkReply::NoError)
     {
-        QMessageBox::warning(this, "Waiting Games", "Error: " + reply->errorString());
+        QMessageBox::warning(this, tr("Waiting Games"), tr("Error: %1").arg(reply->errorString()));
         return;
     }
 
     QByteArray data = reply->readAll();
     if (data.size() < 50)
     {
-        QMessageBox::information(this, "Waiting Games", "No waiting games found.");
+        QMessageBox::information(this, tr("Waiting Games"), tr("No waiting games found."));
         return;
     }
 
     // Build popup dialog
     QDialog* wgDialog = new QDialog(this);
-    wgDialog->setWindowTitle("Waiting Games");
+    wgDialog->setWindowTitle(tr("Waiting Games"));
     wgDialog->setMinimumSize(600, 400);
     wgDialog->resize(700, 450);
     const QString theme = QString::fromStdString(CoreSettingsGetStringValue(SettingsID::GUI_Theme));
@@ -3904,7 +3901,7 @@ void KailleraNetplayDialog::onWaitingGamesReply(QNetworkReply* reply)
     auto* wgTable = new QTableWidget(0, 5, wgDialog);
     wgTable->setObjectName("KailleraSurface");
     wgTable->setProperty("launcherWaitingGamesTable", true);
-    wgTable->setHorizontalHeaderLabels({"Game", "Emulator", "User", "Server", "IP"});
+    wgTable->setHorizontalHeaderLabels({tr("Game"), tr("Emulator"), tr("User"), tr("Server"), tr("IP")});
     wgTable->horizontalHeader()->setStretchLastSection(true);
     wgTable->setSelectionBehavior(QAbstractItemView::SelectRows);
     wgTable->setSelectionMode(QAbstractItemView::SingleSelection);
@@ -3918,8 +3915,8 @@ void KailleraNetplayDialog::onWaitingGamesReply(QNetworkReply* reply)
     wgLayout->addWidget(wgTable);
 
     auto* wgBtnLayout = new QHBoxLayout();
-    auto* btnAddToList = new QPushButton("Favorite Server", wgDialog);
-    auto* btnWgClose = new QPushButton("Close", wgDialog);
+    auto* btnAddToList = new QPushButton(tr("Favorite Server"), wgDialog);
+    auto* btnWgClose = new QPushButton(tr("Close"), wgDialog);
     if (theme == "Modern")
     {
         btnAddToList->setObjectName("KailleraSecondaryButton");
@@ -4002,8 +3999,8 @@ void KailleraNetplayDialog::onWaitingGamesReply(QNetworkReply* reply)
 
         if (favoriteServerIndexByHost(hostPort) >= 0)
         {
-            QMessageBox::information(wgDialog, "Already Favorited",
-                "This server is already in your favorites.");
+            QMessageBox::information(wgDialog, tr("Already Favorited"),
+                tr("This server is already in your favorites."));
             return;
         }
 
@@ -4230,17 +4227,17 @@ void KailleraNetplayDialog::onConnectServer()
             kaillera_core_cleanup();
             if (errorMsg.isEmpty())
             {
-                errorMsg = "Failed to connect to server";
+                errorMsg = tr("Failed to connect to server");
             }
-            QMessageBox::warning(this, "Connection Error",
-                                 errorMsg + "\n\nServer: " + entry.name);
+            QMessageBox::warning(this, tr("Connection Error"),
+                                 tr("%1\n\nServer: %2").arg(errorMsg, entry.name));
             m_serverPingsSuspended = false;
             schedulePingAllServers();
         }
     }
     else
     {
-        QMessageBox::warning(this, "Connection Error", "Failed to initialize Kaillera core.");
+        QMessageBox::warning(this, tr("Connection Error"), tr("Failed to initialize Kaillera core."));
         m_serverPingsSuspended = false;
         schedulePingAllServers();
     }
@@ -4272,12 +4269,12 @@ void KailleraNetplayDialog::hostP2P(bool showOnPublicList)
     QString gameName = (m_p2pGameCombo != nullptr) ? m_p2pGameCombo->currentText().trimmed() : QString();
     if (gameName.isEmpty())
     {
-        QMessageBox::warning(this, "P2P Host", "No game selected. Choose a ROM to host.");
+        QMessageBox::warning(this, tr("P2P Host"), tr("No game selected. Choose a ROM to host."));
         return;
     }
     if (containsForbiddenNetplayListCharacter(gameName))
     {
-        QMessageBox::warning(this, "P2P Host", "Game names containing {, }, or | are not permitted.");
+        QMessageBox::warning(this, tr("P2P Host"), tr("Game names containing {, }, or | are not permitted."));
         return;
     }
 
@@ -4285,7 +4282,7 @@ void KailleraNetplayDialog::hostP2P(bool showOnPublicList)
     if (username.isEmpty()) username = "Player";
     if (containsForbiddenNetplayListCharacter(username))
     {
-        QMessageBox::warning(this, "P2P Host", "Usernames containing {, }, or | are not permitted.");
+        QMessageBox::warning(this, tr("P2P Host"), tr("Usernames containing {, }, or | are not permitted."));
         return;
     }
 
@@ -4353,7 +4350,7 @@ void KailleraNetplayDialog::hostP2P(bool showOnPublicList)
     }
     else
     {
-        QMessageBox::warning(this, "P2P Host", "Failed to initialize P2P core.");
+        QMessageBox::warning(this, tr("P2P Host"), tr("Failed to initialize P2P core."));
     }
 }
 
@@ -4467,7 +4464,7 @@ void KailleraNetplayDialog::onP2PJoin()
     addrText.remove(' ');
     if (addrText.isEmpty())
     {
-        QMessageBox::warning(this, "P2P Join", "Please enter a connect code or host address (ip:port).");
+        QMessageBox::warning(this, tr("P2P Join"), tr("Please enter a connect code or host address (ip:port)."));
         return;
     }
 
@@ -4558,7 +4555,7 @@ void KailleraNetplayDialog::onP2PJoin()
     }
     else
     {
-        QMessageBox::warning(this, "P2P Join", "Failed to initialize P2P core.");
+        QMessageBox::warning(this, tr("P2P Join"), tr("Failed to initialize P2P core."));
     }
 }
 
@@ -4746,16 +4743,16 @@ void KailleraNetplayDialog::editP2PStoredEntry(int row)
     }
 
     QDialog dialog(this);
-    dialog.setWindowTitle("Edit P2P History Entry");
+    dialog.setWindowTitle(tr("Edit P2P History Entry"));
 
     auto* layout = new QVBoxLayout(&dialog);
     auto* formLayout = new QFormLayout();
     auto* nameEdit = new QLineEdit(m_p2pStoredUsers[row].name, &dialog);
     auto* hostEdit = new QLineEdit(m_p2pStoredUsers[row].host, &dialog);
-    hostEdit->setPlaceholderText("Connect code or ip:port");
+    hostEdit->setPlaceholderText(tr("Connect code or ip:port"));
 
-    formLayout->addRow("Name:", nameEdit);
-    formLayout->addRow("IP/Code:", hostEdit);
+    formLayout->addRow(tr("Name:"), nameEdit);
+    formLayout->addRow(tr("IP/Code:"), hostEdit);
     layout->addLayout(formLayout);
 
     auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dialog);
@@ -4771,15 +4768,15 @@ void KailleraNetplayDialog::editP2PStoredEntry(int row)
 
         if (normalizedHost.isEmpty())
         {
-            QMessageBox::warning(&dialog, "Edit P2P History Entry", "IP/Code cannot be empty.");
+            QMessageBox::warning(&dialog, tr("Edit P2P History Entry"), tr("IP/Code cannot be empty."));
             continue;
         }
 
         const int existingIndex = p2pStoredIndexByHost(normalizedHost);
         if (existingIndex >= 0 && existingIndex != row)
         {
-            QMessageBox::warning(&dialog, "Edit P2P History Entry",
-                "That IP/Code is already saved in your P2P history.");
+            QMessageBox::warning(&dialog, tr("Edit P2P History Entry"),
+                tr("That IP/Code is already saved in your P2P history."));
             continue;
         }
 
@@ -4830,9 +4827,9 @@ void KailleraNetplayDialog::onP2PStoredRightClicked(const QPoint& pos)
 
     QMenu menu(this);
     QAction* favoriteAction = menu.addAction(
-        m_p2pStoredUsers[row].favorite ? "Unfavorite" : "Favorite");
-    QAction* editAction = menu.addAction("Edit");
-    QAction* deleteAction = menu.addAction("Delete");
+        m_p2pStoredUsers[row].favorite ? tr("Unfavorite") : tr("Favorite"));
+    QAction* editAction = menu.addAction(tr("Edit"));
+    QAction* deleteAction = menu.addAction(tr("Delete"));
 
     QAction* selectedAction = menu.exec(m_p2pStoredList->viewport()->mapToGlobal(pos));
     if (selectedAction == favoriteAction)
@@ -4929,7 +4926,7 @@ void KailleraNetplayDialog::fetchP2PWaitingGames(bool manualRefresh)
     if (m_btnP2PWaitingGamesReload != nullptr)
     {
         m_btnP2PWaitingGamesReload->setEnabled(false);
-        m_btnP2PWaitingGamesReload->setToolTip(manualRefresh ? "Reloading waiting games..." : "Loading waiting games...");
+        m_btnP2PWaitingGamesReload->setToolTip(manualRefresh ? tr("Reloading waiting games...") : tr("Loading waiting games..."));
     }
 
     QNetworkRequest request{QUrl(kP2PWaitingGamesUrl)};
@@ -4948,7 +4945,7 @@ void KailleraNetplayDialog::handleP2PWaitingGamesReply(QNetworkReply* reply)
         if (m_btnP2PWaitingGamesReload != nullptr)
         {
             m_btnP2PWaitingGamesReload->setEnabled(true);
-            m_btnP2PWaitingGamesReload->setToolTip("Reload waiting games");
+            m_btnP2PWaitingGamesReload->setToolTip(tr("Reload waiting games"));
         }
         return;
     }
@@ -4958,7 +4955,7 @@ void KailleraNetplayDialog::handleP2PWaitingGamesReply(QNetworkReply* reply)
         if (m_btnP2PWaitingGamesReload != nullptr)
         {
             m_btnP2PWaitingGamesReload->setEnabled(true);
-            m_btnP2PWaitingGamesReload->setToolTip("Reload waiting games. Last refresh failed.");
+            m_btnP2PWaitingGamesReload->setToolTip(tr("Reload waiting games. Last refresh failed."));
         }
         reply->deleteLater();
         return;
@@ -4976,7 +4973,7 @@ void KailleraNetplayDialog::populateP2PWaitingGames(const QByteArray& data)
         if (m_btnP2PWaitingGamesReload != nullptr)
         {
             m_btnP2PWaitingGamesReload->setEnabled(true);
-            m_btnP2PWaitingGamesReload->setToolTip("Reload waiting games");
+            m_btnP2PWaitingGamesReload->setToolTip(tr("Reload waiting games"));
         }
         return;
     }
@@ -5007,7 +5004,7 @@ void KailleraNetplayDialog::populateP2PWaitingGames(const QByteArray& data)
         if (m_btnP2PWaitingGamesReload != nullptr)
         {
             m_btnP2PWaitingGamesReload->setEnabled(true);
-            m_btnP2PWaitingGamesReload->setToolTip("Reload waiting games");
+            m_btnP2PWaitingGamesReload->setToolTip(tr("Reload waiting games"));
         }
         return;
     }
@@ -5148,7 +5145,7 @@ void KailleraNetplayDialog::populateP2PWaitingGames(const QByteArray& data)
     if (m_btnP2PWaitingGamesReload != nullptr)
     {
         m_btnP2PWaitingGamesReload->setEnabled(true);
-        m_btnP2PWaitingGamesReload->setToolTip("Reload waiting games");
+        m_btnP2PWaitingGamesReload->setToolTip(tr("Reload waiting games"));
     }
 }
 

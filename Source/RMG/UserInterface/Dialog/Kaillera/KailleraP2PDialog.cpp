@@ -388,7 +388,7 @@ static void updateReadyBadge(QLabel* badge, bool ready)
         return;
     }
 
-    badge->setText(ready ? QString::fromUtf8("\xe2\x9c\x93 Ready") : QString("Not Ready"));
+    badge->setText(ready ? QString::fromUtf8("✓ ") + KailleraP2PDialog::tr("Ready") : KailleraP2PDialog::tr("Not Ready"));
     badge->setStyleSheet(ready ?
         "QLabel {"
         "  color: #087a2f;"
@@ -1042,7 +1042,7 @@ KailleraP2PDialog::~KailleraP2PDialog()
 void KailleraP2PDialog::setupUI()
 {
     setObjectName("KailleraP2PDialog");
-    setWindowTitle(m_isHost ? "Hosting P2P" : "P2P Game");
+    setWindowTitle(m_isHost ? tr("Hosting P2P") : tr("P2P Game"));
     setMinimumSize(820, 540);
     resize(minimumSize());
 
@@ -1070,7 +1070,7 @@ void KailleraP2PDialog::setupUI()
     hostConnectCodeLayout->setContentsMargins(0, 0, 0, 0);
     hostConnectCodeLayout->setSpacing(1);
 
-    auto* hostConnectCodeTitle = new QLabel("HOST CODE", m_hostConnectCodeBadge);
+    auto* hostConnectCodeTitle = new QLabel(tr("HOST CODE"), m_hostConnectCodeBadge);
     hostConnectCodeTitle->setObjectName("KailleraP2PCodeTitle");
     hostConnectCodeTitle->setAlignment(Qt::AlignCenter);
     hostConnectCodeLayout->addWidget(hostConnectCodeTitle, 0, Qt::AlignCenter);
@@ -1092,7 +1092,7 @@ void KailleraP2PDialog::setupUI()
     m_btnCopyConnectCode->setIconSize(QSize(16, 16));
     m_btnCopyConnectCode->setFixedSize(30, 30);
     m_btnCopyConnectCode->setCursor(Qt::PointingHandCursor);
-    m_btnCopyConnectCode->setToolTip("Copy connect code");
+    m_btnCopyConnectCode->setToolTip(tr("Copy connect code"));
     m_btnCopyConnectCode->setVisible(m_isHost);
     m_btnCopyConnectCode->setEnabled(false);
     connect(m_btnCopyConnectCode, &QPushButton::clicked, this, &KailleraP2PDialog::onCopyConnectCode);
@@ -1102,7 +1102,7 @@ void KailleraP2PDialog::setupUI()
 
     m_gameLabel = new QLabel(topBar);
     m_gameLabel->setObjectName("KailleraP2PGameBanner");
-    m_gameLabel->setText(m_gameName.isEmpty() ? "Waiting for game" : m_gameName);
+    m_gameLabel->setText(m_gameName.isEmpty() ? tr("Waiting for game") : m_gameName);
     m_gameLabel->setMinimumWidth(0);
     m_gameLabel->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
     topBarLayout->addWidget(m_gameLabel, 1);
@@ -1117,7 +1117,7 @@ void KailleraP2PDialog::setupUI()
     chatColumnLayout->setContentsMargins(0, 0, 0, 0);
     chatColumnLayout->setSpacing(10);
 
-    m_chatGroup = new QGroupBox("Chat", chatColumn);
+    m_chatGroup = new QGroupBox(tr("Chat"), chatColumn);
     m_chatGroup->setObjectName("KailleraP2PGroup");
     auto* chatLayout = new QVBoxLayout(m_chatGroup);
     chatLayout->setContentsMargins(9, 10, 9, 9);
@@ -1129,7 +1129,7 @@ void KailleraP2PDialog::setupUI()
     m_chatSettingsButton->setIconSize(QSize(17, 17));
     m_chatSettingsButton->setFixedSize(24, 24);
     m_chatSettingsButton->setCursor(Qt::PointingHandCursor);
-    m_chatSettingsButton->setToolTip("Chat settings");
+    m_chatSettingsButton->setToolTip(tr("Chat settings"));
     auto* chatSettingsMenu = new QMenu(m_chatSettingsButton);
     chatSettingsMenu->setObjectName("KailleraP2PNetcodeMenu");
     m_showDebugMessagesAction = chatSettingsMenu->addAction("Show debug messages");
@@ -1168,14 +1168,14 @@ void KailleraP2PDialog::setupUI()
     chatComposerLayout->setSpacing(6);
 
     m_chatInput = new QLineEdit(chatComposer);
-    m_chatInput->setPlaceholderText("Type a message...");
+    m_chatInput->setPlaceholderText(tr("Type a message..."));
     m_chatInput->setClearButtonEnabled(true);
     m_chatInput->setObjectName("KailleraChatComposerInput");
     m_chatInput->setFrame(false);
 
     m_btnChat = new QPushButton(chatComposer);
     m_btnChat->setObjectName("KailleraChatComposerSendButton");
-    m_btnChat->setToolTip("Send message");
+    m_btnChat->setToolTip(tr("Send message"));
     m_btnChat->setText("");
     m_btnChat->setIcon(themedP2PIcon("play-line"));
     m_btnChat->setIconSize(QSize(24, 24));
@@ -1189,7 +1189,7 @@ void KailleraP2PDialog::setupUI()
     auto* chatActionLayout = new QHBoxLayout();
     chatActionLayout->setContentsMargins(0, 0, 0, 0);
     chatActionLayout->setSpacing(8);
-    m_btnReady = new QPushButton("Ready", chatColumn);
+    m_btnReady = new QPushButton(tr("Ready"), chatColumn);
     m_btnReady->setCheckable(true);
     m_btnReady->setObjectName("KailleraP2PPrimaryButton");
     m_btnReady->setIcon(QIcon(":/icons/white/svg/check-line.svg"));
@@ -1198,16 +1198,16 @@ void KailleraP2PDialog::setupUI()
     {
         m_btnReady->setEnabled(false);
     }
-    m_btnDrop = new QPushButton("Close Game", chatColumn);
+    m_btnDrop = new QPushButton(tr("Close Game"), chatColumn);
     m_btnDrop->setObjectName("KailleraP2PSecondaryButton");
     m_btnDrop->setIcon(themedP2PIcon("close-line"));
     m_btnDrop->setIconSize(QSize(16, 16));
-    m_btnRetryConnection = new QPushButton("Retry Connection", chatColumn);
+    m_btnRetryConnection = new QPushButton(tr("Retry Connection"), chatColumn);
     m_btnRetryConnection->setObjectName("KailleraP2PPrimaryButton");
     m_btnRetryConnection->setIcon(themedP2PIcon("refresh-line"));
     m_btnRetryConnection->setIconSize(QSize(16, 16));
     m_btnRetryConnection->setVisible(false);
-    m_btnLeave = new QPushButton("Leave", chatColumn);
+    m_btnLeave = new QPushButton(tr("Leave"), chatColumn);
     m_btnLeave->setObjectName("KailleraP2PSecondaryButton");
     m_btnLeave->setIcon(themedP2PIcon("arrow-bar-right-line"));
     m_btnLeave->setIconSize(QSize(16, 16));
@@ -1223,7 +1223,7 @@ void KailleraP2PDialog::setupUI()
     rightLayout->setContentsMargins(0, 0, 0, 0);
     rightLayout->setSpacing(10);
 
-    auto* playersGroup = new QGroupBox("Players", rightWidget);
+    auto* playersGroup = new QGroupBox(tr("Players"), rightWidget);
     playersGroup->setObjectName("KailleraP2PGroup");
     playersGroup->setMinimumHeight(150);
     auto* playersLayout = new QVBoxLayout(playersGroup);
@@ -1271,7 +1271,7 @@ void KailleraP2PDialog::setupUI()
     m_btnKickPeer = new QPushButton("X", m_playerCard);
     m_btnKickPeer->setObjectName("KailleraPlayerKickButton");
     m_btnKickPeer->setCursor(Qt::PointingHandCursor);
-    m_btnKickPeer->setToolTip("Kick opponent from the lobby");
+    m_btnKickPeer->setToolTip(tr("Kick opponent from the lobby"));
     QSizePolicy kickButtonPolicy = m_btnKickPeer->sizePolicy();
     kickButtonPolicy.setRetainSizeWhenHidden(true);
     m_btnKickPeer->setSizePolicy(kickButtonPolicy);
@@ -1281,7 +1281,7 @@ void KailleraP2PDialog::setupUI()
     playersLayout->addWidget(m_playerCard);
     rightLayout->addWidget(playersGroup, 0);
 
-    m_hostGroup = new QGroupBox("Session Settings", rightWidget);
+    m_hostGroup = new QGroupBox(tr("Session Settings"), rightWidget);
     m_hostGroup->setObjectName("KailleraP2PGroup");
     auto* hostLayout = new QVBoxLayout(m_hostGroup);
     hostLayout->setContentsMargins(9, 10, 9, 9);
@@ -1295,7 +1295,7 @@ void KailleraP2PDialog::setupUI()
         m_netcodeSettingsButton->setIconSize(QSize(20, 20));
         m_netcodeSettingsButton->setFixedSize(26, 26);
         m_netcodeSettingsButton->setCursor(Qt::PointingHandCursor);
-        m_netcodeSettingsButton->setToolTip("Netcode settings");
+        m_netcodeSettingsButton->setToolTip(tr("Netcode settings"));
 
         auto* netcodeMenu = new QMenu(m_netcodeSettingsButton);
         netcodeMenu->setObjectName("KailleraP2PNetcodeMenu");
@@ -1307,7 +1307,7 @@ void KailleraP2PDialog::setupUI()
         auto* layerRow = new QHBoxLayout();
         layerRow->setContentsMargins(0, 0, 0, 0);
         layerRow->setSpacing(8);
-        auto* layerLabel = new QLabel("Netcode:", netcodeWidget);
+        auto* layerLabel = new QLabel(tr("Netcode:"), netcodeWidget);
         layerRow->addWidget(layerLabel);
 
         auto* layerToggle = new QWidget(netcodeWidget);
@@ -1316,16 +1316,16 @@ void KailleraP2PDialog::setupUI()
         layerToggleLayout->setContentsMargins(2, 2, 2, 2);
         layerToggleLayout->setSpacing(0);
 
-        m_standardLayerButton = new QPushButton("Standard", layerToggle);
+        m_standardLayerButton = new QPushButton(tr("Standard"), layerToggle);
         m_standardLayerButton->setObjectName("KailleraP2PLayerLeftButton");
         m_standardLayerButton->setCheckable(true);
         m_standardLayerButton->setAutoExclusive(true);
-        m_standardLayerButton->setToolTip("Use the standard Kaillera game layer");
-        m_rollbackLayerButton = new QPushButton("Rollback", layerToggle);
+        m_standardLayerButton->setToolTip(tr("Use the standard Kaillera game layer"));
+        m_rollbackLayerButton = new QPushButton(tr("Rollback"), layerToggle);
         m_rollbackLayerButton->setObjectName("KailleraP2PLayerRightButton");
         m_rollbackLayerButton->setCheckable(true);
         m_rollbackLayerButton->setAutoExclusive(true);
-        m_rollbackLayerButton->setToolTip("Use the rollback game layer");
+        m_rollbackLayerButton->setToolTip(tr("Use the rollback game layer"));
         layerToggleLayout->addWidget(m_standardLayerButton);
         layerToggleLayout->addWidget(m_rollbackLayerButton);
 
@@ -1352,7 +1352,7 @@ void KailleraP2PDialog::setupUI()
     fdlyLayout->setContentsMargins(0, 0, 0, 0);
     fdlyLayout->setSpacing(6);
     m_frameDelayLabel = new QLabel(m_frameDelayRow);
-    m_frameDelayLabel->setText(isRollbackMode() ? "Input Delay:" : "Frame Delay:");
+    m_frameDelayLabel->setText(isRollbackMode() ? tr("Input Delay:") : tr("Frame Delay:"));
     fdlyLayout->addWidget(m_frameDelayLabel);
     m_frameDelayCombo = new QComboBox(m_frameDelayRow);
     m_frameDelayCombo->setObjectName("KailleraP2PCombo");
@@ -1400,11 +1400,11 @@ void KailleraP2PDialog::setupUI()
     });
     fdlyLayout->addWidget(m_customFrameDelayCombo);
     fdlyLayout->addWidget(makeP2PInfoIcon(m_frameDelayRow,
-        "Input delay: frames your inputs are buffered before they take effect.\n\n"
-        "Higher delay smooths online play — the netcode has more slack, so fewer\n"
-        "corrections/rollbacks — at the cost of slightly less responsive controls.\n"
-        "Lower delay feels snappier but reacts worse to a jittery connection.\n\n"
-        "Leave it automatic to track your ping, or pick a fixed amount."));
+        tr("Input delay: frames your inputs are buffered before they take effect.\n\n"
+           "Higher delay smooths online play — the netcode has more slack, so fewer\n"
+           "corrections/rollbacks — at the cost of slightly less responsive controls.\n"
+           "Lower delay feels snappier but reacts worse to a jittery connection.\n\n"
+           "Leave it automatic to track your ping, or pick a fixed amount.")));
     fdlyLayout->addStretch();
     hostLayout->addWidget(m_frameDelayRow);
 
@@ -1417,17 +1417,17 @@ void KailleraP2PDialog::setupUI()
     auto* predictionLayout = new QHBoxLayout();
     predictionLayout->setContentsMargins(0, 0, 0, 0);
     predictionLayout->setSpacing(6);
-    auto* predictionWindowLabel = new QLabel("Prediction:", m_hostGroup);
+    auto* predictionWindowLabel = new QLabel(tr("Prediction:"), m_hostGroup);
     predictionLayout->addWidget(predictionWindowLabel);
     m_predictionWindowCombo = new QComboBox(m_hostGroup);
     m_predictionWindowCombo->setObjectName("KailleraP2PCombo");
     m_predictionWindowCombo->setMinimumWidth(120);
     m_predictionWindowCombo->setSizeAdjustPolicy(QComboBox::AdjustToContentsOnFirstShow);
     configureP2PComboPopup(m_predictionWindowCombo, theme);
-    m_predictionWindowCombo->addItem("Default", 0);
+    m_predictionWindowCombo->addItem(tr("Default"), 0);
     for (int frames = 1; frames <= 10; frames++)
     {
-        m_predictionWindowCombo->addItem(frames == 1 ? "1 frame" : QString("%1 frames").arg(frames), frames);
+        m_predictionWindowCombo->addItem(frames == 1 ? tr("1 frame") : tr("%1 frames").arg(frames), frames);
     }
     const int predictionWindowIndex = m_predictionWindowCombo->findData(m_rollbackPredictionWindow);
     m_predictionWindowCombo->setCurrentIndex(predictionWindowIndex >= 0 ? predictionWindowIndex : 0);
@@ -1452,12 +1452,12 @@ void KailleraP2PDialog::setupUI()
         auto* publicLobbyRow = new QHBoxLayout();
         publicLobbyRow->setContentsMargins(0, 0, 0, 0);
         publicLobbyRow->setSpacing(8);
-        auto* publicLobbyLabel = new QLabel("Show on public lobby", m_hostGroup);
+        auto* publicLobbyLabel = new QLabel(tr("Show on public lobby"), m_hostGroup);
         publicLobbyRow->addWidget(publicLobbyLabel);
         publicLobbyRow->addStretch();
         m_enlistCheck = new KailleraSwitch(m_hostGroup);
         m_enlistCheck->setObjectName("KailleraP2PSwitch");
-        m_enlistCheck->setAccessibleName("Show on public lobby");
+        m_enlistCheck->setAccessibleName(tr("Show on public lobby"));
         m_enlistCheck->setCursor(Qt::PointingHandCursor);
         m_enlistCheck->setChecked(m_initialShowOnPublicList);
         publicLobbyRow->addWidget(m_enlistCheck);
@@ -1470,11 +1470,11 @@ void KailleraP2PDialog::setupUI()
         });
     }
 
-    auto* localSettingsLabel = new QLabel("Local Settings", m_hostGroup);
+    auto* localSettingsLabel = new QLabel(tr("Local Settings"), m_hostGroup);
     localSettingsLabel->setObjectName("KailleraP2PSectionLabel");
     hostLayout->addWidget(localSettingsLabel);
 
-    m_recordCheck = new QCheckBox("Record game", m_hostGroup);
+    m_recordCheck = new QCheckBox(tr("Record game"), m_hostGroup);
     const bool recordingEnabledByDefault = CoreGetKailleraEffectiveRecordingDefault();
     extern bool n02_kaillera_recording_enabled;
     n02_kaillera_recording_enabled = recordingEnabledByDefault;
@@ -1492,7 +1492,7 @@ void KailleraP2PDialog::setupUI()
     predictionWindowLabel->setMinimumWidth(formLabelWidth);
 
     const QMargins hostMargins = hostLayout->contentsMargins();
-    m_frameDelayLabel->setText(isRollbackMode() ? "Input Delay:" : "Frame Delay:");
+    m_frameDelayLabel->setText(isRollbackMode() ? tr("Input Delay:") : tr("Frame Delay:"));
     const int labelWidth = m_frameDelayLabel->sizeHint().width();
     const int hostMinWidth =
         hostMargins.left() +
@@ -1557,7 +1557,7 @@ void KailleraP2PDialog::setupUI()
         }
 
         m_btnCopyConnectCode->setIcon(themedP2PIcon("copy-line"));
-        m_btnCopyConnectCode->setToolTip("Copy connect code");
+        m_btnCopyConnectCode->setToolTip(tr("Copy connect code"));
     });
 }
 
@@ -1835,42 +1835,42 @@ void KailleraP2PDialog::updateLobbyStatusLabel()
 
     if (!m_isHost && m_hostLeft)
     {
-        m_lobbyStatusLabel->setText("Host Left");
+        m_lobbyStatusLabel->setText(tr("Host Left"));
         m_lobbyStatusLabel->setStyleSheet("color: #c03a3a; font-weight: 700;");
     }
     else if (!m_isHost && m_connectionFailed)
     {
-        m_lobbyStatusLabel->setText("Failed to Connect");
+        m_lobbyStatusLabel->setText(tr("Failed to Connect"));
         m_lobbyStatusLabel->setStyleSheet("color: #c03a3a; font-weight: 700;");
     }
     else if (m_gameActive || (isRollbackMode() && m_rollbackGameActive) || n02::isGameRunning())
     {
-        m_lobbyStatusLabel->setText("Playing");
+        m_lobbyStatusLabel->setText(tr("Playing"));
         m_lobbyStatusLabel->setStyleSheet("color: #3f45c9; font-weight: 700;");
     }
     else if (m_peerConnected && m_ready && m_peerReady)
     {
-        m_lobbyStatusLabel->setText("Ready");
+        m_lobbyStatusLabel->setText(tr("Ready"));
         m_lobbyStatusLabel->setStyleSheet("color: #087a2f; font-weight: 700;");
     }
     else if (m_peerConnected)
     {
-        m_lobbyStatusLabel->setText("Waiting for Ready");
+        m_lobbyStatusLabel->setText(tr("Waiting for Ready"));
         m_lobbyStatusLabel->setStyleSheet("color: #a66a00; font-weight: 700;");
     }
     else if (!m_isHost)
     {
-        m_lobbyStatusLabel->setText("Connecting...");
+        m_lobbyStatusLabel->setText(tr("Connecting..."));
         m_lobbyStatusLabel->setStyleSheet("color: #8a8a8a; font-weight: 700;");
     }
     else if (m_lobbyOpening)
     {
-        m_lobbyStatusLabel->setText("Opening Lobby");
+        m_lobbyStatusLabel->setText(tr("Opening Lobby"));
         m_lobbyStatusLabel->setStyleSheet("color: #8a8a8a; font-weight: 700;");
     }
     else
     {
-        m_lobbyStatusLabel->setText(m_isHost ? "Hosting" : "P2P Game");
+        m_lobbyStatusLabel->setText(m_isHost ? tr("Hosting") : tr("P2P Game"));
         m_lobbyStatusLabel->setStyleSheet("color: #a66a00; font-weight: 700;");
     }
 }
@@ -2281,7 +2281,7 @@ void KailleraP2PDialog::updateRollbackDelayControls()
 
     if (m_delayLabel != nullptr)
     {
-        m_delayLabel->setText(QString("Delay: %1f").arg(delay));
+        m_delayLabel->setText(tr("Delay: %1f").arg(delay));
     }
 }
 
@@ -2294,12 +2294,12 @@ void KailleraP2PDialog::updateNetcodeModeStatus()
 
     if (isRollbackMode())
     {
-        m_netcodeModeLabel->setText("Rollback");
+        m_netcodeModeLabel->setText(tr("Rollback"));
         m_netcodeModeLabel->setStyleSheet(QString());
     }
     else
     {
-        m_netcodeModeLabel->setText("Delay-only");
+        m_netcodeModeLabel->setText(tr("Delay-only"));
         m_netcodeModeLabel->setStyleSheet("color: #c03a3a; font-weight: 700;");
     }
 }
@@ -2393,7 +2393,7 @@ void KailleraP2PDialog::updatePeerConnectionUI()
     }
     if (m_hostPlayerNameLabel != nullptr)
     {
-        m_hostPlayerNameLabel->setText(hostName + " (Host)");
+        m_hostPlayerNameLabel->setText(tr("%1 (Host)").arg(hostName));
     }
     updateReadyBadge(m_hostReadyLabel, m_isHost ? m_ready : m_peerReady);
     if (m_hostConnectCodeLabel != nullptr)
@@ -2405,11 +2405,11 @@ void KailleraP2PDialog::updatePeerConnectionUI()
         }
         else if (m_isHost && m_travHostIpPending)
         {
-            hostCodeText = "checking IP";
+            hostCodeText = tr("checking IP");
         }
         else if (m_isHost)
         {
-            hostCodeText = "waiting";
+            hostCodeText = tr("waiting");
         }
         m_hostConnectCodeLabel->setText(hostCodeText);
     }
@@ -2422,23 +2422,23 @@ void KailleraP2PDialog::updatePeerConnectionUI()
         m_playersEmptyLabel->setVisible(!m_peerConnected);
         if (!m_isHost && m_hostLeft)
         {
-            m_playersEmptyLabel->setText("Host left");
+            m_playersEmptyLabel->setText(tr("Host left"));
             m_playersEmptyLabel->setStyleSheet("color: #c03a3a; font-weight: 700;");
         }
         else if (!m_peerName.trimmed().isEmpty())
         {
-            m_playersEmptyLabel->setText("Opponent left");
+            m_playersEmptyLabel->setText(tr("Opponent left"));
             m_playersEmptyLabel->setStyleSheet("color: #c03a3a; font-weight: 700;");
         }
         else
         {
-            m_playersEmptyLabel->setText(m_isHost ? "Waiting for opponent" : "Connecting to host");
+            m_playersEmptyLabel->setText(m_isHost ? tr("Waiting for opponent") : tr("Connecting to host"));
             m_playersEmptyLabel->setStyleSheet("color: #a66a00; font-weight: 700;");
         }
     }
     if (m_playerNameLabel != nullptr)
     {
-        m_playerNameLabel->setText(m_isHost ? playerName : playerName + " (You)");
+        m_playerNameLabel->setText(m_isHost ? playerName : tr("%1 (You)").arg(playerName));
     }
     updateReadyBadge(m_playerReadyLabel, m_isHost ? m_peerReady : m_ready);
     if (m_btnKickPeer != nullptr)
@@ -2571,10 +2571,10 @@ void KailleraP2PDialog::applyGameLayerUI()
         {
             m_frameDelayCombo->setMinimumWidth(126);
             m_frameDelayCombo->setMaximumWidth(150);
-            m_frameDelayCombo->addItem("Default", kRollbackDelayModeDefault);
-            m_frameDelayCombo->addItem("Lower delay", kRollbackDelayModeLower);
-            m_frameDelayCombo->addItem("Higher delay", kRollbackDelayModeHigher);
-            m_frameDelayCombo->addItem("Custom", kRollbackDelayModeCustom);
+            m_frameDelayCombo->addItem(tr("Default"), kRollbackDelayModeDefault);
+            m_frameDelayCombo->addItem(tr("Lower delay"), kRollbackDelayModeLower);
+            m_frameDelayCombo->addItem(tr("Higher delay"), kRollbackDelayModeHigher);
+            m_frameDelayCombo->addItem(tr("Custom"), kRollbackDelayModeCustom);
             const int modeIndex = m_frameDelayCombo->findData(m_rollbackDelayMode);
             m_frameDelayCombo->setCurrentIndex(modeIndex >= 0 ? modeIndex : 0);
         }
@@ -2582,16 +2582,16 @@ void KailleraP2PDialog::applyGameLayerUI()
         {
             m_frameDelayCombo->setMinimumWidth(175);
             m_frameDelayCombo->setMaximumWidth(220);
-            m_frameDelayCombo->addItem("Auto");
-            m_frameDelayCombo->addItem("1 frame (0-33ms)");
-            m_frameDelayCombo->addItem("2 frames (34-67ms)");
-            m_frameDelayCombo->addItem("3 frames (68-99ms)");
-            m_frameDelayCombo->addItem("4 frames (100-133ms)");
-            m_frameDelayCombo->addItem("5 frames (134-167ms)");
-            m_frameDelayCombo->addItem("6 frames (168-199ms)");
-            m_frameDelayCombo->addItem("7 frames (200-233ms)");
-            m_frameDelayCombo->addItem("8 frames (234-267ms)");
-            m_frameDelayCombo->addItem("9 frames (268+ms)");
+            m_frameDelayCombo->addItem(tr("Auto"));
+            m_frameDelayCombo->addItem(tr("1 frame (0-33ms)"));
+            m_frameDelayCombo->addItem(tr("2 frames (34-67ms)"));
+            m_frameDelayCombo->addItem(tr("3 frames (68-99ms)"));
+            m_frameDelayCombo->addItem(tr("4 frames (100-133ms)"));
+            m_frameDelayCombo->addItem(tr("5 frames (134-167ms)"));
+            m_frameDelayCombo->addItem(tr("6 frames (168-199ms)"));
+            m_frameDelayCombo->addItem(tr("7 frames (200-233ms)"));
+            m_frameDelayCombo->addItem(tr("8 frames (234-267ms)"));
+            m_frameDelayCombo->addItem(tr("9 frames (268+ms)"));
 
             if (m_standardFrameDelay < 0 || m_standardFrameDelay > 9)
             {
@@ -2605,11 +2605,11 @@ void KailleraP2PDialog::applyGameLayerUI()
 
     if (m_frameDelayLabel != nullptr)
     {
-        m_frameDelayLabel->setText(rollback ? "Input Delay:" : "Frame Delay:");
+        m_frameDelayLabel->setText(rollback ? tr("Input Delay:") : tr("Frame Delay:"));
     }
     if (!rollback && m_delayLabel != nullptr)
     {
-        m_delayLabel->setText("Delay: --");
+        m_delayLabel->setText(tr("Delay: --"));
     }
     if (m_frameDelayHelpLabel != nullptr)
     {
@@ -3447,9 +3447,9 @@ void KailleraP2PDialog::onHostedGame(QString game)
     }
     updatePeerConnectionUI();
 
-    const QString message = "The ROM '" + m_gameName + "' is not in your list.";
+    const QString message = tr("The ROM '%1' is not in your list.").arg(m_gameName);
     appendChatError(message);
-    QMessageBox::warning(this, "P2P Join", message);
+    QMessageBox::warning(this, tr("P2P Join"), message);
     reject();
 }
 
@@ -3913,7 +3913,7 @@ void KailleraP2PDialog::onCopyConnectCode()
     if (m_btnCopyConnectCode != nullptr)
     {
         m_btnCopyConnectCode->setIcon(themedP2PIcon("check-line"));
-        m_btnCopyConnectCode->setToolTip("Copied");
+        m_btnCopyConnectCode->setToolTip(tr("Copied"));
     }
 
     if (m_copyFeedbackTimer != nullptr)

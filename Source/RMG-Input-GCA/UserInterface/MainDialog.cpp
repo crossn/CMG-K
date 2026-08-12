@@ -295,17 +295,17 @@ void MainDialog::on_buttonBox_clicked(QAbstractButton* button)
 
 void MainDialog::on_deadZoneSlider_valueChanged(int value)
 {
-    this->deadZoneLabel->setText("Stick Deadzone: " + QString::number(value) + "%");
+    this->deadZoneLabel->setText(tr("Stick Deadzone: %1%").arg(value));
 }
 
 void MainDialog::on_sensitivitySlider_valueChanged(int value)
 {
-    this->sensitivityLabel->setText("Stick Sensitivity: " + QString::number(value) + "%");
+    this->sensitivityLabel->setText(tr("Stick Sensitivity: %1%").arg(value));
 }
 
 void MainDialog::on_triggerTresholdSlider_valueChanged(int value)
 {
-    this->triggerTresholdLabel->setText("Trigger threshold: " + QString::number(value) + "%");
+    this->triggerTresholdLabel->setText(tr("Trigger threshold: %1%").arg(value));
 }
 
 void MainDialog::onAxisReadoutTimer()

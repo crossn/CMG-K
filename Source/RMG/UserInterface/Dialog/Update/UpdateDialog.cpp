@@ -32,12 +32,12 @@ UpdateDialog::UpdateDialog(QWidget *parent, QJsonObject jsonObject, bool forced)
 
     this->jsonObject = jsonObject;
 
-    this->label->setText(jsonObject.value("tag_name").toString() + " Available");
+    this->label->setText(tr("%1 Available").arg(jsonObject.value("tag_name").toString()));
     this->textEdit->setText(jsonObject.value("body").toString());
 
     // change ok button text to 'Update'
     QPushButton* button = this->buttonBox->button(QDialogButtonBox::Ok);
-    button->setText("Update");
+    button->setText(tr("Update"));
 
     // don't show the 'Don't check for updates again' checkbox,
     // when the user requested we check for updates

@@ -56,9 +56,17 @@ QString application_translation_directory()
 
 namespace Translation
 {
+QString ResolvedLanguage(void)
+{
+    return resolve_language();
+}
+
 void Install(QApplication& application, QTranslator& qtTranslator, QTranslator& applicationTranslator)
 {
-    if (resolve_language() != "ja_JP")
+    const QString resolvedLanguage = ResolvedLanguage();
+    application.setProperty("rmg.resolvedLanguage", resolvedLanguage);
+
+    if (resolvedLanguage != "ja_JP")
     {
         return;
     }

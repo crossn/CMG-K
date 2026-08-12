@@ -19,6 +19,7 @@
 #include <QRegularExpression>
 #include <QScreen>
 #include <QShowEvent>
+#include <QTabBar>
 #include <QVBoxLayout>
 #include <QWindow>
 #include <QHBoxLayout>
@@ -246,22 +247,22 @@ SettingsDialog::SettingsDialog(QWidget *parent, QString file) : QDialog(parent)
 
     QWidget* rollbackTab = new QWidget(this->tabWidget);
     QVBoxLayout* rollbackLayout = new QVBoxLayout(rollbackTab);
-    QGroupBox* rollbackLoggingGroupBox = new QGroupBox("Logging", rollbackTab);
+    QGroupBox* rollbackLoggingGroupBox = new QGroupBox(tr("Logging"), rollbackTab);
     QVBoxLayout* rollbackLoggingLayout = new QVBoxLayout(rollbackLoggingGroupBox);
-    this->rollbackEnableLocalTestingCheckBox = new QCheckBox("Use rollback engine for local play", rollbackTab);
-    this->rollbackVerboseStatsCheckBox = new QCheckBox("Enable verbose rollback stats logging", rollbackLoggingGroupBox);
-    this->rollbackStallDiagnosticsCheckBox = new QCheckBox("Log netplay stalls only (lightweight freeze diagnostics)", rollbackLoggingGroupBox);
+    this->rollbackEnableLocalTestingCheckBox = new QCheckBox(tr("Use rollback engine for local play"), rollbackTab);
+    this->rollbackVerboseStatsCheckBox = new QCheckBox(tr("Enable verbose rollback stats logging"), rollbackLoggingGroupBox);
+    this->rollbackStallDiagnosticsCheckBox = new QCheckBox(tr("Log netplay stalls only (lightweight freeze diagnostics)"), rollbackLoggingGroupBox);
     this->rollbackStallDiagnosticsCheckBox->setToolTip(
-        "Logs only when a rollback session stalls (a multi-second freeze), with per-peer\n"
-        "network stats so you can see which player's input stopped arriving. Writes nothing\n"
-        "during smooth play, so the log stays tiny — unlike verbose stats, which writes every\n"
-        "frame. Safe to leave on; one player logging is enough to identify the culprit.");
-    this->rollbackPacingTraceCheckBox = new QCheckBox("Enable pacing trace logging", rollbackLoggingGroupBox);
+        tr("Logs only when a rollback session stalls (a multi-second freeze), with per-peer\n"
+           "network stats so you can see which player's input stopped arriving. Writes nothing\n"
+           "during smooth play, so the log stays tiny — unlike verbose stats, which writes every\n"
+           "frame. Safe to leave on; one player logging is enough to identify the culprit."));
+    this->rollbackPacingTraceCheckBox = new QCheckBox(tr("Enable pacing trace logging"), rollbackLoggingGroupBox);
     this->rollbackPacingTraceCheckBox->setToolTip(
-        "Writes detailed frontend and core pacing CSV logs when a rollback session ends.\n"
-        "Enable this only while diagnosing frame pacing; it is disabled by default.");
-    this->rollbackVerbosePifInputLoggingCheckBox = new QCheckBox("Enable verbose PIF input logging", rollbackLoggingGroupBox);
-    this->rollbackVerboseGlideInputLoggingCheckBox = new QCheckBox("Enable verbose Glide input logging", rollbackLoggingGroupBox);
+        tr("Writes detailed frontend and core pacing CSV logs when a rollback session ends.\n"
+           "Enable this only while diagnosing frame pacing; it is disabled by default."));
+    this->rollbackVerbosePifInputLoggingCheckBox = new QCheckBox(tr("Enable verbose PIF input logging"), rollbackLoggingGroupBox);
+    this->rollbackVerboseGlideInputLoggingCheckBox = new QCheckBox(tr("Enable verbose Glide input logging"), rollbackLoggingGroupBox);
     rollbackLayout->addWidget(this->rollbackEnableLocalTestingCheckBox);
     rollbackLoggingLayout->addWidget(this->rollbackVerboseStatsCheckBox);
     rollbackLoggingLayout->addWidget(this->rollbackStallDiagnosticsCheckBox);
@@ -270,7 +271,7 @@ SettingsDialog::SettingsDialog(QWidget *parent, QString file) : QDialog(parent)
     rollbackLoggingLayout->addWidget(this->rollbackVerboseGlideInputLoggingCheckBox);
     rollbackLayout->addWidget(rollbackLoggingGroupBox);
     rollbackLayout->addStretch();
-    this->tabWidget->addTab(rollbackTab, "Rollback");
+    this->tabWidget->addTab(rollbackTab, tr("Rollback"));
 
     this->setIconsForEmulationInfoText();
 
@@ -364,8 +365,14 @@ SettingsDialog::SettingsDialog(QWidget *parent, QString file) : QDialog(parent)
 #endif
 
     this->tabWidget->setMinimumWidth(0);
-    this->tabWidget->setMinimumHeight(this->tabWidget->sizeHint().height());
-    this->naturalSizeHint = this->sizeHint();
+    this->settingsContentLayout->activate();
+    const int tabBarWidth = this->tabWidget->tabBar()->sizeHint().width();
+    const int preferredWidth = qMax(600, tabBarWidth + 48);
+    // QTabWidget uses the largest nested Hotkeys page for its size hint. Keep
+    // the normal dialog tall enough for that page without expanding to its
+    // unconstrained height; the outer scroll area still handles small screens.
+    const int preferredHeight = qBound(750, this->sizeHint().height(), 760);
+    this->naturalSizeHint = QSize(preferredWidth, preferredHeight);
 }
 
 SettingsDialog::~SettingsDialog(void)
@@ -400,6 +407,12 @@ void SettingsDialog::showEvent(QShowEvent* event)
     const QSize maximumClient = (availableGeometry.size() - frameMargins).expandedTo(QSize(1, 1));
     const QSize naturalSize = this->naturalSizeHint.isValid() ? this->naturalSizeHint : this->sizeHint();
     const QSize boundedSize = naturalSize.boundedTo(maximumClient);
+
+    // On a normal display, do not let users shrink the dialog into a state
+    // where every page needs an outer scrollbar.  On small or high-DPI
+    // displays the minimum is clamped to the available client area, so the
+    // existing scroll-area fallback remains available.
+    this->setMinimumSize(boundedSize);
 
     if (this->size() != boundedSize)
     {
@@ -824,7 +837,7 @@ void SettingsDialog::loadGamePluginSettings(void)
     for (QComboBox *comboBox : comboBoxArray)
     {
         comboBox->clear();
-        comboBox->addItem("**Use Core Plugin Settings**");
+        comboBox->addItem(tr("**Use Core Plugin Settings**"));
     }
 
     for (const auto &p : this->pluginList)

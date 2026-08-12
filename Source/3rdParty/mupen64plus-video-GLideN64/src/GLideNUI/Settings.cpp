@@ -12,6 +12,8 @@
 
 #include "Settings.h"
 
+#include <QCoreApplication>
+
 static const char * strIniFileName = "GLideN64.ini";
 static const char * strDefaultIniFileName = "GLideN64.default.ini";
 static const char * strCustomSettingsFileName = "GLideN64.custom.ini";
@@ -595,7 +597,20 @@ void saveCustomRomSettings(const QString & _strIniFolder, const QString & _strSh
 
 QString getTranslationFile()
 {
-	return config.translationFile.c_str();
+    if (QCoreApplication* application = QCoreApplication::instance())
+    {
+        const QString resolvedLanguage = application->property("rmg.resolvedLanguage").toString();
+        if (resolvedLanguage == "ja_JP")
+        {
+            return "gliden64_ja.qm";
+        }
+        if (resolvedLanguage == "en")
+        {
+            return QString();
+        }
+    }
+
+    return config.translationFile.c_str();
 }
 
 QStringList getProfiles(const QString & _strIniFolder)

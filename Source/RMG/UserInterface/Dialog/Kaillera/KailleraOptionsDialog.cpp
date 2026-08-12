@@ -23,7 +23,7 @@ KailleraOptionsDialog::KailleraOptionsDialog(QWidget* parent)
 {
     setObjectName("LobbyOptionsDialog");
     setWindowIcon(QIcon(":Resource/Kaillera.svg"));
-    setWindowTitle("Lobby Options");
+    setWindowTitle(tr("Lobby Options"));
     setMinimumWidth(420);
     setStyleSheet(
         "QDialog#LobbyOptionsDialog {"
@@ -68,21 +68,21 @@ KailleraOptionsDialog::KailleraOptionsDialog(QWidget* parent)
     m_maxPlayers->setObjectName("LobbyOptionsSpinPlayers");
     m_maxPlayers->setButtonSymbols(QAbstractSpinBox::UpDownArrows);
     m_maxPlayers->setRange(1, 16);
-    form->addRow("Max players:", m_maxPlayers);
+    form->addRow(tr("Max players:"), m_maxPlayers);
 
     m_maxPing = new QSpinBox(this);
     m_maxPing->setObjectName("LobbyOptionsSpinPing");
     m_maxPing->setButtonSymbols(QAbstractSpinBox::PlusMinus);
     m_maxPing->setRange(1, 9999);
-    form->addRow("Max ping:", m_maxPing);
+    form->addRow(tr("Max ping:"), m_maxPing);
 
     m_joinMsgHost = new QLineEdit(this);
-    m_joinMsgHost->setPlaceholderText("Auto-chat when players join your game");
-    form->addRow("Host join message:", m_joinMsgHost);
+    m_joinMsgHost->setPlaceholderText(tr("Auto-chat when players join your game"));
+    form->addRow(tr("Host join message:"), m_joinMsgHost);
 
     m_joinMsgJoin = new QLineEdit(this);
-    m_joinMsgJoin->setPlaceholderText("Auto-chat when you join someone else's game");
-    form->addRow("Joiner message:", m_joinMsgJoin);
+    m_joinMsgJoin->setPlaceholderText(tr("Auto-chat when you join someone else's game"));
+    form->addRow(tr("Joiner message:"), m_joinMsgJoin);
 
     layout->addLayout(form);
 

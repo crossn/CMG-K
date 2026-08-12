@@ -123,7 +123,7 @@ using namespace UserInterface;
 
 RaphnetInputDialog::RaphnetInputDialog(QWidget* parent) : QDialog(parent)
 {
-    setWindowTitle("Raphnet Adapter - Input Test");
+    setWindowTitle(tr("Raphnet Adapter - Input Test"));
     setMinimumSize(460, 520);
 
     setupUi();
@@ -133,12 +133,12 @@ RaphnetInputDialog::RaphnetInputDialog(QWidget* parent) : QDialog(parent)
 
     if (openAdapter())
     {
-        m_StatusLabel->setText("Adapter connected. Press buttons on the N64 controller.");
+        m_StatusLabel->setText(tr("Adapter connected. Press buttons on the N64 controller."));
         m_PollTimer->start(16); // ~60Hz
     }
     else
     {
-        m_StatusLabel->setText("No raphnet adapter found. Connect one and reopen this dialog.");
+        m_StatusLabel->setText(tr("No raphnet adapter found. Connect one and reopen this dialog."));
     }
 }
 
@@ -155,11 +155,11 @@ void RaphnetInputDialog::setupUi()
 {
     QVBoxLayout* mainLayout = new QVBoxLayout(this);
 
-    m_StatusLabel = new QLabel("Searching for adapter...", this);
+    m_StatusLabel = new QLabel(tr("Searching for adapter..."), this);
     mainLayout->addWidget(m_StatusLabel);
 
     QHBoxLayout* portLayout = new QHBoxLayout();
-    portLayout->addWidget(new QLabel("Port:", this));
+    portLayout->addWidget(new QLabel(tr("Port:"), this));
     m_PortComboBox = new QComboBox(this);
     m_PortComboBox->addItem("1", 0);
     m_PortComboBox->setEnabled(false);
@@ -168,12 +168,12 @@ void RaphnetInputDialog::setupUi()
     mainLayout->addLayout(portLayout);
 	
     // Plugin mode setting
-    QGroupBox* modeGroup = new QGroupBox("Plugin Mode", this);
+    QGroupBox* modeGroup = new QGroupBox(tr("Plugin Mode"), this);
     QVBoxLayout* modeLayout = new QVBoxLayout(modeGroup);
 
     m_InputModeComboBox = new QComboBox(modeGroup);
-    m_InputModeComboBox->addItem("Normal", kRaphnetInputModeRawPif);
-    m_InputModeComboBox->addItem("Cached / Nopak", kRaphnetInputModeCachedGetKeys);
+    m_InputModeComboBox->addItem(tr("Normal"), kRaphnetInputModeRawPif);
+    m_InputModeComboBox->addItem(tr("Cached / Nopak"), kRaphnetInputModeCachedGetKeys);
 
     int inputMode = CoreSettingsGetIntValue(SettingsID::RaphnetInput_InputMode);
     int inputModeIndex = m_InputModeComboBox->findData(inputMode);
@@ -183,10 +183,10 @@ void RaphnetInputDialog::setupUi()
     }
     m_InputModeComboBox->setCurrentIndex(inputModeIndex);
 
-    QLabel* modeHelpLabel = new QLabel(
-        "Normal keeps the original raphnetraw behavior with pak support.\n"
-        "Cached / Nopak allows for higher USB latencies to not lag the game.\n"
-        "Changes apply the next time emulation is started.", modeGroup);
+    const QString modeHelpText = tr("Normal keeps the original raphnetraw behavior with pak support.") + "\n" +
+        tr("Cached / Nopak allows for higher USB latencies to not lag the game.") + "\n" +
+        tr("Changes apply the next time emulation is started.");
+    QLabel* modeHelpLabel = new QLabel(modeHelpText, modeGroup);
     modeHelpLabel->setWordWrap(true);
 
     modeLayout->addWidget(m_InputModeComboBox);
@@ -197,7 +197,7 @@ void RaphnetInputDialog::setupUi()
         this, &RaphnetInputDialog::onInputModeChanged);
 
     // Buttons group
-    QGroupBox* buttonsGroup = new QGroupBox("Buttons", this);
+    QGroupBox* buttonsGroup = new QGroupBox(tr("Buttons"), this);
     QGridLayout* buttonsGrid = new QGridLayout(buttonsGroup);
 
     // Define all N64 buttons with their masks
@@ -251,10 +251,10 @@ void RaphnetInputDialog::setupUi()
     mainLayout->addWidget(buttonsGroup);
 
     // Axes group
-    QGroupBox* axesGroup = new QGroupBox("Analog Stick", this);
+    QGroupBox* axesGroup = new QGroupBox(tr("Analog Stick"), this);
     QGridLayout* axesGrid = new QGridLayout(axesGroup);
 
-    axesGrid->addWidget(new QLabel("X Axis:", axesGroup), 0, 0);
+    axesGrid->addWidget(new QLabel(tr("X Axis:"), axesGroup), 0, 0);
     m_XAxisValue = new QLabel("0", axesGroup);
     m_XAxisValue->setFixedWidth(40);
     m_XAxisValue->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
@@ -265,7 +265,7 @@ void RaphnetInputDialog::setupUi()
     m_XAxisBar->setTextVisible(false);
     axesGrid->addWidget(m_XAxisBar, 0, 2);
 
-    axesGrid->addWidget(new QLabel("Y Axis:", axesGroup), 1, 0);
+    axesGrid->addWidget(new QLabel(tr("Y Axis:"), axesGroup), 1, 0);
     m_YAxisValue = new QLabel("0", axesGroup);
     m_YAxisValue->setFixedWidth(40);
     m_YAxisValue->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
@@ -279,7 +279,7 @@ void RaphnetInputDialog::setupUi()
     mainLayout->addWidget(axesGroup);
 
     // USB timing/debug stats
-    QGroupBox* statsGroup = new QGroupBox("USB Timing", this);
+    QGroupBox* statsGroup = new QGroupBox(tr("USB Timing"), this);
     QGridLayout* statsGrid = new QGridLayout(statsGroup);
 
     m_StatsPollsLabel = new QLabel(statsGroup);
@@ -288,18 +288,18 @@ void RaphnetInputDialog::setupUi()
     m_StatsErrorsLabel = new QLabel(statsGroup);
     m_StatsResponseLabel = new QLabel(statsGroup);
 
-    statsGrid->addWidget(new QLabel("Polls:", statsGroup), 0, 0);
+    statsGrid->addWidget(new QLabel(tr("Polls:"), statsGroup), 0, 0);
     statsGrid->addWidget(m_StatsPollsLabel, 0, 1);
-    statsGrid->addWidget(new QLabel("Latency:", statsGroup), 1, 0);
+    statsGrid->addWidget(new QLabel(tr("Latency:"), statsGroup), 1, 0);
     statsGrid->addWidget(m_StatsLatencyLabel, 1, 1);
-    statsGrid->addWidget(new QLabel("Slow:", statsGroup), 2, 0);
+    statsGrid->addWidget(new QLabel(tr("Slow:"), statsGroup), 2, 0);
     statsGrid->addWidget(m_StatsSlowPollsLabel, 2, 1);
-    statsGrid->addWidget(new QLabel("Errors:", statsGroup), 3, 0);
+    statsGrid->addWidget(new QLabel(tr("Errors:"), statsGroup), 3, 0);
     statsGrid->addWidget(m_StatsErrorsLabel, 3, 1);
-    statsGrid->addWidget(new QLabel("Last response:", statsGroup), 4, 0);
+    statsGrid->addWidget(new QLabel(tr("Last response:"), statsGroup), 4, 0);
     statsGrid->addWidget(m_StatsResponseLabel, 4, 1);
 
-    QPushButton* resetStatsButton = new QPushButton("Reset Stats", statsGroup);
+    QPushButton* resetStatsButton = new QPushButton(tr("Reset Stats"), statsGroup);
     connect(resetStatsButton, &QPushButton::clicked, this, &RaphnetInputDialog::onResetStatsClicked);
     statsGrid->addWidget(resetStatsButton, 5, 1, Qt::AlignRight);
 
@@ -513,7 +513,7 @@ void RaphnetInputDialog::onPollTimer()
     if (pollController(buttons, xAxis, yAxis))
     {
         m_FailedPollCount = 0;
-        m_StatusLabel->setText("Adapter connected. Press buttons on the N64 controller.");
+        m_StatusLabel->setText(tr("Adapter connected. Press buttons on the N64 controller."));
         updateButtonIndicators(buttons);
         updateAxisDisplay(xAxis, yAxis);
     }
@@ -522,7 +522,7 @@ void RaphnetInputDialog::onPollTimer()
         m_FailedPollCount++;
         if (m_FailedPollCount >= 30)
         {
-            m_StatusLabel->setText("Adapter connected, but the selected port did not answer.");
+            m_StatusLabel->setText(tr("Adapter connected, but the selected port did not answer."));
         }
     }
 }
