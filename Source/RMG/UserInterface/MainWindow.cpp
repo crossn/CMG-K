@@ -3184,16 +3184,19 @@ void MainWindow::checkForUpdates(bool silent, bool force)
         return;
     }
 
-    // only check for updates on stable versions unless forced
+    // Stable builds follow stable releases. Pre-release builds also follow
+    // beta/RC releases so a beta can receive a newer beta or stable release.
     QString currentVersion = QString::fromStdString(CoreGetVersion());
-    if (!force)
-    {
-        static const QRegularExpression stableVersionRegex("^v?\\d+(?:\\.\\d+){0,2}$");
-        if (!stableVersionRegex.match(currentVersion).hasMatch())
-        {
-            return;
-        }
-    }
+    static const QRegularExpression versionRegex(
+        "^v?(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)"
+        "(?:-((?:0|[1-9]\\d*|[A-Za-z-][0-9A-Za-z-]*)"
+        "(?:\\.(?:0|[1-9]\\d*|[A-Za-z-][0-9A-Za-z-]*))*))?$");
+    const QRegularExpressionMatch versionMatch = versionRegex.match(currentVersion);
+    const bool currentVersionIsRelease = versionMatch.hasMatch();
+    const bool currentVersionIsPrerelease = currentVersionIsRelease &&
+        !versionMatch.captured(4).isEmpty();
+    if (!force && !currentVersionIsRelease)
+        return;
 
     QString dateTimeFormat = "dd-MM-yyyy_hh:mm";
     QString lastUpdateCheckDateTimeString = QString::fromStdString(CoreSettingsGetStringValue(SettingsID::GUI_LastUpdateCheck));
@@ -3218,7 +3221,10 @@ void MainWindow::checkForUpdates(bool silent, bool force)
     QNetworkAccessManager* networkAccessManager = new QNetworkAccessManager(this);
     connect(networkAccessManager, &QNetworkAccessManager::finished, this, &MainWindow::on_networkAccessManager_Finished);
     networkAccessManager->setTransferTimeout(15000);
-    networkAccessManager->get(QNetworkRequest(QUrl("https://api.github.com/repos/crossn/CMG-K/releases/latest")));
+    const QString endpoint = currentVersionIsPrerelease
+        ? "https://api.github.com/repos/crossn/CMG-K/releases?per_page=100"
+        : "https://api.github.com/repos/crossn/CMG-K/releases/latest";
+    networkAccessManager->get(QNetworkRequest(QUrl(endpoint)));
 }
 #endif // UPDATER
 
@@ -3704,47 +3710,93 @@ bool MainWindow::shouldBlockEmulationPauseForNetplay(void) const
 
 namespace
 {
-    // Parse a semver-ish version tag ("0.9.3", "v0.9.3") into numeric
-    // parts. Returns an empty vector for inputs that aren't pure
-    // dot-separated integers (e.g. "vdev-100", "0.9.3-rc1"); callers
-    // treat empty as "newer than any released version" so dev builds
-    // never get prompted to downgrade.
-    QVector<int> parseSemverParts(const QString& in)
+    struct ReleaseVersion
     {
-        QString s = in.trimmed();
-        if (s.startsWith('v') || s.startsWith('V')) s.remove(0, 1);
-        if (s.isEmpty()) return {};
+        QVector<int> core;
+        QStringList prerelease;
+        bool valid = false;
+    };
 
-        const QStringList parts = s.split('.');
-        QVector<int> out;
-        out.reserve(parts.size());
-        for (const QString& p : parts)
-        {
-            bool ok = false;
-            const int v = p.toInt(&ok);
-            if (!ok) return {};
-            out.append(v);
-        }
-        return out;
+    ReleaseVersion parseSemver(const QString& input)
+    {
+        static const QRegularExpression regex(
+            "^v?(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)"
+            "(?:-((?:0|[1-9]\\d*|[A-Za-z-][0-9A-Za-z-]*)"
+            "(?:\\.(?:0|[1-9]\\d*|[A-Za-z-][0-9A-Za-z-]*))*))?$");
+        const QRegularExpressionMatch match = regex.match(input.trimmed());
+        if (!match.hasMatch())
+            return {};
+
+        ReleaseVersion version;
+        version.core = { match.captured(1).toInt(), match.captured(2).toInt(), match.captured(3).toInt() };
+        if (!match.captured(4).isEmpty())
+            version.prerelease = match.captured(4).split('.');
+        version.valid = true;
+        return version;
     }
 
-    // Returns -1 if a < b, 0 if a == b, +1 if a > b. Treat an empty
-    // parts vector as "+inf" so unparseable dev builds compare as
-    // newer than anything tagged.
-    int compareSemver(const QVector<int>& a, const QVector<int>& b)
+    int compareSemver(const ReleaseVersion& a, const ReleaseVersion& b)
     {
-        if (a.isEmpty() && b.isEmpty()) return 0;
-        if (a.isEmpty()) return 1;
-        if (b.isEmpty()) return -1;
-        const int n = std::max(a.size(), b.size());
+        if (!a.valid && !b.valid) return 0;
+        if (!a.valid) return 1; // development builds never downgrade
+        if (!b.valid) return -1;
+        const int n = std::max(a.core.size(), b.core.size());
         for (int i = 0; i < n; ++i)
         {
-            const int av = (i < a.size()) ? a[i] : 0;
-            const int bv = (i < b.size()) ? b[i] : 0;
+            const int av = (i < a.core.size()) ? a.core[i] : 0;
+            const int bv = (i < b.core.size()) ? b.core[i] : 0;
             if (av < bv) return -1;
             if (av > bv) return 1;
         }
+
+        if (a.prerelease.isEmpty() && b.prerelease.isEmpty()) return 0;
+        if (a.prerelease.isEmpty()) return 1;
+        if (b.prerelease.isEmpty()) return -1;
+        const int count = std::min(a.prerelease.size(), b.prerelease.size());
+        for (int i = 0; i < count; ++i)
+        {
+            const QString& av = a.prerelease[i];
+            const QString& bv = b.prerelease[i];
+            const bool aNumeric = QRegularExpression("^\\d+$").match(av).hasMatch();
+            const bool bNumeric = QRegularExpression("^\\d+$").match(bv).hasMatch();
+            if (aNumeric && bNumeric)
+            {
+                const int ai = av.toInt();
+                const int bi = bv.toInt();
+                if (ai < bi) return -1;
+                if (ai > bi) return 1;
+            }
+            else if (aNumeric != bNumeric)
+                return aNumeric ? -1 : 1;
+            else if (av < bv)
+                return -1;
+            else if (av > bv)
+                return 1;
+        }
+        if (a.prerelease.size() < b.prerelease.size()) return -1;
+        if (a.prerelease.size() > b.prerelease.size()) return 1;
         return 0;
+    }
+
+    bool hasUpdaterAsset(const QJsonObject& release)
+    {
+        for (const QJsonValue& value : release.value("assets").toArray())
+        {
+            const QString name = value.toObject().value("name").toString().toLower();
+            if (!name.startsWith("cmg-k-")) continue;
+#ifdef _WIN32
+            const bool architecture = (QSysInfo::buildCpuArchitecture() == "x86_64" && name.contains("windows64")) ||
+                                      name.contains("windows-" + QSysInfo::buildCpuArchitecture());
+            const bool installed = QFile::exists("unins000.exe") && QFile::exists("unins000.dat");
+            if (architecture && (installed ? (name.contains("setup") && name.endsWith(".exe"))
+                                         : (name.contains("portable") && name.endsWith(".zip")))) return true;
+#else
+            const bool architecture = (QSysInfo::buildCpuArchitecture() == "x86_64" && name.contains("linux64")) ||
+                                      name.contains("linux-" + QSysInfo::buildCpuArchitecture());
+            if (architecture && name.contains("portable") && name.endsWith(".appimage")) return true;
+#endif
+        }
+        return false;
     }
 }
 
@@ -3760,11 +3812,41 @@ void MainWindow::on_networkAccessManager_Finished(QNetworkReply* reply)
         return;
     }
 
-    QJsonDocument jsonDocument = QJsonDocument::fromJson(reply->readAll());
-    QJsonObject jsonObject = jsonDocument.object();
-
     QString currentVersion = QString::fromStdString(CoreGetVersion());
-    QString latestVersion = jsonObject.value("tag_name").toString();
+    const ReleaseVersion current = parseSemver(currentVersion);
+    const bool currentPrerelease = current.valid && !current.prerelease.isEmpty();
+    const QJsonDocument jsonDocument = QJsonDocument::fromJson(reply->readAll());
+    QJsonObject jsonObject;
+    ReleaseVersion latest;
+
+    if (jsonDocument.isObject())
+    {
+        jsonObject = jsonDocument.object();
+        latest = parseSemver(jsonObject.value("tag_name").toString());
+        if (jsonObject.value("draft").toBool() ||
+            (!currentPrerelease && jsonObject.value("prerelease").toBool()) ||
+            !hasUpdaterAsset(jsonObject))
+        {
+            jsonObject = {};
+            latest = {};
+        }
+    }
+    else if (jsonDocument.isArray() && currentPrerelease)
+    {
+        for (const QJsonValue& value : jsonDocument.array())
+        {
+            const QJsonObject candidate = value.toObject();
+            if (candidate.value("draft").toBool() || !hasUpdaterAsset(candidate)) continue;
+            const ReleaseVersion version = parseSemver(candidate.value("tag_name").toString());
+            if (!version.valid)
+                continue;
+            if (!latest.valid || compareSemver(latest, version) < 0)
+            {
+                latest = version;
+                jsonObject = candidate;
+            }
+        }
+    }
 
     reply->deleteLater();
 
@@ -3774,9 +3856,7 @@ void MainWindow::on_networkAccessManager_Finished(QNetworkReply* reply)
     // stable (0.9.2). A naive string compare then prompts the user to
     // "update" to an older version. Compare semantically and only
     // prompt when latest is genuinely newer.
-    const QVector<int> currentParts = parseSemverParts(currentVersion);
-    const QVector<int> latestParts  = parseSemverParts(latestVersion);
-    if (compareSemver(currentParts, latestParts) >= 0)
+    if (!latest.valid || compareSemver(current, latest) >= 0)
     {
         if (!this->ui_SilentUpdateCheck)
         {
@@ -4569,7 +4649,7 @@ void MainWindow::openNetplayLauncher(int initialTab)
     }
 
     // Set Kaillera app info (app name and game list)
-    std::string appName = "RMG-K " + CoreGetKailleraAppVersion();
+    std::string appName = "CMG-K " + CoreGetKailleraAppVersion();
     // Build game list from ROM browser (null-terminated strings with double-null at end)
     // Must use std::string directly to preserve embedded null characters
     std::string gameList;
@@ -4983,7 +5063,7 @@ void MainWindow::on_Lobby_SessionRequested(QString gameName, QString romFile, QS
     // dir + app id first, since the lobby path never runs CoreInitKaillera.
     n02::setRecordsDirectory(CoreGetKailleraRecordsDirectory());
     {
-        const std::string recAppName = "RMG-K " + CoreGetKailleraAppVersion();
+        const std::string recAppName = "CMG-K " + CoreGetKailleraAppVersion();
         n02::recordingOpen(recAppName.c_str(), gameName.toStdString().c_str(),
                            localPlayer, int(remotePeers.size()) + 1);
     }
