@@ -3191,8 +3191,10 @@ void MainWindow::checkForUpdates(bool silent, bool force)
         "^v?(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)"
         "(?:-((?:0|[1-9]\\d*|[A-Za-z-][0-9A-Za-z-]*)"
         "(?:\\.(?:0|[1-9]\\d*|[A-Za-z-][0-9A-Za-z-]*))*))?$");
-    const bool currentVersionIsRelease = versionRegex.match(currentVersion).hasMatch();
-    const bool currentVersionIsPrerelease = currentVersion.contains('-');
+    const QRegularExpressionMatch versionMatch = versionRegex.match(currentVersion);
+    const bool currentVersionIsRelease = versionMatch.hasMatch();
+    const bool currentVersionIsPrerelease = currentVersionIsRelease &&
+        !versionMatch.captured(4).isEmpty();
     if (!force && !currentVersionIsRelease)
         return;
 
@@ -3836,7 +3838,9 @@ void MainWindow::on_networkAccessManager_Finished(QNetworkReply* reply)
             const QJsonObject candidate = value.toObject();
             if (candidate.value("draft").toBool() || !hasUpdaterAsset(candidate)) continue;
             const ReleaseVersion version = parseSemver(candidate.value("tag_name").toString());
-            if (!version.valid || (!latest.valid || compareSemver(latest, version) < 0))
+            if (!version.valid)
+                continue;
+            if (!latest.valid || compareSemver(latest, version) < 0)
             {
                 latest = version;
                 jsonObject = candidate;
