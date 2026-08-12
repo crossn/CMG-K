@@ -2274,7 +2274,7 @@ void RollbackLobbyDialog::onRoomCreated(quint64 roomId)
     if (m_createRoomDialog)
         m_createRoomDialog->accept();
     enterRoom(roomId,
-        QStringLiteral("<i>Room created — waiting for players</i>"));
+        QString("<i>%1</i>").arg(tr("Room created — waiting for players")));
 }
 
 void RollbackLobbyDialog::onRoomJoinOk(quint64 roomId)
@@ -2285,8 +2285,9 @@ void RollbackLobbyDialog::onRoomJoinOk(quint64 roomId)
         roomName = it.value().name;
     enterRoom(roomId,
         roomName.isEmpty()
-            ? QStringLiteral("<i>You joined the room</i>")
-            : QString("<i>You joined &quot;%1&quot;</i>").arg(roomName.toHtmlEscaped()));
+            ? QString("<i>%1</i>").arg(tr("You joined the room"))
+            : QString("<i>%1</i>").arg(
+                  tr("You joined \"%1\"").arg(roomName.toHtmlEscaped())));
 }
 
 void RollbackLobbyDialog::onRoomJoinFailed(const QString& reason)
@@ -2519,9 +2520,10 @@ void RollbackLobbyDialog::onRoomStateChanged(const QJsonObject& roomState)
 
     const QJsonArray players = roomState.value("players").toArray();
     QStringList metaParts;
-    metaParts << QString("<b>Seats:</b> %1/%2").arg(players.size()).arg(maxPlayers);
+    metaParts << QString("<b>%1:</b> %2/%3")
+                     .arg(tr("Seats")).arg(players.size()).arg(maxPlayers);
     if (!romRegion.isEmpty())
-        metaParts << QString("<b>Region:</b> %1").arg(romRegion);
+        metaParts << QString("<b>%1:</b> %2").arg(tr("Region"), romRegion);
     m_roomMetaLabel->setText(metaParts.join("  ·  "));
 
     // Sync the delay / prediction combos with the authoritative room state.

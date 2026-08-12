@@ -1736,6 +1736,9 @@ Pick a username other players will see — you can change it later.</source><tra
         <message><source>You're in a room</source><translation>ルームに参加中です</translation></message>
         <message><source>Return to Room  →</source><translation>ルームへ戻る →</translation></message>
         <message><source>⚡  Quick Match</source><translation>⚡  クイックマッチ</translation></message>
+        <message><source>Auto-match with another player searching for the selected game.
+Defaults to delay 2 / prediction 7.</source><translation>選択したゲームを検索中のプレイヤーと自動的にマッチングします。
+遅延2／予測7が初期値です。</translation></message>
         <message><source>Create Room…</source><translation>ルームを作成…</translation></message>
         <message><source>Game:</source><translation>ゲーム:</translation></message>
         <message><source>ACTIVE ROOMS</source><translation>参加可能なルーム</translation></message>
@@ -1751,12 +1754,37 @@ Pick a username other players will see — you can change it later.</source><tra
         <message><source>Switch to the room list. You stay in your seat — use Leave Room to actually exit.</source><translation>ルーム一覧へ戻ります。参加状態は維持されます。実際に退出するには「ルームを退出」を使用してください。</translation></message>
         <message><source>Waiting</source><translation>待機中</translation></message>
         <message><source>Frame delay:</source><translation>フレーム遅延:</translation></message>
+        <message><source>Frames of input delay added before sending to peer.
+Higher delay = fewer rollbacks but more input latency.
+Recommended: 2 for ~80ms RTT, 3-4 for ~150ms RTT.
+
+Host-only. All players will use the same value.</source><translation>相手へ送信する前に追加する入力遅延フレーム数です。
+遅延を増やすとロールバックは減りますが、入力遅延が増えます。
+推奨値: RTT約80msでは2、約150msでは3～4。
+
+ホストのみ変更できます。全プレイヤーが同じ値を使用します。</translation></message>
         <message><source>Auto</source><translation>自動</translation></message>
         <message><source>Prediction:</source><translation>予測:</translation></message>
+        <message><source>Maximum frames the rollback engine may predict ahead.
+Higher prediction = more network tolerance.
+Recommended: 7 (matches Slippi default).
+
+Host-only. All players will use the same value.</source><translation>ロールバックエンジンが先読みできる最大フレーム数です。
+予測を増やすとネットワーク変動への耐性が高まります。
+推奨値: 7（Slippiの初期値と同じ）。
+
+ホストのみ変更できます。全プレイヤーが同じ値を使用します。</translation></message>
         <message><source>Default</source><translation>デフォルト</translation></message>
         <message><source>Smooth</source><translation>スムーズ</translation></message>
         <message><source>Live Replay</source><translation>ライブリプレイ</translation></message>
         <message><source>Record game</source><translation>ゲームを録画</translation></message>
+        <message><source>Record this match to a .krec file on your PC.
+Local setting — each player records their own copy.</source><translation>この対戦をPC上の.krecファイルへ録画します。
+ローカル設定です。各プレイヤーが自分のコピーを録画します。</translation></message>
+        <message><source>Let others in the lobby watch this match live.
+Implies Record game (the live replay is the .krec). Only one player
+per match streams it — whoever enables it first.</source><translation>ロビーの他のプレイヤーがこの対戦をライブ視聴できるようにします。
+「ゲームを録画」が必要です（ライブリプレイは.krecです）。対戦ごとに最初に有効にした1人だけが配信します。</translation></message>
         <message><source>SEATS</source><translation>参加枠</translation></message>
         <message><source>ROOM CHAT</source><translation>ルームチャット</translation></message>
         <message><source>Message the room…</source><translation>ルームにメッセージを送信…</translation></message>
@@ -1774,6 +1802,9 @@ Pick a username other players will see — you can change it later.</source><tra
         <message><source>  (you)</source><translation>  （あなた）</translation></message>
         <message><source>Message the lobby…</source><translation>ロビーにメッセージを送信…</translation></message>
         <message><source>LOBBY CHAT</source><translation>ロビーチャット</translation></message>
+        <message><source>Room created — waiting for players</source><translation>ルームを作成しました — プレイヤーを待機中</translation></message>
+        <message><source>You joined the room</source><translation>ルームに参加しました</translation></message>
+        <message><source>You joined &quot;%1&quot;</source><translation>「%1」に参加しました</translation></message>
         <message><source>Player</source><translation>プレイヤー</translation></message>
         <message><source>Est. Ping</source><translation>推定Ping</translation></message>
         <message><source>No ROMs in your library — add some first</source><translation>ライブラリにROMがありません。先に追加してください</translation></message>
@@ -1790,6 +1821,7 @@ Pick a username other players will see — you can change it later.</source><tra
         <message><source>%1 players  ·  %2 rooms</source><translation>%1人のプレイヤー  ·  %2件のルーム</translation></message>
         <message><source>Searching for: %1</source><translation>検索中: %1</translation></message>
         <message><source>Region: %1</source><translation>地域: %1</translation></message>
+        <message><source>Region</source><translation>地域</translation></message>
         <message><source>unknown</source><translation>不明</translation></message>
         <message><source>Online</source><translation>オンライン</translation></message>
         <message><source>Hosting</source><translation>ホスト中</translation></message>
@@ -1804,6 +1836,12 @@ Pick a username other players will see — you can change it later.</source><tra
         <message><source>Leave your current room before creating a new one.</source><translation>新しいルームを作成する前に、現在のルームを退出してください。</translation></message>
         <message><source>Select a game</source><translation>ゲームを選択</translation></message>
         <message><source>Pick a game from the dropdown before creating a room.</source><translation>ルームを作成する前に、ドロップダウンからゲームを選択してください。</translation></message>
+        <message><source>Pick a game from the dropdown before searching — Quick Match only pairs you with players searching for that same ROM.</source><translation>検索を始める前にドロップダウンからゲームを選択してください。クイックマッチは同じROMを検索しているプレイヤー同士だけを組み合わせます。</translation></message>
+        <message><source>You don't have the ROM for &quot;%1&quot; (%2).
+
+Add it to your ROM directory and refresh the list, then try again.</source><translation>「%1」（%2）のROMがありません。
+
+ROMディレクトリへ追加して一覧を更新してから、もう一度お試しください。</translation></message>
         <message><source>Wrong password.</source><translation>パスワードが違います。</translation></message>
         <message><source>Room is full.</source><translation>ルームは満員です。</translation></message>
         <message><source>That game has already started.</source><translation>そのゲームはすでに開始されています。</translation></message>
