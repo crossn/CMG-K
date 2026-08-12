@@ -1346,6 +1346,24 @@ ROM ディレクトリに追加して、一覧を更新してください。</tr
         <message><source>Delete</source><translation>削除</translation></message>
     </context>
     <context>
+        <name>AboutDialog</name>
+        <message><source>About CMG-K</source><translation>CMG-Kについて</translation></message>
+    </context>
+    <context>
+        <name>UserInterface::Dialog::AboutDialog</name>
+        <message><source>is a community build based on RMG-K, with Japanese UI and Kaillera support. An easy to use &amp; cross-platform mupen64plus front-end written in C++ &amp; Qt.</source><translation>は、日本語UIとKaillera対応を備えたRMG-Kベースのコミュニティビルドです。C++とQtで作られた、使いやすいクロスプラットフォームのmupen64plusフロントエンドです。</translation></message>
+        <message><source>CMG-K Version:</source><translation>CMG-K バージョン:</translation></message>
+        <message><source>Based on RMG-K:</source><translation>ベースのRMG-K:</translation></message>
+        <message><source>RMG-K Base Commit:</source><translation>RMG-K ベースコミット:</translation></message>
+        <message><source>License:</source><translation>ライセンス:</translation></message>
+        <message><source>Contributors:</source><translation>貢献者:</translation></message>
+        <message><source>Special thanks:</source><translation>特別協力:</translation></message>
+        <message><source>for providing custom cheats</source><translation>カスタムチートの提供</translation></message>
+        <message><source>for making the controller image for RMG-Input</source><translation>RMG-Input用コントローラー画像の制作</translation></message>
+        <message><source>It uses the following third party projects:</source><translation>次のサードパーティプロジェクトを使用しています:</translation></message>
+        <message><source>It includes the following third party projects:</source><translation>次のサードパーティプロジェクトを含んでいます:</translation></message>
+    </context>
+    <context>
         <name>KailleraServerBrowserDialog</name>
         <message><source>Connected to %1</source><translation>%1 に接続中</translation></message>
         <message><source>SERVER CHAT</source><translation>サーバーチャット</translation></message>
@@ -1704,6 +1722,11 @@ ROM ディレクトリに追加して、一覧を更新してください。</tr
         <name>UserInterface::Dialog::RollbackLobbyDialog</name>
         <message><source>CMG-K - Rollback Lobby</source><translation>CMG-K - ロールバック ロビー</translation></message>
         <message><source>CMG-K Rollback Netplay</source><translation>CMG-K ロールバック ネットプレイ</translation></message>
+        <message><source>Rollback netplay uses GGPO-style rollback for smooth, low-latency online play. Connect to the lobby to see who's online, create or join a room, and start a match.
+
+Pick a username other players will see — you can change it later.</source><translation>ロールバックネットプレイは、GGPO方式のロールバックにより、滑らかで低遅延なオンライン対戦を実現します。ロビーに接続すると、オンライン中のユーザーを確認し、ルームの作成・参加、対戦の開始ができます。
+
+ほかのプレイヤーに表示するユーザー名を選んでください。後から変更できます。</translation></message>
         <message><source>Connect</source><translation>接続</translation></message>
         <message><source>Username</source><translation>ユーザー名</translation></message>
         <message><source>CMG-K · Rollback Netplay</source><translation>CMG-K · ロールバック ネットプレイ</translation></message>
@@ -1750,6 +1773,7 @@ ROM ディレクトリに追加して、一覧を更新してください。</tr
         <message><source>this player</source><translation>このプレイヤー</translation></message>
         <message><source>  (you)</source><translation>  （あなた）</translation></message>
         <message><source>Message the lobby…</source><translation>ロビーにメッセージを送信…</translation></message>
+        <message><source>LOBBY CHAT</source><translation>ロビーチャット</translation></message>
         <message><source>Player</source><translation>プレイヤー</translation></message>
         <message><source>Est. Ping</source><translation>推定Ping</translation></message>
         <message><source>No ROMs in your library — add some first</source><translation>ライブラリにROMがありません。先に追加してください</translation></message>

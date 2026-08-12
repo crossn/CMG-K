@@ -367,10 +367,11 @@ SettingsDialog::SettingsDialog(QWidget *parent, QString file) : QDialog(parent)
     this->tabWidget->setMinimumWidth(0);
     this->settingsContentLayout->activate();
     const int tabBarWidth = this->tabWidget->tabBar()->sizeHint().width();
-    const int preferredWidth = qMax(800, tabBarWidth + 80);
-    // Keep the normal dialog tall enough for the Emulation page while letting
-    // the outer scroll area handle genuinely constrained displays.
-    const int preferredHeight = qBound(650, this->sizeHint().height(), 720);
+    const int preferredWidth = qMax(700, tabBarWidth + 48);
+    // QTabWidget uses the largest nested Hotkeys page for its size hint. Keep
+    // the normal dialog tall enough for that page without expanding to its
+    // unconstrained height; the outer scroll area still handles small screens.
+    const int preferredHeight = qBound(690, this->sizeHint().height(), 710);
     this->naturalSizeHint = QSize(preferredWidth, preferredHeight);
 }
 
