@@ -2131,7 +2131,7 @@ void RollbackLobbyDialog::onRoomListChanged()
         if (r.state == "in_game")
         {
             auto* matchRow = new QTreeWidgetItem(m_matchesTree);
-            matchRow->setText(0, r.playerNames.isEmpty() ? r.name : r.playerNames.join(" vs "));
+            matchRow->setText(0, r.playerNames.isEmpty() ? r.name : r.playerNames.join(tr(" vs ")));
             matchRow->setText(1, formatMatchDuration(r.startedAtMs));
             matchRow->setText(2, r.romName);
             matchRow->setData(0, Qt::UserRole, QVariant::fromValue(r.id));
@@ -2195,7 +2195,7 @@ void RollbackLobbyDialog::refreshRoomRow(QTreeWidgetItem* item, const LobbyClien
     item->setText(1, r.hostName);
     item->setText(2, r.romName);
     item->setText(3, QString("%1/%2").arg(r.players).arg(r.maxPlayers));
-    item->setText(4, stateGlyph(r.state));
+    item->setText(4, roomStateLabel(r.state));
     item->setData(0, Qt::UserRole, QVariant::fromValue(r.id));
 
     // Seats: green when there's room to join, red when full.
@@ -3054,10 +3054,10 @@ bool RollbackLobbyDialog::handleSlashCommand(const QString& channel, const QStri
 
     if (cmd == "/modhelp")
     {
-        sysline("Moderator commands: /login, /kick &lt;user&gt; [reason], "
-                "/mute &lt;user&gt; [dur] [reason], /timeout &lt;user&gt; &lt;dur&gt; [reason], "
-                "/ban &lt;user&gt; [reason], /unban &lt;ip&gt;, /unmute &lt;ip&gt;, /modlist. "
-                "Durations: 10m, 1h, 2d (blank = permanent).");
+        sysline(tr("Moderator commands: /login, /kick &lt;user&gt; [reason], "
+                   "/mute &lt;user&gt; [dur] [reason], /timeout &lt;user&gt; &lt;dur&gt; [reason], "
+                   "/ban &lt;user&gt; [reason], /unban &lt;ip&gt;, /unmute &lt;ip&gt;, /modlist. "
+                   "Durations: 10m, 1h, 2d (blank = permanent)."));
         return true;
     }
 
@@ -3159,7 +3159,8 @@ void RollbackLobbyDialog::onModListReceived(const QJsonArray& bans, const QJsonA
             const QString when = (until == 0)
                 ? QCoreApplication::translate("RollbackLobbyDialog", "permanent")
                 : QDateTime::fromMSecsSinceEpoch(until).toString("yyyy-MM-dd hh:mm");
-            QString line = QString("&nbsp;&nbsp;%1 %2 (by %3, %4)").arg(kind, ip, by, when);
+            QString line = QCoreApplication::translate("RollbackLobbyDialog", "&nbsp;&nbsp;%1 %2 (by %3, %4)")
+                               .arg(kind, ip, by, when);
             if (!reason.isEmpty()) line += " — " + reason;
             lines << line;
         }
@@ -3505,7 +3506,7 @@ void RollbackLobbyDialog::onMatchBegin(quint64 matchId, const QList<LobbyClient:
     }
     if (!foundLocal)
     {
-        abortMatchStart("Match start failed: missing local peer.");
+        abortMatchStart(tr("Match start failed: missing local peer."));
         return;
     }
 
@@ -3580,7 +3581,7 @@ void RollbackLobbyDialog::onMatchBegin(quint64 matchId, const QList<LobbyClient:
 
     if (remotePeers.isEmpty())
     {
-        abortMatchStart("Match start failed: missing remote peer.");
+        abortMatchStart(tr("Match start failed: missing remote peer."));
         return;
     }
 

@@ -1689,6 +1689,7 @@ ROM ディレクトリに追加して、一覧を更新してください。</tr
         <message><source>In Game</source><translation>ゲーム中</translation></message>
         <message><source>Finished</source><translation>終了</translation></message>
         <message><source>permanent</source><translation>無期限</translation></message>
+        <message><source>&amp;nbsp;&amp;nbsp;%1 %2 (by %3, %4)</source><translation>&amp;nbsp;&amp;nbsp;%1 %2（実行者: %3、%4）</translation></message>
     </context>
     <context>
         <name>UserInterface::Dialog::LobbyConnectDialog</name>
@@ -1829,9 +1830,13 @@ per match streams it — whoever enables it first.</source><translation>ロビ�
         <message><source>In Room</source><translation>ルーム参加中</translation></message>
         <message><source>Searching</source><translation>検索中</translation></message>
         <message><source>In Game</source><translation>ゲーム中</translation></message>
+        <message><source> vs </source><translation> 対 </translation></message>
         <message><source>Watching</source><translation>視聴中</translation></message>
         <message><source>Away</source><translation>離席中</translation></message>
         <message><source>🔴 Live — double-click to watch</source><translation>🔴 ライブ配信中 — ダブルクリックして視聴</translation></message>
+        <message><source>Moderator commands: /login, /kick &amp;lt;user&amp;gt; [reason], /mute &amp;lt;user&amp;gt; [dur] [reason], /timeout &amp;lt;user&amp;gt; &amp;lt;dur&amp;gt; [reason], /ban &amp;lt;user&amp;gt; [reason], /unban &amp;lt;ip&amp;gt;, /unmute &amp;lt;ip&amp;gt;, /modlist. Durations: 10m, 1h, 2d (blank = permanent).</source><translation>モデレーターコマンド: /login、/kick &amp;lt;user&amp;gt; [reason]、/mute &amp;lt;user&amp;gt; [dur] [reason]、/timeout &amp;lt;user&amp;gt; &amp;lt;dur&amp;gt; [reason]、/ban &amp;lt;user&amp;gt; [reason]、/unban &amp;lt;ip&amp;gt;、/unmute &amp;lt;ip&amp;gt;、/modlist。期間: 10m、1h、2d（空欄=無期限）。</translation></message>
+        <message><source>Match start failed: missing local peer.</source><translation>対戦開始に失敗しました: ローカルプレイヤーが見つかりません。</translation></message>
+        <message><source>Match start failed: missing remote peer.</source><translation>対戦開始に失敗しました: リモートプレイヤーが見つかりません。</translation></message>
         <message><source>Already in a room</source><translation>すでにルームに参加中です</translation></message>
         <message><source>Leave your current room before creating a new one.</source><translation>新しいルームを作成する前に、現在のルームを退出してください。</translation></message>
         <message><source>Select a game</source><translation>ゲームを選択</translation></message>
