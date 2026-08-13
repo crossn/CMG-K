@@ -721,6 +721,10 @@ Enable this only while diagnosing frame pacing; it is disabled by default.</sour
             <translation>アップデートの確認に失敗しました</translation>
         </message>
         <message>
+            <source>You&apos;re already on the latest version</source>
+            <translation>すでに最新バージョンです</translation>
+        </message>
+        <message>
             <source>Open N64 ROM or 64DD Disk</source>
             <translation>N64 ROM または 64DD ディスクを開く</translation>
         </message>
@@ -1426,19 +1430,22 @@ ROM ディレクトリに追加して、一覧を更新してください。</tr
         <message><source>Close</source><translation>閉じる</translation></message>
     </context>
     <context>
-        <name>UserInterface::DownloadUpdateDialog</name>
+        <name>UserInterface::Dialog::DownloadUpdateDialog</name>
         <message><source>Downloading %1...</source><translation>%1 をダウンロード中...</translation></message>
+        <message><source>Failed to download update file</source><translation>アップデートファイルのダウンロードに失敗しました</translation></message>
+        <message><source>Failed to create temporary directory</source><translation>一時フォルダーの作成に失敗しました</translation></message>
     </context>
     <context>
-        <name>UserInterface::InstallUpdateDialog</name>
+        <name>UserInterface::Dialog::InstallUpdateDialog</name>
         <message><source>Executing %1...</source><translation>%1 を実行中...</translation></message>
         <message><source>Extracting %1...</source><translation>%1 を展開中...</translation></message>
         <message><source>Executing update script...</source><translation>アップデートスクリプトを実行中...</translation></message>
     </context>
     <context>
-        <name>UserInterface::UpdateDialog</name>
+        <name>UserInterface::Dialog::UpdateDialog</name>
         <message><source>%1 Available</source><translation>%1 が利用可能です</translation></message>
         <message><source>Update</source><translation>アップデート</translation></message>
+        <message><source>Failed to find update file</source><translation>アップデートファイルが見つかりませんでした</translation></message>
     </context>
     <context>
         <name>UserInterface::Widget::RomBrowserWidget</name>

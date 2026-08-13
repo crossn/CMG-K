@@ -112,7 +112,7 @@ void UpdateDialog::accept(void)
 
     if (filenameToDownload.isEmpty())
     {
-        QtMessageBox::Error(this, "Failed to find update file");
+        QtMessageBox::Error(this, tr("Failed to find update file"));
         QDialog::reject();
         return;
     }

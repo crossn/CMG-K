@@ -3860,7 +3860,7 @@ void MainWindow::on_networkAccessManager_Finished(QNetworkReply* reply)
     {
         if (!this->ui_SilentUpdateCheck)
         {
-            Utilities::QtMessageBox::Info(this, "You're already on the latest version");
+            Utilities::QtMessageBox::Info(this, tr("You're already on the latest version"));
         }
         return;
     }

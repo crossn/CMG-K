@@ -6,8 +6,8 @@
    <rect>
     <x>0</x>
     <y>0</y>
-    <width>351</width>
-    <height>419</height>
+    <width>640</width>
+    <height>560</height>
    </rect>
   </property>
   <property name="windowTitle">
@@ -27,7 +27,7 @@
    <item>
     <widget class="QTextEdit" name="textEdit">
      <property name="lineWrapMode">
-      <enum>QTextEdit::NoWrap</enum>
+      <enum>QTextEdit::WidgetWidth</enum>
      </property>
      <property name="readOnly">
       <bool>true</bool>
