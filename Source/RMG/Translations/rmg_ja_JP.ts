@@ -64,6 +64,16 @@
             <translation>アプリ起動時にネットプレイを自動開始</translation>
         </message>
         <message>
+            <source>Skill Match mode (experimental)</source>
+            <translation>スキルマッチモード（実験的）</translation>
+        </message>
+        <message>
+            <source>Monitor Super Smash Bros. match state for Skill Match integration.
+No match result is submitted in this version.</source>
+            <translation>スキルマッチ連携用にスマブラの対戦状態を監視します。
+このバージョンでは対戦結果の送信は行いません。</translation>
+        </message>
+        <message>
             <source>Theme changes apply immediately</source>
             <translation>テーマの変更はすぐに反映されます</translation>
         </message>

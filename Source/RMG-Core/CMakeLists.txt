@@ -31,6 +31,9 @@ set(RMG_CORE_SOURCES
     MediaLoader.cpp
     Screenshot.cpp
     RomHeader.cpp
+    SkillMatchMemoryReader.cpp
+    SkillMatchSmash64.cpp
+    SkillMatchGameWatcher.cpp
     Emulation.cpp
     SaveState.cpp
     RollbackNetcode.cpp
