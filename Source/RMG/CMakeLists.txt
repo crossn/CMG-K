@@ -83,6 +83,7 @@ set(RMG_SOURCES
     UserInterface/EventFilter.cpp
     ${CMAKE_CURRENT_BINARY_DIR}/UIResources.rc
     UserInterface/UIResources.qrc
+    UserInterface/Flags.qrc
     Thread/RomSearcherThread.cpp
     Thread/EmulationThread.cpp
     Utilities/QtKeyToSdl3Key.cpp
@@ -255,7 +256,8 @@ endif(KCA_DRAG_DROP)
 if (NETPLAY)
     target_link_libraries(RMG Qt6::WebSockets Qt6::Network)
     if (WIN32)
-        target_link_libraries(RMG SDL3::SDL3 OpenGL::GL)
+        # ws2_32: LobbyClient calls WSAIoctl directly on the anchor socket.
+        target_link_libraries(RMG SDL3::SDL3 OpenGL::GL ws2_32)
         target_include_directories(RMG PRIVATE
             ${CMAKE_CURRENT_SOURCE_DIR}/../n02
         )
