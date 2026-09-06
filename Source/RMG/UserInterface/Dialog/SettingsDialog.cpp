@@ -1086,6 +1086,7 @@ void SettingsDialog::loadInterfaceNetplaySettings(void)
     }
 
     this->netplayNicknameLineEdit->setText(QString::fromStdString(CoreSettingsGetStringValue(SettingsID::Netplay_Nickname)));
+    this->skillMatchModeCheckBox->setChecked(CoreSettingsGetBoolValue(SettingsID::GUI_SkillMatchMode));
     // Kaillera uses built-in server list, no need for custom URLs
     // this->netplayServerUrlLineEdit->setText(QString::fromStdString(CoreSettingsGetStringValue(SettingsID::Netplay_ServerJsonUrl)));
     // this->netplayDispatcherUrlLineEdit->setText(QString::fromStdString(CoreSettingsGetStringValue(SettingsID::Netplay_DispatcherUrl)));
@@ -1308,6 +1309,7 @@ void SettingsDialog::loadDefaultInterfaceOSDSettings(void)
 void SettingsDialog::loadDefaultInterfaceNetplaySettings(void)
 {
     this->netplayNicknameLineEdit->setText(QString::fromStdString(CoreSettingsGetDefaultStringValue(SettingsID::Netplay_Nickname)));
+    this->skillMatchModeCheckBox->setChecked(CoreSettingsGetDefaultBoolValue(SettingsID::GUI_SkillMatchMode));
     // Kaillera uses built-in server list, no need for custom URLs
     // this->netplayServerUrlLineEdit->setText(QString::fromStdString(CoreSettingsGetDefaultStringValue(SettingsID::Netplay_ServerJsonUrl)));
     // this->netplayDispatcherUrlLineEdit->setText(QString::fromStdString(CoreSettingsGetDefaultStringValue(SettingsID::Netplay_DispatcherUrl)));
@@ -1587,6 +1589,7 @@ void SettingsDialog::saveInterfaceOSDSettings(void)
 void SettingsDialog::saveInterfaceNetplaySettings(void)
 {
     CoreSettingsSetValue(SettingsID::Netplay_Nickname, this->netplayNicknameLineEdit->text().toStdString());
+    CoreSettingsSetValue(SettingsID::GUI_SkillMatchMode, this->skillMatchModeCheckBox->isChecked());
     // Kaillera uses built-in server list, no need for custom URLs
     // CoreSettingsSetValue(SettingsID::Netplay_ServerJsonUrl, this->netplayServerUrlLineEdit->text().toStdString());
     // CoreSettingsSetValue(SettingsID::Netplay_DispatcherUrl, this->netplayDispatcherUrlLineEdit->text().toStdString());

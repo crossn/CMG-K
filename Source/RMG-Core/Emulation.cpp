@@ -13,12 +13,16 @@
 #include "Emulation.hpp"
 #include "RomHeader.hpp"
 #include "Settings.hpp"
+#include "SkillMatchGameWatcher.hpp"
+#include "SkillMatchMemoryReader.hpp"
+#include "SkillMatchSmash64.hpp"
 #include "SaveState.hpp"
 #include "Library.hpp"
 #include "Netplay.hpp"
 #include "Kaillera.hpp"
 #include "Plugins.hpp"
 #include "Cheats.hpp"
+#include "Callback.hpp"
 #include "Error.hpp"
 #include "File.hpp"
 #include "Rom.hpp"
@@ -32,6 +36,7 @@
 #include <cstdlib>
 #include <cstdint>
 #include <cstdio>
+#include <memory>
 #include <mutex>
 #include <sstream>
 #include <vector>
@@ -54,6 +59,60 @@ static void setRollbackLoggingEnvironment(void)
     setenv("RMGK_VERBOSE_PIF_INPUT_LOGGING", pifLogging ? "1" : "0", 1);
     setenv("RMGK_VERBOSE_GLIDE_INPUT_LOGGING", glideLogging ? "1" : "0", 1);
 #endif
+}
+
+static std::unique_ptr<SkillMatchMemoryReader> s_SkillMatchMemoryReader;
+static std::unique_ptr<SkillMatchGameWatcher> s_SkillMatchGameWatcher;
+
+static void skillmatch_log_event(const SkillMatchEvent& event)
+{
+    std::ostringstream stream;
+    stream << "[SkillMatch] ";
+    switch (event.Type)
+    {
+        case SkillMatchEventType::MatchStarted:
+            stream << "match started frame=" << event.Frame;
+            break;
+        case SkillMatchEventType::PauseDetected:
+            stream << "pause detected frame=" << event.Frame << " player=" << event.PlayerIndex;
+            break;
+        case SkillMatchEventType::NormalResultCandidate:
+            stream << "result candidate frame=" << event.Frame << " winner=" << event.WinnerIndex
+                   << " loser=" << event.LoserIndex;
+            break;
+        case SkillMatchEventType::NoContestCandidate:
+            stream << "no-contest candidate frame=" << event.Frame;
+            break;
+        case SkillMatchEventType::UnknownState:
+            stream << "unknown pause player frame=" << event.Frame;
+            break;
+    }
+    CoreAddCallbackMessage(CoreDebugMessageType::Info, stream.str());
+}
+
+static void skillmatch_process_frame(unsigned int frameIndex)
+{
+    if (s_SkillMatchMemoryReader == nullptr || s_SkillMatchGameWatcher == nullptr)
+    {
+        return;
+    }
+
+    SkillMatchSnapshot snapshot;
+    if (!SkillMatchReadSmash64JapanV10Snapshot(*s_SkillMatchMemoryReader, frameIndex, snapshot))
+    {
+        return;
+    }
+
+    for (const SkillMatchEvent& event : s_SkillMatchGameWatcher->ProcessSnapshot(snapshot))
+    {
+        skillmatch_log_event(event);
+    }
+}
+
+static void reset_skill_match_monitoring(void)
+{
+    s_SkillMatchGameWatcher.reset();
+    s_SkillMatchMemoryReader.reset();
 }
 
 // Forward declarations for PIF structures
@@ -263,6 +322,7 @@ static bool pif_channel_has_command(const pif_channel& channel)
 static void FrameCallback(unsigned int frameIndex)
 {
     s_CurrentFrame = frameIndex;
+    skillmatch_process_frame(frameIndex);
 #ifdef NETPLAY
     // Reset sync flag at the start of each new frame
     // This ensures we sync exactly once per frame regardless of PIF polling timing
@@ -789,6 +849,8 @@ CORE_EXPORT bool CoreStartEmulation(std::filesystem::path n64rom, std::filesyste
     CoreRomType type;
     bool        netplay = !address.empty();
 
+    reset_skill_match_monitoring();
+
 #ifdef NETPLAY
     // Apply RSP plugin override and reload plugins BEFORE ROM open
     if (netplay && (address == "KAILLERA" || address.rfind("GEKKO|", 0) == 0 || address.rfind("LOBBY|", 0) == 0))
@@ -858,6 +920,26 @@ CORE_EXPORT bool CoreStartEmulation(std::filesystem::path n64rom, std::filesyste
     if (type == CoreRomType::Cartridge)
     {
         CoreMediaLoaderSetDiskFile(n64ddrom);
+    }
+
+    if (CoreSettingsGetBoolValue(SettingsID::GUI_SkillMatchMode))
+    {
+        CoreRomHeader header;
+        if (!CoreGetCurrentRomHeader(header) || !SkillMatchIsSmash64JapanV10(header))
+        {
+            CoreAddCallbackMessage(CoreDebugMessageType::Info, "[SkillMatch] unsupported ROM; monitoring disabled");
+        }
+        else
+        {
+            s_SkillMatchMemoryReader = std::make_unique<SkillMatchMemoryReader>();
+            const int localPlayerIndex = player >= 1 && player <= 2 ? player - 1 : -1;
+            s_SkillMatchGameWatcher = std::make_unique<SkillMatchGameWatcher>(localPlayerIndex);
+            CoreAddCallbackMessage(CoreDebugMessageType::Info, "[SkillMatch] monitoring enabled for Smash Bros. Japan v1.0");
+            if (localPlayerIndex < 0)
+            {
+                CoreAddCallbackMessage(CoreDebugMessageType::Info, "[SkillMatch] local player unavailable; adjudication disabled");
+            }
+        }
     }
 
     // apply core settings overlay
@@ -1124,6 +1206,7 @@ CORE_EXPORT bool CoreStartEmulation(std::filesystem::path n64rom, std::filesyste
 
     CoreClearCheats();
     CoreDetachPlugins();
+    reset_skill_match_monitoring();
     CoreCloseRom();
 
     // restore plugin settings
@@ -1165,6 +1248,8 @@ CORE_EXPORT bool CoreStopEmulation(void)
         CoreSetError(error);
         return false;
     }
+
+    reset_skill_match_monitoring();
 
 #ifdef NETPLAY
     // Clear Kaillera player number when stopping

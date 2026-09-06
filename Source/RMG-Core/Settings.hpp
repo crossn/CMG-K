@@ -42,6 +42,7 @@ enum class SettingsID
     GUI_OnScreenDisplayChatEnabled,
     GUI_OnScreenDisplayKailleraPortLabels,
     GUI_AutoStartNetplayOnStartup,
+    GUI_SkillMatchMode,
     GUI_Toolbar,
     GUI_ToolbarArea,
     GUI_StatusBar,

@@ -36,6 +36,7 @@ bool CoreApi::Hook(m64p_dynlib_handle handle)
     HOOK_FUNC(handle, Core, GetRomSettings);
     HOOK_FUNC(handle, Core, GetAPIVersions);
     HOOK_FUNC(handle, Core, ErrorMessage);
+    HOOK_FUNC(handle, Debug, MemGetPointer);
 
     this->handle = handle;
     this->hooked = true;
@@ -55,6 +56,7 @@ bool CoreApi::Unhook(void)
     UNHOOK_FUNC(Core, GetRomSettings);
     UNHOOK_FUNC(Core, GetAPIVersions);
     UNHOOK_FUNC(Core, ErrorMessage);
+    UNHOOK_FUNC(Debug, MemGetPointer);
 
     this->handle = nullptr;
     this->hooked = false;

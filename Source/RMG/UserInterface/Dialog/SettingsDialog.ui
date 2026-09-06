@@ -938,6 +938,17 @@
                 </layout>
                </item>
                <item>
+                <widget class="QCheckBox" name="skillMatchModeCheckBox">
+                 <property name="toolTip">
+                  <string>Monitor Super Smash Bros. match state for Skill Match integration.
+No match result is submitted in this version.</string>
+                 </property>
+                 <property name="text">
+                  <string>Skill Match mode (experimental)</string>
+                 </property>
+                </widget>
+               </item>
+               <item>
                 <spacer name="verticalSpacer_19">
                  <property name="orientation">
                   <enum>Qt::Orientation::Vertical</enum>
