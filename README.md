@@ -1,6 +1,6 @@
 # CMG-K
 
-CMG-Kは、RMG-Kをベースに日本語UIとネット対戦機能を整備した、N64エミュレータのcommunity forkです。RMG-K本家そのものでも公式版でもありません。現在の実装はRMG-K v0.9.11をベースにしています。
+CMG-Kは、RMG-Kをベースに日本語UIとネット対戦機能を整備した、N64エミュレータのcommunity forkです。RMG-K本家そのものでも公式版でもありません。現在の実装はRMG-K v0.9.14をベースにしています。
 
 ## ベータ版について
 
@@ -94,7 +94,7 @@ Raphnet N64 Adapter、GCC Adapter、RMG-Inputをサポートします。RMG-Inpu
 
 ### What is CMG-K?
 
-CMG-K is a community fork of RMG-K, an N64 emulator/front-end based on mupen64plus. It adds and maintains Japanese UI and netplay-related features for its target community. CMG-K is not the official RMG-K build. **Based on RMG-K v0.9.11.**
+CMG-K is a community fork of RMG-K, an N64 emulator/front-end based on mupen64plus. It adds and maintains Japanese UI and netplay-related features for its target community. CMG-K is not the official RMG-K build. **Based on RMG-K v0.9.14.**
 
 ### Beta notice
 
