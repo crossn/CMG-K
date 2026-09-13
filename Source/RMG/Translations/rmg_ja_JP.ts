@@ -662,6 +662,8 @@ No match result is submitted in this version.</source>
     </context>
     <context>
         <name>UserInterface::Dialog::SettingsDialog</name>
+        <message><source>Enable lobby ping diagnostics logging</source><translation>ロビーのPing診断ログを有効にする</translation></message>
+        <message><source>Hide my location from other players</source><translation>自分の地域を他のプレイヤーに表示しない</translation></message>
         <message>
             <source>Primary Monitor</source>
             <translation>プライマリモニター</translation>
@@ -706,6 +708,14 @@ Enable this only while diagnosing frame pacing; it is disabled by default.</sour
     </context>
     <context>
         <name>UserInterface::MainWindow</name>
+        <message>
+            <source>Are you sure you want to exit RMG?</source>
+            <translation>CMG-Kを終了しますか？</translation>
+        </message>
+        <message>
+            <source>Don&apos;t ask for confirmation again</source>
+            <translation>今後この確認を表示しない</translation>
+        </message>
         <message>
             <source>Error</source>
             <translation>エラー</translation>
@@ -1220,7 +1230,18 @@ ROM ディレクトリに追加して、一覧を更新してください。</tr
         <message><source>Use the standard Kaillera game layer</source><translation>標準のKailleraゲームレイヤーを使用</translation></message>
         <message><source>Rollback</source><translation>ロールバック</translation></message>
         <message><source>Use the rollback game layer</source><translation>ロールバックゲームレイヤーを使用</translation></message>
-        <message><source>Input delay: frames your inputs are buffered before they take effect.\n\nHigher delay smooths online play — the netcode has more slack, so fewer\ncorrections/rollbacks — at the cost of slightly less responsive controls.\nLower delay feels snappier but reacts worse to a jittery connection.\n\nLeave it automatic to track your ping, or pick a fixed amount.</source><translation>入力遅延: 入力が反映されるまでバッファーされるフレーム数です。\n\n遅延を大きくするとネットコードに余裕ができ、補正やロールバックが減ってオンライン対戦が安定しますが、操作の反応はやや鈍くなります。\n遅延を小さくすると操作は軽快になりますが、不安定な接続では悪影響が出やすくなります。\n\n自動設定ではPingに合わせます。固定値を選ぶこともできます。</translation></message>
+        <message><source>Input delay: frames your inputs are buffered before they take effect.
+
+Higher delay smooths online play — the netcode has more slack, so fewer
+corrections/rollbacks — at the cost of slightly less responsive controls.
+Lower delay feels snappier but reacts worse to a jittery connection.
+
+Leave it automatic to track your ping, or pick a fixed amount.</source><translation>入力遅延: 入力が反映されるまでバッファーされるフレーム数です。
+
+遅延を大きくするとネットコードに余裕ができ、補正やロールバックが減りますが、操作の反応はやや鈍くなります。
+遅延を小さくすると操作は軽快になりますが、不安定な接続では悪影響が出やすくなります。
+
+自動設定ではPingに合わせます。固定値を選ぶこともできます。</translation></message>
         <message><source>Default</source><translation>標準</translation></message>
         <message><source>1 frame</source><translation>1フレーム</translation></message>
         <message><source>%1 frames</source><translation>%1フレーム</translation></message>
@@ -1244,6 +1265,7 @@ ROM ディレクトリに追加して、一覧を更新してください。</tr
         <message><source>Lower delay</source><translation>低遅延</translation></message>
         <message><source>Higher delay</source><translation>高遅延</translation></message>
         <message><source>Custom</source><translation>カスタム</translation></message>
+        <message><source>Auto</source><translation>自動</translation></message>
         <message><source>Delay: --</source><translation>遅延: --</translation></message>
         <message><source>The ROM '%1' is not in your list.</source><translation>ROM「%1」は一覧にありません。</translation></message>
         <message><source>P2P Join</source><translation>P2P参加</translation></message>
@@ -1459,6 +1481,25 @@ ROM ディレクトリに追加して、一覧を更新してください。</tr
     </context>
     <context>
         <name>UserInterface::Widget::RomBrowserWidget</name>
+        <message><source>Play Game</source><translation>ゲームを開始</translation></message>
+        <message><source>Play Game with Disk</source><translation>ディスクと一緒にゲームを開始</translation></message>
+        <message><source>Play Game with Cartridge...</source><translation>カートリッジと一緒にゲームを開始...</translation></message>
+        <message><source>Play Game with Disk...</source><translation>ディスクと一緒にゲームを開始...</translation></message>
+        <message><source>Play Game with State</source><translation>セーブステートでゲームを開始</translation></message>
+        <message><source>Refresh ROM List</source><translation>ROMリストを更新</translation></message>
+        <message><source>Open ROM Directory</source><translation>ROMディレクトリを開く</translation></message>
+        <message><source>Change ROM Directory...</source><translation>ROMディレクトリを変更...</translation></message>
+        <message><source>ROM Information</source><translation>ROM情報</translation></message>
+        <message><source>Edit Game Settings</source><translation>ゲーム設定を編集</translation></message>
+        <message><source>Edit Game Input Settings</source><translation>ゲームの入力設定を編集</translation></message>
+        <message><source>Edit Cheats</source><translation>チートを編集</translation></message>
+        <message><source>Reset Column Sizes</source><translation>列幅をリセット</translation></message>
+        <message><source>Show/Hide Columns</source><translation>列を表示/非表示</translation></message>
+        <message><source>Set Cover Image...</source><translation>カバー画像を設定...</translation></message>
+        <message><source>Remove Cover Image</source><translation>カバー画像を削除</translation></message>
+        <message><source>Browse...</source><translation>参照...</translation></message>
+        <message><source>Open Cover Image</source><translation>カバー画像を開く</translation></message>
+        <message><source>Cover Image (*.png *.jpeg *.jpg)</source><translation>カバー画像 (*.png *.jpeg *.jpg)</translation></message>
         <message><source>Name</source><translation>名前</translation></message>
         <message><source>Internal Name</source><translation>内部名</translation></message>
         <message><source>MD5</source><translation>MD5</translation></message>
@@ -1695,6 +1736,11 @@ ROM ディレクトリに追加して、一覧を更新してください。</tr
         <name>RollbackLobbyDialog</name>
         <message><source>Auto (%1 f)</source><translation>自動（%1フレーム）</translation></message>
         <message><source>HOST</source><translation>ホスト</translation></message>
+        <message><source>Frame delay: %1f</source><translation>フレーム遅延: %1f</translation></message>
+        <message><source>unreachable</source><translation>到達不能</translation></message>
+        <message><source>retrying %2/%3…</source><translation>再試行中 %2/%3…</translation></message>
+        <message><source>Connection attempt %2/%3…</source><translation>接続試行 %2/%3…</translation></message>
+        <message><source>connection failed</source><translation>接続に失敗しました</translation></message>
         <message><source>Offline</source><translation>オフライン</translation></message>
         <message><source>Connecting</source><translation>接続中</translation></message>
         <message><source>Authenticating</source><translation>認証中</translation></message>
@@ -1710,6 +1756,9 @@ ROM ディレクトリに追加して、一覧を更新してください。</tr
     </context>
     <context>
         <name>UserInterface::Dialog::LobbyConnectDialog</name>
+        <message><source>Welcome to CMG-K Rollback Netplay!</source><translation>CMG-K ロールバック ネットプレイへようこそ！</translation></message>
+        <message><source>2-20 characters: letters, numbers, _ - .</source><translation>2～20文字: 英数字、_、-、.</translation></message>
+        <message><source>Username must be at least 2 characters.</source><translation>ユーザー名は2文字以上で入力してください。</translation></message>
         <message><source>Connect to CMG-K Rollback Lobby</source><translation>CMG-K ロールバックロビーに接続</translation></message>
         <message><source>3-16 characters: letters, numbers, _ - .</source><translation>3～16文字: 英数字、_、-、.</translation></message>
         <message><source>Username:</source><translation>ユーザー名:</translation></message>
@@ -1738,6 +1787,53 @@ ROM ディレクトリに追加して、一覧を更新してください。</tr
     </context>
     <context>
         <name>UserInterface::Dialog::RollbackLobbyDialog</name>
+        <message><source>End match &amp;&amp; close room  (moderator)</source><translation>対戦を終了してルームを閉じる（モデレーター）</translation></message>
+        <message><source>Close room  (moderator)</source><translation>ルームを閉じる（モデレーター）</translation></message>
+        <message><source>Close room</source><translation>ルームを閉じる</translation></message>
+        <message><source>Close &quot;%1&quot; for everyone?</source><translation>「%1」を全員に対して閉じますか？</translation></message>
+        <message><source>Auto-match with another player searching for the selected game.
+Uses your automatic frame delay and default 7-frame prediction window.
+Both can be changed per player during the warmup.</source><translation>選択したゲームを検索中のプレイヤーと自動的にマッチングします。
+自動フレーム遅延と既定の予測ウィンドウ7フレームを使用します。
+どちらもウォームアップ中に各プレイヤーが変更できます。</translation></message>
+        <message><source>Same game only</source><translation>同じゲームのみ</translation></message>
+        <message><source>Only show rooms and matches for the selected game.</source><translation>選択したゲームのルームと対戦だけを表示します。</translation></message>
+        <message><source>Your frame delay:</source><translation>自分のフレーム遅延:</translation></message>
+        <message><source>Maximum frames the rollback engine may predict ahead.
+Higher prediction tolerates longer network stalls but can produce larger rollbacks.
+Default: 7 frames.
+
+Room setting — only the host may change this value.</source><translation>ロールバックエンジンが先読みできる最大フレーム数です。
+予測を増やすと長いネットワーク停止に耐えやすくなりますが、ロールバックが大きくなる場合があります。
+既定値: 7フレーム。
+
+ルーム設定です。この値を変更できるのはホストのみです。</translation></message>
+        <message><source>Default (%1 f)</source><translation>既定値（%1フレーム）</translation></message>
+        <message><source>Measuring every player-to-player path…</source><translation>すべてのプレイヤー間の通信経路を測定中…</translation></message>
+        <message><source>Couldn&apos;t reach the lobby: %1</source><translation>ロビーに接続できませんでした: %1</translation></message>
+        <message><source>Country: %1</source><translation>国: %1</translation></message>
+        <message><source>Connection: %1</source><translation>接続: %1</translation></message>
+        <message><source>Build: %1</source><translation>ビルド: %1</translation></message>
+        <message><source>Ping: %1 ms</source><translation>Ping: %1 ms</translation></message>
+        <message><source>Ping: ~%1 ms (estimate — click to measure)</source><translation>Ping: ~%1 ms（推定値 — クリックして測定）</translation></message>
+        <message><source>Ping: click to measure</source><translation>Ping: クリックして測定</translation></message>
+        <message><source>Your measured ping to the host</source><translation>ホストへの実測Ping</translation></message>
+        <message><source>Estimated from regions — click the row to measure</source><translation>地域からの推定値 — 行をクリックして測定</translation></message>
+        <message><source>Click the row to measure your ping to the host</source><translation>行をクリックしてホストへのPingを測定</translation></message>
+        <message><source>Frames of input delay added before sending to peer.
+Higher delay = fewer rollbacks but more input latency.
+Recommended: 2 for ~80ms RTT, 3-4 for ~150ms RTT.
+
+Local setting — each player may choose a different value.</source><translation>相手へ送信する前に追加する入力遅延フレーム数です。
+遅延を大きくするとロールバックは減りますが、入力遅延が増えます。
+推奨値: RTT約80msでは2、約150msでは3～4。
+
+ローカル設定です。各プレイヤーが異なる値を選択できます。</translation></message>
+        <message><source>This CMG-K build is not compatible with the current Rollback Lobby. It requires RMG-K protocol compatibility v0.9.13 or newer.</source><translation>このCMG-Kビルドは現在のロールバックロビーと互換性がありません。RMG-K protocol compatibility v0.9.13以降が必要です。</translation></message>
+        <message><source>That username isn&apos;t allowed.</source><translation>そのユーザー名は使用できません。</translation></message>
+        <message><source>The lobby is currently full.</source><translation>ロビーは現在満員です。</translation></message>
+        <message><source>You were removed from this room and cannot rejoin.</source><translation>このルームから退出させられたため、再参加できません。</translation></message>
+        <message><source>The room was closed by a moderator.</source><translation>モデレーターによりルームが閉じられました。</translation></message>
         <message><source>CMG-K - Rollback Lobby</source><translation>CMG-K - ロールバック ロビー</translation></message>
         <message><source>CMG-K Rollback Netplay</source><translation>CMG-K ロールバック ネットプレイ</translation></message>
         <message><source>Rollback netplay uses GGPO-style rollback for smooth, low-latency online play. Connect to the lobby to see who's online, create or join a room, and start a match.

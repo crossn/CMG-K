@@ -1793,7 +1793,7 @@ void MainWindow::closeEvent(QCloseEvent *event)
         CoreSettingsGetBoolValue(SettingsID::GUI_ConfirmExitWhileInGame))
     {
         bool skipExitConfirmation = false;
-        bool ret = QtMessageBox::Question(this, "Are you sure you want to exit RMG?", "Don't ask for confirmation again", skipExitConfirmation);
+        bool ret = QtMessageBox::Question(this, tr("Are you sure you want to exit RMG?"), tr("Don't ask for confirmation again"), skipExitConfirmation);
         if (!ret)
         {
             event->ignore();
