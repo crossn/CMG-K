@@ -209,35 +209,35 @@ RomBrowserWidget::RomBrowserWidget(QWidget *parent) : QWidget(parent)
     this->action_ColumnsMenuEntry = new QAction(this);
 
     // configure context menu contents
-    this->action_PlayGame->setText("Play Game");
+    this->action_PlayGame->setText(tr("Play Game"));
     this->action_PlayGame->setIcon(QIcon::fromTheme("gamepad-line"));
-    this->action_PlayGameWith->setText("Play Game with Disk");
+    this->action_PlayGameWith->setText(tr("Play Game with Disk"));
     this->action_PlayGameWith->setIcon(QIcon::fromTheme("hard-drive-line"));
-    this->menu_PlayGameWithDisk->menuAction()->setText("Play Game with Disk");
+    this->menu_PlayGameWithDisk->menuAction()->setText(tr("Play Game with Disk"));
     this->menu_PlayGameWithDisk->menuAction()->setIcon(QIcon::fromTheme("hard-drive-line"));
-    this->menu_PlayGameWithSlot->menuAction()->setText("Play Game with State");
+    this->menu_PlayGameWithSlot->menuAction()->setText(tr("Play Game with State"));
     this->menu_PlayGameWithSlot->menuAction()->setIcon(QIcon::fromTheme("save-3-line"));
-    this->action_RefreshRomList->setText("Refresh ROM List");
+    this->action_RefreshRomList->setText(tr("Refresh ROM List"));
     this->action_RefreshRomList->setIcon(QIcon::fromTheme("refresh-line"));
-    this->action_OpenRomDirectory->setText("Open ROM Directory");
+    this->action_OpenRomDirectory->setText(tr("Open ROM Directory"));
     this->action_OpenRomDirectory->setIcon(QIcon::fromTheme("folder-open-line"));
-    this->action_ChangeRomDirectory->setText("Change ROM Directory...");
+    this->action_ChangeRomDirectory->setText(tr("Change ROM Directory..."));
     this->action_ChangeRomDirectory->setIcon(QIcon::fromTheme("pencil-line"));
-    this->action_RomInformation->setText("ROM Information");
+    this->action_RomInformation->setText(tr("ROM Information"));
     this->action_RomInformation->setIcon(QIcon::fromTheme("information-line"));
-    this->action_EditGameSettings->setText("Edit Game Settings");
+    this->action_EditGameSettings->setText(tr("Edit Game Settings"));
     this->action_EditGameSettings->setIcon(QIcon::fromTheme("settings-3-line"));
-    this->action_EditGameInputSettings->setText("Edit Game Input Settings");
+    this->action_EditGameInputSettings->setText(tr("Edit Game Input Settings"));
     this->action_EditGameInputSettings->setIcon(QIcon::fromTheme("gamepad-line"));
-    this->action_EditCheats->setText("Edit Cheats");
+    this->action_EditCheats->setText(tr("Edit Cheats"));
     this->action_EditCheats->setIcon(QIcon::fromTheme("code-box-line"));
-    this->action_ResetColumnSizes->setText("Reset Column Sizes");
+    this->action_ResetColumnSizes->setText(tr("Reset Column Sizes"));
     this->action_ResetColumnSizes->setIcon(QIcon::fromTheme("restart-line"));
-    this->menu_Columns->menuAction()->setText("Show/Hide Columns");
+    this->menu_Columns->menuAction()->setText(tr("Show/Hide Columns"));
     this->menu_Columns->menuAction()->setIcon(QIcon::fromTheme("eye-line"));
-    this->action_SetCoverImage->setText("Set Cover Image...");
+    this->action_SetCoverImage->setText(tr("Set Cover Image..."));
     this->action_SetCoverImage->setIcon(QIcon::fromTheme("file-line"));
-    this->action_RemoveCoverImage->setText("Remove Cover Image");
+    this->action_RemoveCoverImage->setText(tr("Remove Cover Image"));
     this->action_RemoveCoverImage->setIcon(QIcon::fromTheme("delete-bin-line"));
     connect(this->action_PlayGame, &QAction::triggered, this, &RomBrowserWidget::on_Action_PlayGame);
     connect(this->action_PlayGameWith, &QAction::triggered, this, &RomBrowserWidget::on_Action_PlayGameWith);
@@ -724,11 +724,11 @@ void RomBrowserWidget::customContextMenuRequested(QPoint position)
 
     if (hasSelection && data.type == CoreRomType::Disk)
     { // disk selected
-        this->action_PlayGameWith->setText("Play Game with Cartridge...");
+        this->action_PlayGameWith->setText(tr("Play Game with Cartridge..."));
     }
     else
     { // cartridge selected
-        this->action_PlayGameWith->setText("Play Game with Disk...");
+        this->action_PlayGameWith->setText(tr("Play Game with Disk..."));
     }
 
     if (view == this->listViewWidget)
@@ -790,7 +790,7 @@ void RomBrowserWidget::generatePlayWithDiskMenu(void)
         {
             if (count == 0)
             { // only add 'Browse...' action when there are disks
-                this->menu_PlayGameWithDisk->addAction("Browse...");
+                this->menu_PlayGameWithDisk->addAction(tr("Browse..."));
                 this->menu_PlayGameWithDisk->addSeparator();
             }
 
