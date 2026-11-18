@@ -1,5 +1,4 @@
-/* Skill Match transport foundation. Payload encoding and delivery are supplied by
- * the future shared Web contract; this class does not access the network. */
+/* Contract-neutral in-memory outbox. Delivery is provided by the caller. */
 #ifndef CORE_SKILLMATCHOUTBOX_HPP
 #define CORE_SKILLMATCHOUTBOX_HPP
 
@@ -15,8 +14,9 @@
 class SkillMatchOutbox
 {
 public:
-    // The sender must be bounded and return true only after an idempotent receipt.
-    using Sender = std::function<bool(const std::string&, const std::string&)>;
+    enum class Delivery { Ack, Retry, Reject };
+    // Sender must be bounded; Reject stops the queue for explicit fallback.
+    using Sender = std::function<Delivery(const std::string&, const std::string&)>;
     enum class EnqueueResult { Queued, Duplicate, Conflict, Full, Disabled };
 
     explicit SkillMatchOutbox(Sender sender, std::chrono::milliseconds retryDelay,
@@ -26,6 +26,7 @@ public:
     SkillMatchOutbox& operator=(const SkillMatchOutbox&) = delete;
     EnqueueResult Enqueue(const std::string& id, const std::string& payload);
     void Disable();
+    bool IsRejected();
 
 private:
     void Run();
@@ -35,6 +36,7 @@ private:
     std::mutex mutex;
     std::condition_variable changed;
     bool enabled = true;
+    bool rejected = false;
     std::deque<std::string> pending;
     // Keep receipts for this outbox lifetime so repeated observations cannot resend.
     std::unordered_map<std::string, std::string> seen;

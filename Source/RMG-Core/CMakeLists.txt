@@ -35,6 +35,7 @@ set(RMG_CORE_SOURCES
     SkillMatchSmash64.cpp
     SkillMatchGameWatcher.cpp
     SkillMatchOutbox.cpp
+    SkillMatchLocalHttp.cpp
     Emulation.cpp
     SaveState.cpp
     RollbackNetcode.cpp
@@ -69,6 +70,10 @@ if (PORTABLE_INSTALL)
 endif(PORTABLE_INSTALL)
 
 add_library(RMG-Core SHARED ${RMG_CORE_SOURCES})
+
+if(CMGK_SKILLMATCH_LOCAL_DEV)
+    target_compile_definitions(RMG-Core PRIVATE CMGK_SKILLMATCH_LOCAL_DEV)
+endif()
 
 if(TARGET GekkoNet)
     target_compile_definitions(RMG-Core PRIVATE RMGK_HAVE_GEKKONET)

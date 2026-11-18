@@ -12,7 +12,7 @@ int main()
     SkillMatchOutbox queue([&](const std::string& id, const std::string& bytes) {
         assert(id == "event-1" && bytes == "opaque");
         ++attempts;
-        return accepted.load();
+        return accepted.load() ? SkillMatchOutbox::Delivery::Ack : SkillMatchOutbox::Delivery::Retry;
     }, 10ms, 1);
     using Result = SkillMatchOutbox::EnqueueResult;
     assert(queue.Enqueue("event-1", "opaque") == Result::Queued);

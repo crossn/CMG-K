@@ -35,6 +35,12 @@ void SkillMatchOutbox::Disable()
     changed.notify_all();
 }
 
+bool SkillMatchOutbox::IsRejected()
+{
+    std::lock_guard<std::mutex> lock(mutex);
+    return rejected;
+}
+
 void SkillMatchOutbox::Run()
 {
     std::unique_lock<std::mutex> lock(mutex);
@@ -45,11 +51,12 @@ void SkillMatchOutbox::Run()
         const auto id = pending.front();
         const auto payload = seen.at(id);
         lock.unlock();
-        bool accepted = false;
-        try { accepted = sender(id, payload); } catch (...) { /* retry */ }
+        Delivery result = Delivery::Retry;
+        try { result = sender(id, payload); } catch (...) { /* retry */ }
         lock.lock();
         if (!enabled) break;
-        if (accepted) pending.pop_front();
+        if (result == Delivery::Ack) pending.pop_front();
+        else if (result == Delivery::Reject) { rejected = true; enabled = false; }
         else changed.wait_for(lock, retryDelay, [this] { return !enabled; });
     }
 }

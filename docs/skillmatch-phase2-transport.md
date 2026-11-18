@@ -1,22 +1,11 @@
-# Skill Match Phase 2: transport foundation (incomplete)
+# Local development observation transport
 
-The outbox is a contract-neutral, in-memory queue. It accepts bytes produced by a
-future agreed encoder and calls an injected sender on a worker thread. Retries use
-the same event ID and bytes. Duplicate IDs with different bytes are rejected. The
-bounded capacity includes acknowledged IDs; exhaustion requires an explicit
-fallback rather than silently forgetting idempotency history. The receiver must
-also enforce idempotency, since a response can be lost after acceptance.
+This is an opt-in development tool, not a Web result integration. Build with `-DCMGK_SKILLMATCH_LOCAL_DEV=ON` and set `CMGK_SKILLMATCH_LOCAL_PORT` to a decimal port before starting CMG-K. The default build has no watcher-to-transport connection. Even in the development build, the watcher and transport are created only when Skill Match is ON and the ROM matches Smash Bros. Japan v1.0. The sender can connect only to IPv4 `127.0.0.1`, using POST `/observations`; it accepts no URL, DNS, proxy or redirects. Do not point it at a production service.
 
-This is not wired to the watcher or a network endpoint. No shared wire format is
-defined by this change. In particular, the watcher exposes a frame and local result
-candidate but does not supply Web room/attempt/membership identifiers or proof of
-confirmed rollback frames. The Web contract, identity binding and finality remain
-open. A future integration must fail closed on missing context, slot, pause,
-NoContest, unknown state and unconfirmed rollback, and instantiate the sender only
-when Skill Match is enabled. A bounded localhost-only sender must prevent redirects
-and DNS rebinding and cancel or bound in-flight requests on disable. Neither secrets
-nor personal data should be stored in the queue. The current queue is process-local
-and loses pending entries on shutdown; it does not provide restart recovery.
+The development JSON `WatchObservation` contains event ID, event type, observed frame, local player index, player/winner/loser game indices, and an `unverified` marker. Unknown indices are -1. This diagnostic envelope is **not** the proposed Web `ResultCandidate v1`; no converter exists and it must not be used for rating. The five watcher event types are forwarded unchanged. In particular, a candidate after a pause is still only a raw observation, never an adjudicated outcome.
 
-No production endpoint, receiver, automatic submission, or rating confirmation is
-implemented here. Do not treat this foundation as Phase 2 completion.
+The receiver must durably and idempotently accept the event ID and exact payload before returning HTTP 204. Connection errors, timeouts, 429 and 5xx retry the same bytes and ID. Other statuses, including redirects and 4xx rejection, stop the queue. Requests and response headers are bounded to 16 KiB and 4 KiB; each attempt has a one-second total deadline. No TLS, authorization, redirects or response body is used. The queue runs independently of the frame callback; enqueue is bounded. Disable clears queued events and prevents new attempts; an already in-flight request can finish within its deadline. Shutdown waits for that bounded attempt. The queue holds up to 128 IDs including ACKed entries, retains no data across process/ROM shutdown, and needs an explicit manual fallback when full or rejected. Receiver-side deduplication remains essential when an ACK is lost.
+
+The existing watcher reports ROM-gated snapshots, frames, pause index and 0/1 winner/loser indices; it does not prove a Web slot or player identity. Room, set, gameAttempt, membership, game number, character, authoritative slot mapping and confirmed rollback frame are unavailable. A server-owned binding and confirmation contract are required before conversion to Web v1. No fixture identifiers or claimed finality are synthesized here. No local D1, Web test worker, production API or rating path is connected.
+
+For the Windows integration test, compile `tests/skillmatch_http_client_test.cpp` with `SkillMatchOutbox.cpp`, `SkillMatchLocalHttp.cpp`, C++20, pthread and ws2_32; run `python tests/skillmatch_http_integration.py <executable>`. The Python server is a localhost test mock, not a Web contract implementation. Real ROM and two actual client verification are still required.
