@@ -34,6 +34,7 @@ set(RMG_CORE_SOURCES
     SkillMatchMemoryReader.cpp
     SkillMatchSmash64.cpp
     SkillMatchGameWatcher.cpp
+    SkillMatchOutbox.cpp
     Emulation.cpp
     SaveState.cpp
     RollbackNetcode.cpp
