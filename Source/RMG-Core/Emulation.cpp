@@ -16,6 +16,11 @@
 #include "SkillMatchGameWatcher.hpp"
 #include "SkillMatchMemoryReader.hpp"
 #include "SkillMatchSmash64.hpp"
+#ifdef CMGK_SKILLMATCH_LOCAL_DEV
+#include "SkillMatchLocalHttp.hpp"
+#include "Version.hpp"
+#include <random>
+#endif
 #include "SaveState.hpp"
 #include "Library.hpp"
 #include "Netplay.hpp"
@@ -63,6 +68,56 @@ static void setRollbackLoggingEnvironment(void)
 
 static std::unique_ptr<SkillMatchMemoryReader> s_SkillMatchMemoryReader;
 static std::unique_ptr<SkillMatchGameWatcher> s_SkillMatchGameWatcher;
+#ifdef CMGK_SKILLMATCH_LOCAL_DEV
+static std::unique_ptr<SkillMatchOutbox> s_SkillMatchOutbox;
+static std::string s_SkillMatchSession;
+static unsigned int s_SkillMatchSequence = 0;
+static int s_SkillMatchLocalIndex = -1;
+
+static void skillmatch_start_local_transport(int localIndex)
+{
+    const char* value = std::getenv("CMGK_SKILLMATCH_LOCAL_PORT");
+    if (!value || !*value) return;
+    char* end = nullptr;
+    const unsigned long port = std::strtoul(value, &end, 10);
+    if (*end || port == 0 || port > 65535) return;
+    std::random_device random;
+    std::ostringstream session;
+    for (int i = 0; i < 4; ++i) session << std::hex << random() << "-";
+    s_SkillMatchSession = session.str();
+    s_SkillMatchSequence = 0;
+    s_SkillMatchLocalIndex = localIndex;
+    s_SkillMatchOutbox = std::make_unique<SkillMatchOutbox>(
+        [port](const std::string& id, const std::string& payload) {
+            return SkillMatchPostLocal(static_cast<uint16_t>(port), id, payload);
+        }, std::chrono::milliseconds(500));
+    CoreAddCallbackMessage(CoreDebugMessageType::Info, "[SkillMatch] development localhost observation transport enabled");
+}
+
+static void skillmatch_send_observation(const SkillMatchEvent& event)
+{
+    if (!s_SkillMatchOutbox) return;
+    const char* name = nullptr;
+    switch (event.Type) {
+        case SkillMatchEventType::MatchStarted: name = "MatchStarted"; break;
+        case SkillMatchEventType::PauseDetected: name = "PauseDetected"; break;
+        case SkillMatchEventType::NormalResultCandidate: name = "NormalResultCandidate"; break;
+        case SkillMatchEventType::NoContestCandidate: name = "NoContestCandidate"; break;
+        case SkillMatchEventType::UnknownState: name = "UnknownState"; break;
+    }
+    const auto id = s_SkillMatchSession + std::to_string(++s_SkillMatchSequence);
+    // Development observation, deliberately not the Web ResultCandidate schema.
+    std::ostringstream json;
+    json << "{\"kind\":\"WatchObservation\",\"eventId\":\"" << id
+         << "\",\"type\":\"" << name << "\",\"observedFrame\":" << event.Frame
+         << ",\"localPlayerIndex\":" << s_SkillMatchLocalIndex
+         << ",\"playerIndex\":" << event.PlayerIndex << ",\"winnerIndex\":" << event.WinnerIndex
+         << ",\"loserIndex\":" << event.LoserIndex << ",\"verification\":\"unverified\"}";
+    auto result = s_SkillMatchOutbox->Enqueue(id, json.str());
+    if (result != SkillMatchOutbox::EnqueueResult::Queued)
+        CoreAddCallbackMessage(CoreDebugMessageType::Warning, "[SkillMatch] local observation not queued; manual fallback required");
+}
+#endif
 
 static void skillmatch_log_event(const SkillMatchEvent& event)
 {
@@ -92,6 +147,14 @@ static void skillmatch_log_event(const SkillMatchEvent& event)
 
 static void skillmatch_process_frame(unsigned int frameIndex)
 {
+#ifdef CMGK_SKILLMATCH_LOCAL_DEV
+    if (s_SkillMatchOutbox && !CoreSettingsGetBoolValue(SettingsID::GUI_SkillMatchMode))
+    {
+        // Disable only signals the worker; an in-flight request has a one-second deadline.
+        s_SkillMatchOutbox->Disable();
+        return;
+    }
+#endif
     if (s_SkillMatchMemoryReader == nullptr || s_SkillMatchGameWatcher == nullptr)
     {
         return;
@@ -106,11 +169,17 @@ static void skillmatch_process_frame(unsigned int frameIndex)
     for (const SkillMatchEvent& event : s_SkillMatchGameWatcher->ProcessSnapshot(snapshot))
     {
         skillmatch_log_event(event);
+#ifdef CMGK_SKILLMATCH_LOCAL_DEV
+        skillmatch_send_observation(event);
+#endif
     }
 }
 
 static void reset_skill_match_monitoring(void)
 {
+#ifdef CMGK_SKILLMATCH_LOCAL_DEV
+    s_SkillMatchOutbox.reset();
+#endif
     s_SkillMatchGameWatcher.reset();
     s_SkillMatchMemoryReader.reset();
 }
@@ -934,6 +1003,9 @@ CORE_EXPORT bool CoreStartEmulation(std::filesystem::path n64rom, std::filesyste
             s_SkillMatchMemoryReader = std::make_unique<SkillMatchMemoryReader>();
             const int localPlayerIndex = player >= 1 && player <= 2 ? player - 1 : -1;
             s_SkillMatchGameWatcher = std::make_unique<SkillMatchGameWatcher>(localPlayerIndex);
+#ifdef CMGK_SKILLMATCH_LOCAL_DEV
+            skillmatch_start_local_transport(localPlayerIndex);
+#endif
             CoreAddCallbackMessage(CoreDebugMessageType::Info, "[SkillMatch] monitoring enabled for Smash Bros. Japan v1.0");
             if (localPlayerIndex < 0)
             {
